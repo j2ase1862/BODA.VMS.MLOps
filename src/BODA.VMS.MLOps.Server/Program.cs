@@ -128,11 +128,16 @@ builder.Services.AddSwaggerGen(o =>
 
 var app = builder.Build();
 
-// DB·스토리지 초기화 (마이그레이션 도구 도입 전까지 EnsureCreated — 스키마 변경 시 docs/README 참조)
+// DB·스토리지 초기화. 스키마는 마이그레이션으로만 바꾼다 (EnsureCreated 는 이후 변경을 반영하지 못한다).
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MlopsDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+    if (pending.Count > 0)
+    {
+        app.Logger.LogInformation("마이그레이션 {Count}건 적용: {Names}", pending.Count, string.Join(", ", pending));
+        await db.Database.MigrateAsync();
+    }
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
     await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys=ON;");
     _ = scope.ServiceProvider.GetRequiredService<IArtifactStorage>();
