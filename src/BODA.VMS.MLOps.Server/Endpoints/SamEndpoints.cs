@@ -19,7 +19,7 @@ public static class SamEndpoints
         g.MapGet("/status", (SamAssistService sam) =>
         {
             var (available, ready, message) = sam.Status();
-            return Results.Ok(new SamStatusDto(available, ready, message));
+            return Results.Ok(new SamStatusDto(available, ready, message, sam.MultiMask));
         }).RequireAuthorization(Policies.Viewer);
 
         // 이미지를 열 때 미리 부른다 — 인코더가 무거워서 첫 클릭을 여기서 먼저 치워 둔다
@@ -50,15 +50,15 @@ public static class SamEndpoints
                 .Select(p => new SamClick(Math.Clamp(p.X, 0, 1), Math.Clamp(p.Y, 0, 1), p.Foreground))
                 .ToList();
 
-            var result = await sam.PredictAsync(image.Sha256, token => OpenAsync(pool, req.ImageId, token), clicks, ct);
-            if (result.Shape is not { } shape)
-                return Results.Ok(new SamPredictResponse(null, result.Message));
+            var result = await sam.PredictAsync(
+                image.Sha256, token => OpenAsync(pool, req.ImageId, token), clicks, req.PreferIndex, ct);
 
-            var mask = new SamMaskDto(
-                shape.Polygon.Select(p => new[] { p.X, p.Y }).ToArray(),
-                shape.Box.X, shape.Box.Y, shape.Box.Width, shape.Box.Height,
-                result.Score, shape.PixelArea);
-            return Results.Ok(new SamPredictResponse(mask));
+            var candidates = result.Candidates.Select(c => new SamMaskDto(
+                c.Shape.Polygon.Select(p => new[] { p.X, p.Y }).ToArray(),
+                c.Shape.Box.X, c.Shape.Box.Y, c.Shape.Box.Width, c.Shape.Box.Height,
+                c.Score, c.Shape.PixelArea, c.Shape.PartCount)).ToList();
+
+            return Results.Ok(new SamPredictResponse(candidates, result.Best, result.Message));
         }).RequireAuthorization(Policies.Labeler);
 
         return api;

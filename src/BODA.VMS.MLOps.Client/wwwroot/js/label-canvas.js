@@ -16,9 +16,12 @@ const HANDLE_SIZE = 8;          // 화면 픽셀 기준 조절점 크기
 const HIT_SLOP = 6;             // 선을 집을 때 허용 오차
 const MIN_BOX = 0.002;          // 이보다 작은 사각형은 실수로 본다
 
+// 라벨 색. 화면 강조색(#FF4052)과 겹치지 않게 파랑부터 시작한다 —
+// 빨강이 앞에 있으면 "지금 고른 UI 요소" 와 "라벨" 이 같은 색이 되어 눈으로 갈라지지 않는다.
+// 순서는 Labeling.razor·DatasetDetail.razor 의 ColorOf 와 같아야 한다.
 const PALETTE = [
-    '#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa',
-    '#00acc1', '#fdd835', '#6d4c41', '#3949ab', '#d81b60',
+    '#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00acc1',
+    '#d81b60', '#6d4c41', '#3949ab', '#c62828', '#00897b',
 ];
 
 /** 활성 인스턴스. Blazor 가 element 대신 id 로 부르기 때문에 여기 담아 둔다. */
@@ -40,8 +43,9 @@ class LabelCanvas {
         this.activeClass = this.classes[0] || '';
 
         // SAM 보조: 확정 전까지는 라벨이 아니라 '미리보기'다. 확정해야 annotations 로 들어간다.
-        this.samPoints = [];       // [{x, y, foreground}]
-        this.samPreview = null;    // {points, x, y, w, h, score}
+        this.samPoints = [];        // [{x, y, foreground}]
+        this.samCandidates = [];    // 크기가 다른 해석들 — 작은 것부터
+        this.samIndex = 0;          // 지금 보고 있는 후보
         this.samPending = false;
         this.samSeq = 0;
         this.samMessage = null;
@@ -226,6 +230,11 @@ class LabelCanvas {
         const image = this.toImage(pos.x, pos.y);
 
         if (this.mode === 'sam') {
+            // 방금 확정한 폴리곤을 바로 손볼 수 있어야 한다. 꼭짓점이나 선을 집었으면 그것이 먼저다.
+            // (둘 다 선택된 도형에만 반응하므로, 빈 곳을 누르면 평소처럼 SAM 점이 찍힌다.)
+            const grabbed = this.beginVertexEdit(pos, image, e);
+            if (grabbed) return;
+
             // 오른쪽 버튼과 Shift 는 '여기는 빼라'는 뜻이다 (배경 점)
             this.addSamPoint(image, !(e.button === 2 || e.shiftKey));
             return;
@@ -237,14 +246,8 @@ class LabelCanvas {
             return;
         }
 
-        // 이미 있는 라벨을 집었는지 먼저 본다 (조절점 → 안쪽 순)
-        const handle = this.hitHandle(pos);
-        if (handle) {
-            this.selected = handle.index;
-            this.drag = { type: 'resize', index: handle.index, corner: handle.corner, origin: { ...this.annotations[handle.index] } };
-            this.draw();
-            return;
-        }
+        // 이미 있는 라벨을 집었는지 먼저 본다 (조절점 → 선 → 안쪽 순)
+        if (this.beginVertexEdit(pos, image, e)) return;
         const hit = this.hitAnnotation(image);
         if (hit >= 0) {
             this.selected = hit;
@@ -267,6 +270,41 @@ class LabelCanvas {
         this.selected = -1;
         this.notifySelected();
         this.draw();
+    }
+
+    /**
+     * 선택된 도형의 조절점이나 선을 집었으면 그 편집을 시작한다.
+     * 잡았으면 true — 부르는 쪽은 거기서 멈춘다.
+     */
+    beginVertexEdit(pos, image, e) {
+        const handle = this.hitHandle(pos);
+        if (handle) {
+            this.selected = handle.index;
+            if (handle.vertex !== undefined) {
+                // Ctrl+클릭은 그 꼭짓점을 뺀다
+                if (e.ctrlKey || e.metaKey) { this.removeVertex(handle.index, handle.vertex); return true; }
+                this.drag = { type: 'vertex', index: handle.index, vertex: handle.vertex };
+            } else {
+                this.drag = {
+                    type: 'resize', index: handle.index, corner: handle.corner,
+                    origin: { ...this.annotations[handle.index] },
+                };
+            }
+            this.draw();
+            return true;
+        }
+
+        // 폴리곤 선 위를 누르면 그 자리에 꼭짓점을 하나 끼우고 바로 끌 수 있게 한다
+        const edge = this.hitEdge(pos);
+        if (edge) {
+            const vertex = this.insertVertex(edge.index, edge.after, image);
+            if (vertex >= 0) {
+                this.drag = { type: 'vertex', index: edge.index, vertex };
+                this.draw();
+                return true;
+            }
+        }
+        return false;
     }
 
     onPointerMove(e) {
@@ -297,6 +335,12 @@ class LabelCanvas {
         } else if (this.drag.type === 'resize') {
             this.resizeAnnotation(this.drag.index, this.drag.origin, this.drag.corner, image);
             this.draw();
+        } else if (this.drag.type === 'vertex') {
+            const a = this.annotations[this.drag.index];
+            if (a?.points?.[this.drag.vertex]) {
+                a.points[this.drag.vertex] = [clamp01(image.x), clamp01(image.y)];
+                this.draw();
+            }
         }
     }
 
@@ -322,7 +366,7 @@ class LabelCanvas {
                 // OCR 은 만들자마자 텍스트를 받아야 쓸모가 있다
                 if (this.mode === 'text') this.dotNet?.invokeMethodAsync('OnTextRequested', this.selected);
             }
-        } else if (drag.type === 'move' || drag.type === 'resize') {
+        } else if (drag.type === 'move' || drag.type === 'resize' || drag.type === 'vertex') {
             this.clampAnnotation(drag.index);
             this.notifyChanged();
         }
@@ -360,6 +404,11 @@ class LabelCanvas {
             }
             return;
         }
+        if (e.key === 'Tab' && this.samCandidates.length > 1) {
+            this.cycleSam(e.shiftKey ? -1 : 1);
+            e.preventDefault();
+            return;
+        }
         if (e.key === 'Enter' && this.samPreview) { this.confirmSam(); e.preventDefault(); return; }
         if (e.key === 'Enter' && this.draftPolygon) { this.finishPolygon(); e.preventDefault(); return; }
 
@@ -376,8 +425,10 @@ class LabelCanvas {
 
     cursorFor(pos) {
         if (this.readOnly) return 'grab';
+        const handle = this.hitHandle(pos);
+        if (handle) return handle.vertex !== undefined ? 'pointer' : 'nwse-resize';
+        if (this.hitEdge(pos)) return 'copy';        // 여기를 누르면 꼭짓점이 하나 생긴다
         if (this.mode === 'polygon' || this.mode === 'sam') return 'crosshair';
-        if (this.hitHandle(pos)) return 'nwse-resize';
         if (this.hoverIndex >= 0) return 'move';
         return this.mode === 'classification' ? 'grab' : 'crosshair';
     }
@@ -430,21 +481,24 @@ class LabelCanvas {
         this.samPending = true;
         this.samMessage = null;
         this.draw();
+        // 지금 보고 있는 후보를 함께 알린다 — 서버가 그 마스크에서 출발해 다음 점을 반영한다
         this.dotNet?.invokeMethodAsync('OnSamPointsRequested', this.samSeq, this.samPoints.map(p => ({
             x: p.x, y: p.y, foreground: p.foreground,
-        })));
+        })), this.samCandidates.length ? this.samIndex : null);
     }
 
     /** 서버 응답. seq 가 최신이 아니면 늦게 온 것이라 버린다. */
-    applySamPreview(seq, preview, message) {
+    applySamPreview(seq, candidates, best, message) {
         if (seq !== this.samSeq) return;
         this.samPending = false;
-        this.samPreview = preview || null;
-        this.samMessage = preview ? null : (message || null);
+        this.samCandidates = candidates || [];
+        // 모델이 고른 것을 먼저 보여 주고, 사람이 필요하면 넘긴다
+        this.samIndex = Math.min(Math.max(best ?? 0, 0), Math.max(0, this.samCandidates.length - 1));
+        this.samMessage = this.samCandidates.length ? null : (message || null);
         this.draw();
     }
 
-    /** 미리보기를 진짜 라벨로 굳힌다 */
+    /** 지금 보고 있는 후보를 진짜 라벨로 굳힌다 */
     confirmSam() {
         const preview = this.samPreview;
         if (!preview || !this.activeClass || this.readOnly) return;
@@ -462,11 +516,30 @@ class LabelCanvas {
 
     clearSam(redraw = true) {
         this.samPoints = [];
-        this.samPreview = null;
+        this.samCandidates = [];
+        this.samIndex = 0;
         this.samPending = false;
         this.samMessage = null;
         this.samSeq++;              // 이미 나간 요청의 응답을 무효로 만든다
         if (redraw) this.draw();
+    }
+
+    /** 지금 보고 있는 후보 */
+    get samPreview() {
+        return this.samCandidates[this.samIndex] || null;
+    }
+
+    /**
+     * 다른 후보로 넘어간다. SAM 은 클릭 하나에 크기가 다른 해석을 여럿 내놓는데,
+     * 사선을 집었을 때 "사선만" 과 "사선이 놓인 판" 중 무엇을 원했는지는 사람만 안다.
+     */
+    cycleSam(delta) {
+        if (this.samCandidates.length < 2) return;
+        const count = this.samCandidates.length;
+        this.samIndex = ((this.samIndex + delta) % count + count) % count;
+        this.draw();
+        // 화면 쪽 표시도 같이 움직여야 한다 (Tab 은 여기서만 처리되므로 알려 주지 않으면 어긋난다)
+        this.dotNet?.invokeMethodAsync('OnSamIndexChanged', this.samIndex, count);
     }
 
     setClassification(className) {
@@ -553,8 +626,20 @@ class LabelCanvas {
     hitHandle(pos) {
         if (this.selected < 0) return null;
         const a = this.annotations[this.selected];
-        if (!a || a.x === undefined) return null;
+        if (!a) return null;
 
+        // 폴리곤은 꼭짓점 하나하나가 조절점이다. SAM 이 만들어 준 경계를 손보는 유일한 길이라
+        // 사각형과 같은 무게로 다룬다.
+        if (a.shape === 'polygon') {
+            for (let i = 0; i < (a.points?.length || 0); i++) {
+                const c = this.toCanvas(a.points[i][0], a.points[i][1]);
+                if (Math.abs(c.x - pos.x) <= HANDLE_SIZE && Math.abs(c.y - pos.y) <= HANDLE_SIZE)
+                    return { index: this.selected, vertex: i };
+            }
+            return null;
+        }
+
+        if (a.x === undefined) return null;
         const corners = [
             ['nw', a.x, a.y], ['ne', a.x + a.w, a.y],
             ['sw', a.x, a.y + a.h], ['se', a.x + a.w, a.y + a.h],
@@ -567,6 +652,40 @@ class LabelCanvas {
         return null;
     }
 
+    /** 선분 위를 집었는지 — 꼭짓점을 새로 끼울 자리를 찾는다 */
+    hitEdge(pos) {
+        if (this.selected < 0) return null;
+        const a = this.annotations[this.selected];
+        if (!a || a.shape !== 'polygon' || !a.points || a.points.length < 3) return null;
+
+        for (let i = 0; i < a.points.length; i++) {
+            const p1 = this.toCanvas(a.points[i][0], a.points[i][1]);
+            const j = (i + 1) % a.points.length;
+            const p2 = this.toCanvas(a.points[j][0], a.points[j][1]);
+            if (distanceToSegment(pos, p1, p2) <= HIT_SLOP + 2) return { index: this.selected, after: i };
+        }
+        return null;
+    }
+
+    /** 선분 가운데를 눌러 꼭짓점을 하나 끼운다 */
+    insertVertex(index, after, point) {
+        const a = this.annotations[index];
+        if (!a || a.shape !== 'polygon') return -1;
+        a.points.splice(after + 1, 0, [clamp01(point.x), clamp01(point.y)]);
+        this.notifyChanged();
+        this.draw();
+        return after + 1;
+    }
+
+    /** 꼭짓점 하나를 뺀다. 삼각형 아래로는 줄이지 않는다. */
+    removeVertex(index, vertex) {
+        const a = this.annotations[index];
+        if (!a || a.shape !== 'polygon' || a.points.length <= 3) return;
+        a.points.splice(vertex, 1);
+        this.notifyChanged();
+        this.draw();
+    }
+
     // ───────────── 그리기 ─────────────
 
     draw() {
@@ -575,7 +694,8 @@ class LabelCanvas {
         ctx.save();
         ctx.setTransform(this.dpr || 1, 0, 0, this.dpr || 1, 0, 0);
         ctx.clearRect(0, 0, this.viewWidth, this.viewHeight);
-        ctx.fillStyle = '#20232a';
+        // 사진 바깥 바탕. 화면 전체가 밝은 톤이라 여기만 새까맣게 두면 눈이 튄다.
+        ctx.fillStyle = '#3a3d42';
         ctx.fillRect(0, 0, this.viewWidth, this.viewHeight);
 
         if (this.image) {
@@ -696,7 +816,11 @@ class LabelCanvas {
 
             const first = this.toCanvas(this.samPreview.points[0][0], this.samPreview.points[0][1]);
             const score = this.samPreview.score ? ` ${Math.round(this.samPreview.score * 100)}%` : '';
-            this.drawLabelChip(ctx, first.x, first.y - 22, `${this.activeClass}${score} · Enter 로 확정`, color);
+            const many = this.samCandidates.length > 1
+                ? ` · 후보 ${this.samIndex + 1}/${this.samCandidates.length} (Tab)` : '';
+            const split = this.samPreview.partCount > 1 ? ` · 조각 ${this.samPreview.partCount}개 중 1개` : '';
+            this.drawLabelChip(ctx, first.x, first.y - 22,
+                `${this.activeClass}${score}${many}${split} · Enter 확정`, color);
         }
 
         // 클릭한 자리를 남겨 둔다 — 어디를 집었는지 보여야 점을 더 찍을지 판단할 수 있다
@@ -704,7 +828,7 @@ class LabelCanvas {
             const c = this.toCanvas(point.x, point.y);
             ctx.beginPath();
             ctx.arc(c.x, c.y, 6, 0, Math.PI * 2);
-            ctx.fillStyle = point.foreground ? '#43a047' : '#e53935';
+            ctx.fillStyle = point.foreground ? '#2e7d32' : '#c62828';
             ctx.fill();
             ctx.lineWidth = 2;
             ctx.strokeStyle = '#fff';
@@ -795,6 +919,16 @@ function pointInPolygon(point, points) {
     return inside;
 }
 
+/** 점에서 선분까지의 거리 (화면 픽셀). 폴리곤 선을 집었는지 판단한다. */
+function distanceToSegment(point, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 1e-9) return Math.hypot(point.x - a.x, point.y - a.y);
+    let t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared;
+    t = Math.min(1, Math.max(0, t));
+    return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+}
+
 function withAlpha(hex, alpha) {
     const value = parseInt(hex.slice(1), 16);
     return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
@@ -834,7 +968,9 @@ export const fit = (id) => call(id, i => i.fit());
 export const zoom = (id, factor) => call(id, i => i.zoomBy(factor));
 export const finishPolygon = (id) => call(id, i => i.finishPolygon());
 export const setSamShape = (id, shape) => call(id, i => i.setSamShape(shape));
-export const setSamPreview = (id, seq, preview, message) => call(id, i => i.applySamPreview(seq, preview, message));
+export const setSamPreview = (id, seq, candidates, best, message) =>
+    call(id, i => i.applySamPreview(seq, candidates, best, message));
+export const cycleSam = (id, delta) => call(id, i => i.cycleSam(delta));
 export const confirmSam = (id) => call(id, i => i.confirmSam());
 export const clearSam = (id) => call(id, i => i.clearSam());
 export const resize = (id) => call(id, i => i.resize());

@@ -5,16 +5,18 @@
 
 <PageTitle>사전학습 미러 · MLOps</PageTitle>
 
-<div class="d-flex justify-space-between align-center mb-2">
-    <MudText Typo="Typo.h5" HtmlTag="h1">사전학습 미러</MudText>
-    <AuthorizeView Roles="Admin">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   OnClick="@(() => { _newRef = _newLicense = _newSource = ""; _createError = null; _createOpen = true; })">자산 추가</MudButton>
-    </AuthorizeView>
-</div>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-    워커는 인터넷 대신 여기서만 가중치를 받습니다. 폐쇄망과 SSL 검사 백신 환경에서 학습이 막히지 않게 하려는 것입니다.
-</MudText>
+<PageHeader Eyebrow="INFRASTRUCTURE" Title="사전학습 미러">
+    <Lead>
+        워커는 인터넷 대신 여기서만 가중치를 받습니다.
+        폐쇄망과 SSL 검사 백신 환경에서 학습이 막히지 않게 하려는 것입니다.
+    </Lead>
+    <Actions>
+        <AuthorizeView Roles="Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="@(() => { _newRef = _newLicense = _newSource = ""; _createError = null; _createOpen = true; })">자산 추가</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {

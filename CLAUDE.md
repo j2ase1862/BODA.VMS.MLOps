@@ -95,6 +95,11 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 `/api/auth/image-cookie` 가 내려 주는 쿠키로도 인증합니다. 로그인 흐름을 바꿀 때 이 호출을 빠뜨리면
 썸네일과 캔버스가 전부 401 이 됩니다.
 
+**색·서체·모서리는 `MlopsTheme.cs` 한 곳에서 정합니다.** 화면마다 색을 직접 쓰지 마세요.
+강조색 `#FF4052` 는 지금 누를 것과 켜져 있는 것에만 씁니다.
+라벨 색 팔레트는 그 강조색과 겹치지 않게 파랑부터 시작하고,
+`label-canvas.js` 의 `PALETTE` 와 `Labeling.razor`·`DatasetDetail.razor` 의 `ColorOf` 가 같은 순서여야 합니다.
+
 **라벨 좌표는 어디서나 0~1 정규화입니다.** 캔버스 안, API, DB, 내보내기 매니페스트가 모두 같습니다.
 픽셀 좌표로 바꾸는 곳은 COCO 내보내기 하나뿐입니다.
 
@@ -110,6 +115,19 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 **SAM 클릭은 확정 전까지 라벨이 아닙니다.** 미리보기는 캔버스 안에만 있고 Enter 로 확정해야
 `annotations` 에 들어갑니다. 이미지를 바꾸거나 모드를 바꾸면 `clearSam` 이 미리보기를 버립니다 —
 남겨 두면 다음 사진에 이전 사진의 폴리곤이 붙습니다.
+
+**SAM 후보의 실제 자리는 캔버스가 들고 있습니다.** Tab 은 JS 안에서만 처리되므로,
+`cycleSam` 이 `OnSamIndexChanged` 로 알려 주지 않으면 화면 옆의 "후보 n/N" 표시가 어긋납니다.
+Blazor 쪽 `_samIndex` 를 스스로 계산하지 마세요.
+
+**디코더 후보 출력은 그래프 패치로 만듭니다.** `mobile_sam_decoder_multi.onnx` 는
+`scripts/patch_sam_decoder_multimask.py` 가 원본 디코더에 `all_low_res_masks`·`all_iou_predictions`
+출력을 더한 것입니다. 그 출력이 없으면 서버가 알아서 후보 하나로 돕니다 (`SamAssistService.MultiMask`).
+`/api/sam/status` 의 `multiMask` 는 모델을 올린 뒤에만 참이므로, 시험에서 이 값으로 갈래를 나누지 마세요.
+
+**클릭한 자리를 담은 덩어리를 고릅니다.** `MaskContour` 에 씨앗 점을 주면 그 점을 담은 덩어리를
+돌려줍니다. 이 인자를 빠뜨리면 가장 큰 덩어리로 돌아가고, 배경 점으로 끊긴 물체에서
+사용자가 집은 조각이 버려집니다.
 
 ## 손대면 안 되는 것
 

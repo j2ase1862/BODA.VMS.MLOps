@@ -8,13 +8,15 @@
 
 <PageTitle>학습 작업 · MLOps</PageTitle>
 
-<div class="d-flex justify-space-between align-center mb-4">
-    <MudText Typo="Typo.h5" HtmlTag="h1">학습 작업</MudText>
-    <AuthorizeView Roles="Engineer,Admin">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   OnClick="OpenCreateAsync">작업 제출</MudButton>
-    </AuthorizeView>
-</div>
+<PageHeader Eyebrow="TRAINING" Title="학습 작업">
+    <Lead>제출한 작업은 워커가 가져가 돌립니다. 진행률과 로그는 실시간으로 올라옵니다.</Lead>
+    <Actions>
+        <AuthorizeView Roles="Engineer,Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreateAsync">작업 제출</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
 
 <MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
     <MudSelect T="TrainingJobState?" Value="_state" ValueChanged="OnStateChanged" Label="상태" Clearable="true"

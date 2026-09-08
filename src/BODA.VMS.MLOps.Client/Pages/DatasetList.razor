@@ -5,17 +5,18 @@
 
 <PageTitle>데이터셋 · MLOps</PageTitle>
 
-<div class="d-flex justify-space-between align-center mb-2">
-    <MudText Typo="Typo.h5" HtmlTag="h1">데이터셋</MudText>
-    <AuthorizeView Roles="Engineer,Admin">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   OnClick="OpenCreate">새 데이터셋</MudButton>
-    </AuthorizeView>
-</div>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-    이미지를 담아 라벨을 붙이는 묶음입니다. 학습은 여기서 뜬 버전을 대상으로 돌아갑니다.
-    작업 유형과 클래스는 만든 뒤에 바꿀 수 없습니다.
-</MudText>
+<PageHeader Eyebrow="DATA" Title="데이터셋">
+    <Lead>
+        이미지를 담아 라벨을 붙이는 묶음입니다. 학습은 여기서 뜬 버전을 대상으로 돌아갑니다.
+        작업 유형과 클래스는 만든 뒤에 바꿀 수 없습니다.
+    </Lead>
+    <Actions>
+        <AuthorizeView Roles="Engineer,Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreate">새 데이터셋</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {

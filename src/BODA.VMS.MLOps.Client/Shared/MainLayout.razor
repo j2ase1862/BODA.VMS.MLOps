@@ -4,33 +4,39 @@
 @inject MlopsApi Api
 
 <MudLayout>
-    <MudAppBar Elevation="1">
-        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+    <MudAppBar Elevation="0" Color="Color.Surface">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Edge="Edge.Start"
                        OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="메뉴" />
-        <MudText Typo="Typo.h6" Class="ml-2">BODA VMS MLOps</MudText>
+        @* 이름표는 강조색 막대 하나로만 표시한다 — 로고를 대신하는 최소한의 표식 *@
+        <div class="d-flex align-center ml-2" style="gap:.5rem">
+            <span style="width:4px; height:18px; background:var(--accent); display:inline-block"></span>
+            <span style="font-weight:700; letter-spacing:-.01em; font-size:.95rem">BODA VMS MLOps</span>
+        </div>
         <MudSpacer />
         <AuthorizeView>
             <Authorized>
-                <MudChip T="string" Size="Size.Small" Color="Color.Surface" Icon="@Icons.Material.Filled.Person">
-                    @context.User.Identity?.Name (@RoleText(context))
-                </MudChip>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Filled.Logout"
-                           OnClick="SignOutAsync">로그아웃</MudButton>
+                <span class="mud-text-secondary" style="font-size:.75rem">
+                    @context.User.Identity?.Name · @RoleText(context)
+                </span>
+                <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Logout"
+                           Class="ml-3" OnClick="SignOutAsync">로그아웃</MudButton>
             </Authorized>
         </AuthorizeView>
     </MudAppBar>
 
-    <MudDrawer @bind-Open="_drawerOpen" Elevation="1" ClipMode="DrawerClipMode.Always">
-        <MudNavMenu>
+    <MudDrawer @bind-Open="_drawerOpen" Elevation="0" ClipMode="DrawerClipMode.Always">
+        <MudNavMenu Class="pt-2">
             <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">대시보드</MudNavLink>
-            <MudNavLink Href="/models" Icon="@Icons.Material.Filled.Inventory2">모델</MudNavLink>
-            <MudNavLink Href="/bindings" Icon="@Icons.Material.Filled.Link">레시피 바인딩</MudNavLink>
-            <MudDivider Class="my-2" />
-            <MudNavLink Href="/training" Icon="@Icons.Material.Filled.ModelTraining">학습 작업</MudNavLink>
+            <div class="page-eyebrow px-4 mt-3">데이터</div>
             <MudNavLink Href="/datasets" Icon="@Icons.Material.Filled.PhotoLibrary">데이터셋 · 라벨링</MudNavLink>
+            <div class="page-eyebrow px-4 mt-3">학습</div>
+            <MudNavLink Href="/training" Icon="@Icons.Material.Filled.ModelTraining">학습 작업</MudNavLink>
             <MudNavLink Href="/dataset-versions" Icon="@Icons.Material.Filled.FolderZip">데이터셋 버전</MudNavLink>
             <MudNavLink Href="/workers" Icon="@Icons.Material.Filled.Memory">워커</MudNavLink>
             <MudNavLink Href="/pretrained" Icon="@Icons.Material.Filled.CloudDownload">사전학습 미러</MudNavLink>
+            <div class="page-eyebrow px-4 mt-3">배포</div>
+            <MudNavLink Href="/models" Icon="@Icons.Material.Filled.Inventory2">모델</MudNavLink>
+            <MudNavLink Href="/bindings" Icon="@Icons.Material.Filled.Link">레시피 바인딩</MudNavLink>
         </MudNavMenu>
     </MudDrawer>
 

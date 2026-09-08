@@ -1,4 +1,5 @@
 @using Microsoft.AspNetCore.Components.Authorization
+@using BODA.VMS.MLOps.Client.Shared
 
 <CascadingAuthenticationState>
     <Router AppAssembly="@typeof(App).Assembly">
@@ -36,11 +37,11 @@
 
 @* MudBlazor 7 은 네 provider 를 모두 요구한다. PopoverProvider 가 없으면
    MudSelect·MudTooltip·MudMenu 가 렌더 중 예외를 던져 화면이 부분적으로 죽는다. *@
-<MudThemeProvider @bind-IsDarkMode="_dark" />
+<MudThemeProvider Theme="MlopsTheme.Build()" IsDarkMode="false" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 
 @code {
-    private bool _dark;
+    // 다크 모드는 두지 않는다. 검사 사진의 밝기 판단이 화면 바탕에 휘둘리면 안 된다.
 }

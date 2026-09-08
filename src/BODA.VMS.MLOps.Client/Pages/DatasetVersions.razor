@@ -5,17 +5,18 @@
 
 <PageTitle>데이터셋 버전 · MLOps</PageTitle>
 
-<div class="d-flex justify-space-between align-center mb-2">
-    <MudText Typo="Typo.h5" HtmlTag="h1">데이터셋 버전</MudText>
-    <AuthorizeView Roles="Engineer,Admin">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
-                   OnClick="@(() => { _uploadOpen = true; _uploadError = null; })">버전 업로드</MudButton>
-    </AuthorizeView>
-</div>
-<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
-    학습은 항상 버전에 대해 실행합니다. 지금은 내보내기 zip 을 올려 버전을 고정하고,
-    이미지 풀과 라벨링은 데이터 관리 단계에서 이 위에 얹습니다.
-</MudText>
+<PageHeader Eyebrow="DATA" Title="데이터셋 버전">
+    <Lead>
+        학습은 항상 버전에 대해 실행합니다. 데이터셋에서 뜬 스냅샷이 여기 쌓이고,
+        바깥에서 만든 내보내기 zip 도 올려 버전으로 고정할 수 있습니다.
+    </Lead>
+    <Actions>
+        <AuthorizeView Roles="Engineer,Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
+                       OnClick="@(() => { _uploadOpen = true; _uploadError = null; })">버전 업로드</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {

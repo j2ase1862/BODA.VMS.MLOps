@@ -22,8 +22,17 @@ public sealed class SamOptions
     /// <summary>mobile_sam_encoder.onnx 경로. 상대 경로는 콘텐츠 루트 기준 (기본 models/sam).</summary>
     public string EncoderPath { get; set; } = "models/sam/mobile_sam_encoder.onnx";
 
-    /// <summary>mobile_sam_decoder.onnx 경로. 상대 경로는 콘텐츠 루트 기준 (기본 models/sam).</summary>
-    public string DecoderPath { get; set; } = "models/sam/mobile_sam_decoder.onnx";
+    /// <summary>
+    /// 디코더 경로. 기본값은 <c>scripts/patch_sam_decoder_multimask.py</c> 가 만드는 파일이다 —
+    /// 이것이 있으면 클릭 한 번에 크기가 다른 후보를 여러 개 보여 줄 수 있다.
+    /// </summary>
+    public string DecoderPath { get; set; } = "models/sam/mobile_sam_decoder_multi.onnx";
+
+    /// <summary>
+    /// 위 파일이 없을 때 대신 쓸 디코더. 패치를 돌리지 않은 현장도 그대로 동작해야 하므로
+    /// 원본 내보내기 파일을 가리킨다. 이때는 후보가 하나뿐이다.
+    /// </summary>
+    public string DecoderFallbackPath { get; set; } = "models/sam/mobile_sam_decoder.onnx";
 
     /// <summary>
     /// 메모리에 들고 있을 임베딩 개수. 한 장당 [1,256,64,64] float = 4MB 다.
@@ -41,11 +50,24 @@ public sealed class SamOptions
     public int RetryAfterFailureSec { get; set; } = 60;
 
     /// <summary>
+    /// 되먹임용으로 들고 있을 직전 마스크 묶음 수. 한 건이 1MB 남짓이고,
+    /// 동시에 라벨링하는 사람 수만큼만 있으면 된다.
+    /// </summary>
+    public int MaxRefineStates { get; set; } = 16;
+
+    /// <summary>
     /// 상대 경로는 콘텐츠 루트 기준이다 — 개발에서는 프로젝트 폴더, 배포에서는 설치 폴더가 되므로
     /// 설정 한 줄이 두 환경에서 같은 뜻을 갖는다.
     /// </summary>
     public string? ResolvedEncoderPath(string basePath) => Resolve(EncoderPath, basePath);
-    public string? ResolvedDecoderPath(string basePath) => Resolve(DecoderPath, basePath);
+
+    /// <summary>있는 디코더를 고른다 — 후보를 여러 개 내는 쪽이 먼저다. 둘 다 없으면 null.</summary>
+    public string? ResolvedDecoderPath(string basePath)
+    {
+        foreach (var candidate in new[] { Resolve(DecoderPath, basePath), Resolve(DecoderFallbackPath, basePath) })
+            if (candidate is not null && File.Exists(candidate)) return candidate;
+        return null;
+    }
 
     private static string? Resolve(string path, string basePath)
     {

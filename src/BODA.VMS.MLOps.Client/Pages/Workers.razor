@@ -6,18 +6,15 @@
 
 <PageTitle>워커 · MLOps</PageTitle>
 
-<div class="d-flex justify-space-between align-center mb-4">
-    <div>
-        <MudText Typo="Typo.h5" HtmlTag="h1">학습 워커</MudText>
-        <MudText Typo="Typo.body2" Class="mud-text-secondary">
-            워커는 서버로만 연결합니다. 서버는 워커 주소를 모르고, 방화벽 예외도 필요 없습니다.
-        </MudText>
-    </div>
-    <AuthorizeView Roles="Admin">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   OnClick="@(() => { _newName = ""; _createOpen = true; })">워커 등록</MudButton>
-    </AuthorizeView>
-</div>
+<PageHeader Eyebrow="INFRASTRUCTURE" Title="학습 워커">
+    <Lead>워커는 서버로만 연결합니다. 서버는 워커 주소를 모르고, 방화벽 예외도 필요 없습니다.</Lead>
+    <Actions>
+        <AuthorizeView Roles="Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="@(() => { _newName = ""; _createOpen = true; })">워커 등록</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {

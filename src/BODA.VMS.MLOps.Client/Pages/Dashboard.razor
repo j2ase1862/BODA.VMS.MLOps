@@ -3,7 +3,9 @@
 @inject MlopsApi Api
 
 <PageTitle>대시보드 · MLOps</PageTitle>
-<MudText Typo="Typo.h5" HtmlTag="h1" Class="mb-6">대시보드</MudText>
+<PageHeader Eyebrow="OVERVIEW" Title="대시보드">
+    <Lead>모델과 학습, 데이터가 지금 어떤 상태인지 한눈에 봅니다.</Lead>
+</PageHeader>
 
 @if (_error is not null)
 {

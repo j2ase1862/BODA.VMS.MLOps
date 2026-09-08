@@ -1,27 +1,228 @@
-html, body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif; }
+/*
+  화면 공통 스타일.
 
-.loading-screen {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    height: 100vh; gap: .5rem; color: #37474f;
-}
-.loading-title { font-size: 1.4rem; font-weight: 600; letter-spacing: .02em; }
-.loading-sub { font-size: .9rem; color: #78909c; }
+  산업용 비전 솔루션 웹의 화면 언어를 참고했다 (세이지 SAIGE VISION 등).
+  요지는 셋이다 — 흰 바탕에 거의 검은 글자, 강조색은 하나만 아주 적게, 모서리는 죽인다.
+  검사 화면은 사진과 라벨이 주인공이라 UI 가 색을 가져가면 안 된다.
 
-#blazor-error-ui {
-    background: #ffebee; color: #b71c1c; bottom: 0; box-shadow: 0 -1px 2px rgba(0,0,0,.2);
-    display: none; left: 0; padding: .8rem 1.2rem; position: fixed; width: 100%; z-index: 1500;
+  색·서체·모서리 값 자체는 MlopsTheme.cs 가 정하고, 여기서는 MudBlazor 가 손대지 않는
+  가장자리(테두리·구분선·강조 표시)만 맞춘다.
+*/
+
+:root {
+    --ink: #101010;
+    --ink-muted: #828280;
+    --ink-faint: #c1c1c1;
+    --line: #dddddd;
+    --line-soft: #efefef;
+    --ground: #f7f7f7;
+    --accent: #ff4052;
 }
-#blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: .75rem; top: .5rem; }
+
+html, body {
+    margin: 0;
+    font-family: Pretendard, 'Pretendard Variable', 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
+    background: var(--ground);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ───────────── 뼈대 ───────────── */
+
+/* 그림자 대신 실선 한 줄. 층을 쌓지 않고 면으로 나눈다. */
+.mud-appbar {
+    border-bottom: 1px solid var(--line);
+    box-shadow: none !important;
+}
+
+.mud-drawer {
+    border-right: 1px solid var(--line);
+    box-shadow: none !important;
+}
+
+/* 지금 있는 곳만 강조색 막대로 표시한다 */
+.mud-nav-link {
+    border-left: 3px solid transparent;
+    border-radius: 0 !important;
+    font-weight: 500;
+}
+
+.mud-nav-link.active {
+    border-left-color: var(--accent);
+    background: #fff5f6 !important;
+    color: var(--ink) !important;
+    font-weight: 700;
+}
+
+.mud-nav-link.active .mud-nav-link-icon {
+    color: var(--accent) !important;
+}
+
+/* 카드는 뜬 것이 아니라 구획이다 */
+.mud-paper {
+    box-shadow: none !important;
+}
+
+.mud-paper-outlined,
+.mud-elevation-1 {
+    border: 1px solid var(--line-soft);
+}
+
+/* ───────────── 화면 머리말 ───────────── */
+
+/* 작은 강조색 라벨 + 굵은 제목. 참고한 사이트의 섹션 머리말 방식이다. */
+.page-eyebrow {
+    color: var(--accent);
+    font-size: .6875rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: .25rem;
+}
+
+.page-title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    line-height: 1.3;
+    margin: 0;
+    color: var(--ink);
+}
+
+.page-lead {
+    color: var(--ink-muted);
+    font-size: .8125rem;
+    margin-top: .25rem;
+}
+
+.page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding-bottom: .75rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 1.25rem;
+}
+
+/* ───────────── 표 ───────────── */
+
+.mud-table-container .mud-table-head .mud-table-cell {
+    font-size: .6875rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    border-bottom: 1px solid var(--line);
+}
+
+.mud-table-row .mud-table-cell {
+    border-bottom: 1px solid var(--line-soft);
+}
+
+/* ───────────── 버튼 ───────────── */
+
+/* 강조 버튼은 화면당 하나만 있는 것이 좋다. 모서리를 죽여 눌러야 할 것처럼 보이게 한다. */
+.mud-button-root {
+    border-radius: 2px;
+    letter-spacing: 0;
+}
+
+.mud-button-filled {
+    box-shadow: none !important;
+}
+
+/* ───────────── 값 표시 ───────────── */
 
 /* 해시·경로처럼 잘려도 되는 고정폭 값 */
-.mono { font-family: 'Cascadia Mono', Consolas, monospace; font-size: .82rem; }
-
-/* 학습 로그 콘솔 */
-.log-console {
-    background: #1e1e1e; color: #d4d4d4; font-family: 'Cascadia Mono', Consolas, monospace;
-    font-size: .8rem; line-height: 1.45; padding: .75rem; border-radius: 4px;
-    height: 460px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+.mono {
+    font-family: 'Cascadia Mono', Consolas, monospace;
+    font-size: .8125rem;
+    color: var(--ink-muted);
 }
-.log-console .lvl-Error, .log-console .lvl-Stderr { color: #f48771; }
-.log-console .lvl-Warn { color: #dcdcaa; }
+
+/* 숫자 하나를 크게 보여 주는 칸 (대시보드 지표) */
+.stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -.02em;
+    color: var(--ink);
+}
+
+.stat-label {
+    font-size: .6875rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+}
+
+/* ───────────── 시작·오류 화면 ───────────── */
+
+.loading-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    gap: .5rem;
+    background: #fff;
+    color: var(--ink);
+}
+
+.loading-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+}
+
+.loading-title::after {
+    content: '';
+    display: block;
+    width: 28px;
+    height: 3px;
+    background: var(--accent);
+    margin: .5rem auto 0;
+}
+
+.loading-sub {
+    font-size: .8125rem;
+    color: var(--ink-muted);
+}
+
+#blazor-error-ui {
+    background: var(--ink);
+    color: #fff;
+    bottom: 0;
+    display: none;
+    left: 0;
+    padding: .8rem 1.2rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1500;
+    font-size: .8125rem;
+}
+
+#blazor-error-ui .reload { color: var(--accent); }
+#blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: .75rem; top: .5rem; }
+
+/* ───────────── 학습 로그 콘솔 ───────────── */
+
+.log-console {
+    background: #101010;
+    color: #d4d4d4;
+    font-family: 'Cascadia Mono', Consolas, monospace;
+    font-size: .8rem;
+    line-height: 1.45;
+    padding: .75rem;
+    border-radius: 2px;
+    height: 460px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.log-console .lvl-Error, .log-console .lvl-Stderr { color: #ff8a80; }
+.log-console .lvl-Warn { color: #ffd479; }
 .log-console .lvl-Info { color: #9cdcfe; }

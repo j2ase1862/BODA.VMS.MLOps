@@ -1,0 +1,38 @@
+@*
+    화면 머리말. 작은 강조색 라벨 + 굵은 제목 + 한 줄 설명 + 오른쪽 동작.
+
+    산업용 비전 솔루션 웹에서 흔한 구성이다. 라벨이 "여기가 어느 구역인지" 를 먼저 알려 주고,
+    제목은 굵게 하나만 두며, 밑줄 한 줄로 내용과 갈라 놓는다.
+    화면마다 제목 크기와 여백이 제각각이 되지 않도록 한 곳에 모았다.
+*@
+
+<div class="page-head">
+    <div>
+        @if (!string.IsNullOrWhiteSpace(Eyebrow))
+        {
+            <div class="page-eyebrow">@Eyebrow</div>
+        }
+        <h1 class="page-title">@Title</h1>
+        @if (Lead is not null)
+        {
+            <div class="page-lead">@Lead</div>
+        }
+    </div>
+    @if (Actions is not null)
+    {
+        <div class="d-flex align-center gap-2">@Actions</div>
+    }
+</div>
+
+@code {
+    /// <summary>구역 이름. 대문자 영문 한 단어~두 단어가 가장 읽기 좋다.</summary>
+    [Parameter] public string? Eyebrow { get; set; }
+
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+
+    /// <summary>이 화면이 무엇을 하는 곳인지 한 줄. 없으면 생략한다.</summary>
+    [Parameter] public RenderFragment? Lead { get; set; }
+
+    /// <summary>오른쪽 끝에 붙는 주요 동작 (보통 버튼 하나)</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+}

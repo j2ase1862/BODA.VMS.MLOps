@@ -96,8 +96,16 @@ public class SamEnabledFactory : MlopsApiFactory
 {
     public static string ModelDirectory { get; } = FindModelDirectory();
     public static string EncoderPath => Path.Combine(ModelDirectory, "mobile_sam_encoder.onnx");
-    public static string DecoderPath => Path.Combine(ModelDirectory, "mobile_sam_decoder.onnx");
+    /// <summary>있으면 후보를 여러 개 내주는 패치본을 쓴다 — 운영 기본값과 같은 길을 시험한다.</summary>
+    public static string DecoderPath =>
+        MultiMaskDecoderPresent
+            ? Path.Combine(ModelDirectory, "mobile_sam_decoder_multi.onnx")
+            : Path.Combine(ModelDirectory, "mobile_sam_decoder.onnx");
     public static bool ModelsPresent => File.Exists(EncoderPath) && File.Exists(DecoderPath);
+
+    /// <summary>후보 여러 개를 내주는 패치본이 있는가 (scripts/patch_sam_decoder_multimask.py)</summary>
+    public static bool MultiMaskDecoderPresent =>
+        File.Exists(Path.Combine(ModelDirectory, "mobile_sam_decoder_multi.onnx"));
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -167,8 +175,9 @@ public class SamInferenceTests : IClassFixture<SamEnabledFactory>
         res.EnsureSuccessStatusCode();
         var body = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!;
 
-        body.Mask.Should().NotBeNull(body.Message);
-        var mask = body.Mask!;
+        body.Candidates.Should().NotBeEmpty(body.Message);
+        body.Best.Should().BeInRange(0, body.Candidates.Count - 1);
+        var mask = body.Candidates[body.Best];
         mask.Points.Length.Should().BeGreaterThanOrEqualTo(3);
         mask.Points.Should().OnlyContain(p => p[0] >= 0 && p[0] <= 1 && p[1] >= 0 && p[1] <= 1);
 
@@ -242,8 +251,8 @@ public class SamInferenceTests : IClassFixture<SamEnabledFactory>
                 new SamPredictRequest(image.Id, [new SamPointDto(x / width, y / height)]), Json);
             res.EnsureSuccessStatusCode();
             var body = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!;
-            body.Mask.Should().NotBeNull(body.Message);
-            return body.Mask!;
+            body.Candidates.Should().NotBeEmpty(body.Message);
+            return body.Candidates[Math.Max(0, body.Best)];
         }
 
         var leftMask = await ClickAsync(130, 240);
@@ -275,10 +284,152 @@ public class SamInferenceTests : IClassFixture<SamEnabledFactory>
         var res = await eng.PostAsJsonAsync("/api/sam/predict",
             new SamPredictRequest(image.Id, [new SamPointDto(0.5, 0.5)]), Json);
         res.EnsureSuccessStatusCode();
-        var mask = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!.Mask!;
+        var body = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!;
+        var mask = body.Candidates[Math.Max(0, body.Best)];
 
         // 모델의 IoU 예측은 1 을 넘길 수 있다. 화면이 "101%" 를 보여 주지 않도록 서버가 잘라 준다.
         mask.Score.Should().BeInRange(0, 1);
+    }
+
+    [Fact]
+    public async Task 후보를_여러_개_준다()
+    {
+        // 클릭 한 번의 뜻은 애매하다. "이것만" 과 "이것이 놓인 것" 을 사람이 고를 수 있어야 한다.
+        if (!SamEnabledFactory.ModelsPresent) return;
+
+        const int width = 640, height = 480;
+        using var bitmap = new SKBitmap(width, height);
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            canvas.Clear(new SKColor(24, 26, 30));
+            using var panel = new SKPaint { Color = new SKColor(140, 140, 140) };
+            using var spot = new SKPaint { Color = new SKColor(235, 90, 60) };
+            canvas.DrawRect(SKRect.Create(80, 60, 480, 360), panel);      // 큰 판
+            canvas.DrawOval(SKRect.Create(280, 200, 90, 70), spot);       // 그 위의 작은 얼룩
+        }
+        using var encoded = SKImage.FromBitmap(bitmap);
+        using var data = encoded.Encode(SKEncodedImageFormat.Png, 100);
+
+        var eng = await _f.EngineerAsync();
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(data.ToArray()), "files", "nested.png");
+        var upload = await eng.PostAsync("/api/images", form);
+        upload.EnsureSuccessStatusCode();
+        var image = (await upload.Content.ReadFromJsonAsync<ImageUploadBatchDto>(Json))!.Results[0].Image;
+
+        // 패치하지 않은 디코더면 이 시험은 뜻이 없다. 상태 대신 파일로 판단한다 —
+        // 상태의 MultiMask 는 모델을 올린 뒤에만 참이라 예열 시점을 타기 때문이다.
+        if (!SamEnabledFactory.MultiMaskDecoderPresent) return;
+
+        var res = await eng.PostAsJsonAsync("/api/sam/predict",
+            new SamPredictRequest(image.Id, [new SamPointDto(325.0 / width, 235.0 / height)]), Json);
+        res.EnsureSuccessStatusCode();
+        var body = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!;
+
+        body.Candidates.Count.Should().BeGreaterThan(1, "얼룩만 원한 것인지 판까지 원한 것인지 모델은 모른다");
+        // 작은 것부터 큰 것 순이어야 "더 크게 / 더 작게" 가 말이 된다
+        body.Candidates.Select(c => c.PixelArea).Should().BeInAscendingOrder();
+        // 가장 작은 후보는 얼룩, 가장 큰 후보는 판 정도는 돼야 한다
+        body.Candidates[0].W.Should().BeLessThan(body.Candidates[^1].W);
+    }
+
+    [Fact]
+    public async Task 배경_점을_찍으면_그_부분이_빠진다()
+    {
+        // 되먹임(mask_input)이 빠지면 두 번째 점이 잘 듣지 않는다.
+        if (!SamEnabledFactory.ModelsPresent) return;
+
+        const int width = 640, height = 480;
+        using var bitmap = new SKBitmap(width, height);
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            canvas.Clear(new SKColor(24, 26, 30));
+            using var paint = new SKPaint { Color = new SKColor(200, 200, 200) };
+            // 가로로 붙어 있는 두 칸 — 왼쪽만 원한다고 알려 줄 수 있어야 한다
+            canvas.DrawRect(SKRect.Create(120, 160, 200, 160), paint);
+            canvas.DrawRect(SKRect.Create(320, 160, 200, 160), paint);
+        }
+        using var encoded = SKImage.FromBitmap(bitmap);
+        using var data = encoded.Encode(SKEncodedImageFormat.Png, 100);
+
+        var eng = await _f.EngineerAsync();
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(data.ToArray()), "files", "halves.png");
+        var upload = await eng.PostAsync("/api/images", form);
+        upload.EnsureSuccessStatusCode();
+        var image = (await upload.Content.ReadFromJsonAsync<ImageUploadBatchDto>(Json))!.Results[0].Image;
+
+        async Task<SamMaskDto> PredictAsync(SamPointDto[] points, int? prefer)
+        {
+            var res = await eng.PostAsJsonAsync("/api/sam/predict",
+                new SamPredictRequest(image.Id, points, prefer), Json);
+            res.EnsureSuccessStatusCode();
+            var body = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!;
+            body.Candidates.Should().NotBeEmpty(body.Message);
+            return body.Candidates[Math.Max(0, body.Best)];
+        }
+
+        // 먼저 왼쪽 칸을 집는다 (되먹임 캐시가 이 단계의 마스크를 기억한다)
+        SamPointDto left = new(220.0 / width, 240.0 / height);
+        var first = await PredictAsync([left], null);
+
+        // 이어서 오른쪽 칸을 "빼라" 고 알린다
+        var exclude = new SamPointDto(420.0 / width, 240.0 / height, Foreground: false);
+        var second = await PredictAsync([left, exclude], null);
+
+        // 계약은 하나다 — 빼라고 한 자리가 결과 안에 있으면 안 된다.
+        // (두 칸이 같은 색으로 맞붙어 있어 경계가 없으므로 정확히 절반에서 잘리지는 않는다.)
+        bool inside = exclude.X >= second.X && exclude.X <= second.X + second.W
+                   && exclude.Y >= second.Y && exclude.Y <= second.Y + second.H;
+        inside.Should().BeFalse(
+            $"빼라고 한 점이 여전히 들어 있다 (처음 {first.X + first.W:F2} → 이후 {second.X + second.W:F2})");
+
+        // 그리고 눈에 띄게 줄어야 한다. 되먹임이 빠지면 거의 그대로 나온다.
+        second.PixelArea.Should().BeLessThan((int)(first.PixelArea * 0.9));
+        second.X.Should().BeApproximately(120.0 / width, 0.06);
+    }
+
+    [Fact]
+    public async Task 가려져_두_조각이_되면_클릭한_조각을_돌려준다()
+    {
+        // 예전에는 가장 큰 덩어리만 남겨서, 사용자가 집은 작은 조각이 버려졌다.
+        if (!SamEnabledFactory.ModelsPresent) return;
+
+        const int width = 640, height = 480;
+        using var bitmap = new SKBitmap(width, height);
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            canvas.Clear(new SKColor(24, 26, 30));
+            using var bar = new SKPaint { Color = new SKColor(210, 210, 210) };
+            using var cover = new SKPaint { Color = new SKColor(24, 26, 30) };
+            canvas.DrawRect(SKRect.Create(60, 220, 520, 40), bar);      // 긴 막대
+            canvas.DrawRect(SKRect.Create(300, 200, 60, 80), cover);    // 가운데를 가린다
+        }
+        using var encoded = SKImage.FromBitmap(bitmap);
+        using var data = encoded.Encode(SKEncodedImageFormat.Png, 100);
+
+        var eng = await _f.EngineerAsync();
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(data.ToArray()), "files", "occluded.png");
+        var upload = await eng.PostAsync("/api/images", form);
+        upload.EnsureSuccessStatusCode();
+        var image = (await upload.Content.ReadFromJsonAsync<ImageUploadBatchDto>(Json))!.Results[0].Image;
+
+        // 짧은 오른쪽 조각(360..580)을 집는다 — 왼쪽(60..300)이 더 길다
+        double clickX = 470.0 / width, clickY = 240.0 / height;
+        var res = await eng.PostAsJsonAsync("/api/sam/predict",
+            new SamPredictRequest(image.Id, [new SamPointDto(clickX, clickY)]), Json);
+        res.EnsureSuccessStatusCode();
+        var body = (await res.Content.ReadFromJsonAsync<SamPredictResponse>(Json))!;
+        body.Candidates.Should().NotBeEmpty(body.Message);
+
+        // 어떤 후보를 고르든, 돌려준 도형은 클릭한 자리를 담고 있어야 한다
+        foreach (var candidate in body.Candidates)
+        {
+            clickX.Should().BeInRange(candidate.X, candidate.X + candidate.W,
+                "클릭한 점이 결과 밖에 있으면 사용자는 이유를 알 수 없다");
+            clickY.Should().BeInRange(candidate.Y, candidate.Y + candidate.H);
+        }
     }
 
     [Fact]

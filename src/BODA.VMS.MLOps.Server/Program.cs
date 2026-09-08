@@ -79,6 +79,7 @@ builder.Services.AddScoped<LabelingService>();
 builder.Services.AddScoped<DatasetSnapshotService>();
 // SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
 builder.Services.AddSingleton<SamAssistService>();
+builder.Services.AddHostedService<SamWarmupService>();
 builder.Services.AddHostedService<JobSupervisor>();
 
 builder.Services.AddSignalR().AddJsonProtocol(o =>
@@ -168,11 +169,6 @@ using (var scope = app.Services.CreateScope())
     app.Logger.LogInformation("스토리지 {Root} · 스크립트 {Count}개 ({ScriptsRoot})",
         scope.ServiceProvider.GetRequiredService<IOptions<MlopsOptions>>().Value.ResolvedStorageRoot(), manifest.Count, scripts.Root);
 
-    // SAM 보조는 있으면 쓰고 없으면 조용히 넘어간다 — 모델 없이도 손으로 그리는 길이 그대로 열려 있다
-    var samStatus = app.Services.GetRequiredService<SamAssistService>().Status();
-    app.Logger.LogInformation("SAM 보조 라벨링 {State}{Reason}",
-        samStatus.Available ? "사용 가능" : "사용 안 함",
-        samStatus.Message is null ? "" : $" — {samStatus.Message}");
 }
 
 app.UseMiddleware<ApiExceptionMiddleware>();

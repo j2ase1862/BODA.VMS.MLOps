@@ -5,13 +5,15 @@
 
 <PageTitle>모델 · MLOps</PageTitle>
 
-<div class="d-flex justify-space-between align-center mb-4">
-    <MudText Typo="Typo.h5" HtmlTag="h1">모델</MudText>
-    <AuthorizeView Roles="Engineer,Admin">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   OnClick="OpenCreate">새 모델</MudButton>
-    </AuthorizeView>
-</div>
+<PageHeader Eyebrow="MODEL REGISTRY" Title="모델">
+    <Lead>검사 모델의 계열과 버전입니다. 승격한 버전이 라인으로 나갑니다.</Lead>
+    <Actions>
+        <AuthorizeView Roles="Engineer,Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreate">새 모델</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
 
 <MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
     <div class="d-flex flex-wrap gap-4 align-center">

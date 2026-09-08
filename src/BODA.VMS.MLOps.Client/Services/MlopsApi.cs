@@ -206,8 +206,8 @@ public sealed class MlopsApi(HttpClient http)
         catch (MlopsApiException) { }
     }
 
-    public Task<SamPredictResponse> SamPredictAsync(Guid imageId, IReadOnlyList<SamPointDto> points) =>
-        PostAsync<SamPredictRequest, SamPredictResponse>("/api/sam/predict", new SamPredictRequest(imageId, points));
+    public Task<SamPredictResponse> SamPredictAsync(Guid imageId, IReadOnlyList<SamPointDto> points, int? preferIndex = null) =>
+        PostAsync<SamPredictRequest, SamPredictResponse>("/api/sam/predict", new SamPredictRequest(imageId, points, preferIndex));
 
     // ───────────── 데이터셋 버전·사전학습 ─────────────
 
