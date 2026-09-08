@@ -106,14 +106,22 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
             ClockSkew = TimeSpan.FromMinutes(1),
         };
-        // SignalR 은 쿼리스트링 access_token 으로 토큰 전달
         o.Events = new JwtBearerEvents
         {
             OnMessageReceived = ctx =>
             {
+                // SignalR 은 헤더를 붙일 수 없어 쿼리스트링으로 토큰을 받는다
                 var token = ctx.Request.Query["access_token"];
                 if (!string.IsNullOrEmpty(token) && ctx.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                {
                     ctx.Token = token;
+                    return Task.CompletedTask;
+                }
+                // <img src> 도 헤더를 붙일 수 없다. 이미지 경로에서만 쿠키를 받아 준다.
+                if (ctx.HttpContext.Request.Path.StartsWithSegments(ImageCookie.Path)
+                    && string.IsNullOrEmpty(ctx.Request.Headers.Authorization)
+                    && ctx.Request.Cookies.TryGetValue(ImageCookie.Name, out var cookie))
+                    ctx.Token = cookie;
                 return Task.CompletedTask;
             }
         };

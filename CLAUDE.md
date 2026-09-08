@@ -84,6 +84,20 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 `MudDialogProvider`, `MudSnackbarProvider`. 팝오버 provider 가 빠지면 `MudSelect`·`MudTooltip` 이
 렌더 중 예외를 던져 화면 일부가 죽습니다. 빌드는 통과합니다.
 
+**System.Text.Json 은 기본 인코더로 한글을 `\uXXXX` 로 바꿉니다.** DB 에 넣은 JSON 문자열과
+사용자가 입력한 문자열이 달라져 태그·클래스 검색이 어긋나고, 오류 메시지도 읽을 수 없게 나갑니다.
+`MlopsJson.Options` 와 서버의 JSON 설정이 `UnsafeRelaxedJsonEscaping` 을 쓰는 이유입니다.
+
+**브라우저의 `<img>` 는 Authorization 헤더를 붙이지 못합니다.** 이미지 엔드포인트는
+`/api/auth/image-cookie` 가 내려 주는 쿠키로도 인증합니다. 로그인 흐름을 바꿀 때 이 호출을 빠뜨리면
+썸네일과 캔버스가 전부 401 이 됩니다.
+
+**라벨 좌표는 어디서나 0~1 정규화입니다.** 캔버스 안, API, DB, 내보내기 매니페스트가 모두 같습니다.
+픽셀 좌표로 바꾸는 곳은 COCO 내보내기 하나뿐입니다.
+
+**클래스 선택(숫자키·클래스 버튼)은 다음에 그릴 것만 정합니다.** 선택된 라벨을 함께 바꾸면
+방금 그린 박스가 조용히 다른 클래스가 됩니다. 이미 붙은 라벨은 `setAnnotationClass` 로만 바꿉니다.
+
 ## 손대면 안 되는 것
 
 `scripts/train_*.py` 는 VMS 리포(`VMS.DeepLearning/scripts`)의 복사본입니다.

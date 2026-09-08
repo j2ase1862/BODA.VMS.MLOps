@@ -1,6 +1,7 @@
 @inherits LayoutComponentBase
 @inject JwtAuthenticationStateProvider Auth
 @inject NavigationManager Nav
+@inject MlopsApi Api
 
 <MudLayout>
     <MudAppBar Elevation="1">
@@ -26,7 +27,8 @@
             <MudNavLink Href="/bindings" Icon="@Icons.Material.Filled.Link">레시피 바인딩</MudNavLink>
             <MudDivider Class="my-2" />
             <MudNavLink Href="/training" Icon="@Icons.Material.Filled.ModelTraining">학습 작업</MudNavLink>
-            <MudNavLink Href="/datasets" Icon="@Icons.Material.Filled.FolderZip">데이터셋 버전</MudNavLink>
+            <MudNavLink Href="/datasets" Icon="@Icons.Material.Filled.PhotoLibrary">데이터셋 · 라벨링</MudNavLink>
+            <MudNavLink Href="/dataset-versions" Icon="@Icons.Material.Filled.FolderZip">데이터셋 버전</MudNavLink>
             <MudNavLink Href="/workers" Icon="@Icons.Material.Filled.Memory">워커</MudNavLink>
             <MudNavLink Href="/pretrained" Icon="@Icons.Material.Filled.CloudDownload">사전학습 미러</MudNavLink>
         </MudNavMenu>
@@ -52,6 +54,7 @@
 
     private async Task SignOutAsync()
     {
+        await Api.ClearImageCookieAsync();
         await Auth.SignOutAsync();
         Nav.NavigateTo("/", forceLoad: false);
     }

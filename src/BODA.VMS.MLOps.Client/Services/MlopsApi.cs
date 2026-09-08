@@ -96,9 +96,104 @@ public sealed class MlopsApi(HttpClient http)
     public sealed record HyperparamSpecDto(string Key, string Type, double? Min, double? Max, string[]? Choices, string? Default);
     public Task<List<HyperparamSpecDto>> HyperparamsAsync(TrainingScript script) => GetAsync<List<HyperparamSpecDto>>($"/api/training/hyperparams/{Camel(script)}");
 
-    // ───────────── 데이터셋·사전학습 ─────────────
+    // ───────────── 데이터셋 (라벨링 대상 묶음) ─────────────
+
+    public Task<List<DatasetDto>> DatasetListAsync(TaskType? taskType = null, bool archived = false)
+    {
+        var q = $"/api/datasets?archived={archived.ToString().ToLowerInvariant()}";
+        if (taskType is not null) q += $"&taskType={Camel(taskType.Value)}";
+        return GetAsync<List<DatasetDto>>(q);
+    }
+
+    public Task<DatasetDto> DatasetAsync(Guid id) => GetAsync<DatasetDto>($"/api/datasets/{id}");
+    public Task<DatasetDto> CreateDatasetAsync(CreateDatasetRequest req) => PostAsync<CreateDatasetRequest, DatasetDto>("/api/datasets", req);
+    public Task<DatasetDto> UpdateDatasetAsync(Guid id, UpdateDatasetRequest req) => SendJsonAsync<UpdateDatasetRequest, DatasetDto>(HttpMethod.Patch, $"/api/datasets/{id}", req);
+    public Task DeleteDatasetAsync(Guid id) => SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/datasets/{id}"));
+
+    private sealed record CountResponse(int Added, int Removed, int Changed);
+
+    public Task<object> AddImagesAsync(Guid datasetId, Guid[] imageIds, DatasetSplit split) =>
+        PostAsync<AddImagesRequest, object>($"/api/datasets/{datasetId}/images", new AddImagesRequest(imageIds, split));
+    public Task<object> RemoveImagesAsync(Guid datasetId, Guid[] imageIds) =>
+        PostAsync<DeleteImagesRequest, object>($"/api/datasets/{datasetId}/images/remove", new DeleteImagesRequest(imageIds));
+    public Task<object> SetSplitAsync(Guid datasetId, Guid[] imageIds, DatasetSplit split) =>
+        PostAsync<SetSplitRequest, object>($"/api/datasets/{datasetId}/split", new SetSplitRequest(imageIds, split));
+    public Task<Dictionary<string, int>> AutoSplitAsync(Guid datasetId, double train, double val) =>
+        PostAsync<AutoSplitRequest, Dictionary<string, int>>($"/api/datasets/{datasetId}/auto-split", new AutoSplitRequest(train, val));
+
+    public Task<DatasetVersionDto> CreateSnapshotAsync(Guid datasetId, CreateSnapshotRequest req) =>
+        PostAsync<CreateSnapshotRequest, DatasetVersionDto>($"/api/datasets/{datasetId}/versions", req);
+
+    // ───────────── 이미지 풀 ─────────────
+
+    public Task<ImagePageDto> ImagesAsync(Guid? datasetId = null, bool? inDataset = null, ImageSource? source = null,
+        string? tag = null, string? search = null, LabelStatus? labelStatus = null, int skip = 0, int take = 60)
+    {
+        var q = $"/api/images?skip={skip}&take={take}";
+        if (datasetId is not null) q += $"&datasetId={datasetId}";
+        if (inDataset is not null) q += $"&inDataset={inDataset.Value.ToString().ToLowerInvariant()}";
+        if (source is not null) q += $"&source={Camel(source.Value)}";
+        if (labelStatus is not null) q += $"&labelStatus={Camel(labelStatus.Value)}";
+        if (!string.IsNullOrWhiteSpace(tag)) q += $"&tag={Uri.EscapeDataString(tag)}";
+        if (!string.IsNullOrWhiteSpace(search)) q += $"&search={Uri.EscapeDataString(search)}";
+        return GetAsync<ImagePageDto>(q);
+    }
+
+    public Task<ImageDto> ImageAsync(Guid id) => GetAsync<ImageDto>($"/api/images/{id}");
+
+    /// <summary>여러 장을 한 번에 올린다. 잘못된 파일이 섞여도 나머지는 등록된다.</summary>
+    public async Task<ImageUploadBatchDto> UploadImagesAsync(
+        IReadOnlyList<(string Name, Stream Content)> files, ImageSource source, string? lineId, string[] tags, CancellationToken ct = default)
+    {
+        using var form = new MultipartFormDataContent();
+        foreach (var (name, content) in files)
+        {
+            var part = new StreamContent(content);
+            part.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            form.Add(part, "files", name);
+        }
+        form.Add(new StringContent(Camel(source)), "source");
+        if (!string.IsNullOrWhiteSpace(lineId)) form.Add(new StringContent(lineId), "lineId");
+        if (tags.Length > 0) form.Add(new StringContent(string.Join(',', tags)), "tags");
+
+        using var res = await http.PostAsync("/api/images", form, ct);
+        return await ReadAsync<ImageUploadBatchDto>(res);
+    }
+
+    public Task TagImagesAsync(Guid[] imageIds, string[] add, string[] remove) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Post, "/api/images/tags")
+        { Content = JsonContent.Create(new TagImagesRequest(imageIds, add, remove), options: Json) });
+
+    public Task<object> DeleteImagesAsync(Guid[] imageIds) =>
+        PostAsync<DeleteImagesRequest, object>("/api/images/delete", new DeleteImagesRequest(imageIds));
+
+    public Task<List<DuplicateGroupDto>> DuplicatesAsync(int take = 500) =>
+        GetAsync<List<DuplicateGroupDto>>($"/api/images/duplicates?take={take}");
+
+    // ───────────── 라벨링 ─────────────
+
+    public Task<ImageLabelsDto> LabelsAsync(Guid datasetId, Guid imageId) =>
+        GetAsync<ImageLabelsDto>($"/api/datasets/{datasetId}/images/{imageId}/labels");
+
+    public Task<ImageLabelsDto> SaveLabelsAsync(Guid datasetId, Guid imageId, SaveLabelsRequest req) =>
+        SendJsonAsync<SaveLabelsRequest, ImageLabelsDto>(HttpMethod.Put, $"/api/datasets/{datasetId}/images/{imageId}/labels", req);
+
+    public Task<ImageLabelsDto> LockImageAsync(Guid datasetId, Guid imageId) =>
+        PostAsync<object?, ImageLabelsDto>($"/api/datasets/{datasetId}/images/{imageId}/lock", null);
+
+    public Task UnlockImageAsync(Guid datasetId, Guid imageId) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/api/datasets/{datasetId}/images/{imageId}/unlock"));
+
+    public Task<ImageLabelsDto> ReviewAsync(Guid datasetId, Guid imageId, bool approved) =>
+        PostAsync<ReviewRequest, ImageLabelsDto>($"/api/datasets/{datasetId}/images/{imageId}/review", new ReviewRequest(approved));
+
+    public Task<NextImageDto> NextToLabelAsync(Guid datasetId, Guid? after) =>
+        GetAsync<NextImageDto>($"/api/datasets/{datasetId}/next-to-label{(after is null ? "" : $"?after={after}")}");
+
+    // ───────────── 데이터셋 버전·사전학습 ─────────────
 
     public Task<List<DatasetVersionDto>> DatasetsAsync() => GetAsync<List<DatasetVersionDto>>("/api/dataset-versions");
+    public Task DeleteDatasetVersionAsync(Guid id) => SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/dataset-versions/{id}"));
 
     public async Task<DatasetVersionDto> UploadDatasetAsync(string fileName, Stream zip, DatasetVersionUploadMeta meta, CancellationToken ct = default)
     {
@@ -129,6 +224,22 @@ public sealed class MlopsApi(HttpClient http)
 
     public sealed record MeResponse(string Name, string[] Roles, Guid? WorkerId);
     public Task<MeResponse> MeAsync() => GetAsync<MeResponse>("/api/auth/me");
+
+    /// <summary>
+    /// 이미지 요청용 쿠키를 받아 둔다. 브라우저의 img 태그는 Authorization 헤더를 붙일 수 없어,
+    /// 이것이 없으면 썸네일과 캔버스 이미지가 전부 401 이 된다.
+    /// </summary>
+    public async Task EnsureImageCookieAsync()
+    {
+        try { await SendAsync(new HttpRequestMessage(HttpMethod.Post, "/api/auth/image-cookie")); }
+        catch (MlopsApiException) { /* 조회 권한이 없으면 어차피 이미지도 못 본다 */ }
+    }
+
+    public async Task ClearImageCookieAsync()
+    {
+        try { await SendAsync(new HttpRequestMessage(HttpMethod.Post, "/api/auth/image-cookie/clear")); }
+        catch (MlopsApiException) { }
+    }
 
     public sealed record DevTokenResponse(string Token, string[] Roles);
 

@@ -1,0 +1,174 @@
+@page "/datasets"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>데이터셋 · MLOps</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <MudText Typo="Typo.h5" HtmlTag="h1">데이터셋</MudText>
+    <AuthorizeView Roles="Engineer,Admin">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreate">새 데이터셋</MudButton>
+    </AuthorizeView>
+</div>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+    이미지를 담아 라벨을 붙이는 묶음입니다. 학습은 여기서 뜬 버전을 대상으로 돌아갑니다.
+    작업 유형과 클래스는 만든 뒤에 바꿀 수 없습니다.
+</MudText>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_datasets.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.PhotoLibrary" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">데이터셋이 없습니다.</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
+            데이터셋을 만들고 이미지를 올린 뒤 라벨을 붙이면 학습을 돌릴 수 있습니다.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudGrid>
+        @foreach (var d in _datasets)
+        {
+            var stats = d.Stats;
+            var progress = stats is null || stats.ImageCount == 0 ? 0 : 100.0 * stats.Labeled / stats.ImageCount;
+            <MudItem xs="12" sm="6" md="4">
+                <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                    <div class="d-flex justify-space-between align-start">
+                        <MudText Typo="Typo.subtitle1">@d.Name</MudText>
+                        <MudChip T="string" Size="Size.Small">@Display.TaskTypeText(d.TaskType)</MudChip>
+                    </div>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        클래스 @(d.Classes.Length)개 · @string.Join(", ", d.Classes.Take(4))@(d.Classes.Length > 4 ? " …" : "")
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(d.Description))
+                    {
+                        <MudText Typo="Typo.body2" Class="mt-2">@d.Description</MudText>
+                    }
+
+                    @if (stats is not null)
+                    {
+                        <MudProgressLinear Color="Color.Success" Value="@progress" Class="mt-3" />
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                            이미지 @stats.ImageCount · 라벨 @stats.Labeled · 검토 @stats.Reviewed
+                        </MudText>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                            학습 @stats.TrainCount / 검증 @stats.ValCount / 시험 @stats.TestCount
+                        </MudText>
+                    }
+
+                    <div class="d-flex gap-2 mt-3">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Href="@($"/datasets/{d.Id}")">열기</MudButton>
+                        <AuthorizeView Roles="Labeler,Engineer,Admin" Context="auth">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                       Disabled="@(stats is null || stats.Unlabeled == 0)"
+                                       Href="@($"/datasets/{d.Id}/label")">라벨링</MudButton>
+                        </AuthorizeView>
+                    </div>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<MudDialog @bind-Visible="_createOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">새 데이터셋</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_name" Label="이름" Immediate="true" Placeholder="라인A 스크래치 2026-09" />
+        <MudSelect T="TaskType" Value="_taskType" ValueChanged="OnTaskTypeChanged" Label="작업 유형" Class="mt-3"
+                   HelperText="만든 뒤에는 바꿀 수 없습니다">
+            @foreach (var t in Enum.GetValues<TaskType>())
+            {
+                <MudSelectItem T="TaskType" Value="@t">@Display.TaskTypeText(t) — @ShapeHint(t)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_classes" Label="클래스 (쉼표 구분)" Class="mt-3" Immediate="true"
+                      HelperText="@ClassHint" />
+        <MudTextField @bind-Value="_description" Label="설명" Class="mt-3" Lines="2" />
+        @if (_createError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_createError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _createOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_creating || string.IsNullOrWhiteSpace(_name))" OnClick="CreateAsync">만들기</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<DatasetDto> _datasets = [];
+    private bool _loading = true;
+    private string? _error;
+
+    private bool _createOpen, _creating;
+    private string _name = "", _classes = "", _description = "";
+    private TaskType _taskType = TaskType.Detection;
+    private string? _createError;
+
+    private string ClassHint => _taskType == TaskType.Anomaly
+        ? "정상 클래스가 필요합니다 (good·normal·ok·정상 중 하나)"
+        : "순서가 학습에 쓰이는 클래스 번호가 됩니다";
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _datasets = await Api.DatasetListAsync();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private void OpenCreate()
+    {
+        _name = _classes = _description = "";
+        _taskType = TaskType.Detection;
+        _createError = null;
+        _createOpen = true;
+    }
+
+    private void OnTaskTypeChanged(TaskType taskType)
+    {
+        _taskType = taskType;
+        // 이상탐지는 정상 클래스가 있어야 하므로 기본값을 채워 준다
+        if (taskType == TaskType.Anomaly && string.IsNullOrWhiteSpace(_classes)) _classes = "good, defect";
+    }
+
+    private async Task CreateAsync()
+    {
+        _createError = null;
+        var classes = _classes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (classes.Length == 0) { _createError = "클래스를 1개 이상 입력하세요."; return; }
+
+        _creating = true;
+        try
+        {
+            var created = await Api.CreateDatasetAsync(new CreateDatasetRequest(_name, _taskType, classes,
+                string.IsNullOrWhiteSpace(_description) ? null : _description));
+            Snackbar.Add($"데이터셋 '{created.Name}' 을 만들었습니다", Severity.Success);
+            _createOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _createError = ex.Describe(); }
+        finally { _creating = false; }
+    }
+
+    private static string ShapeHint(TaskType t) =>
+        string.Join(", ", t.AllowedFor().Select(Display.ShapeText));
+}

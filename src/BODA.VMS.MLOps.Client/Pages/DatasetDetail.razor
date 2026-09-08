@@ -1,0 +1,399 @@
+@page "/datasets/{Id:guid}"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>@(_dataset?.Name ?? "데이터셋") · MLOps</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_error</MudAlert>
+}
+@if (_dataset is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudBreadcrumbs Items="@(new List<BreadcrumbItem> {
+        new("데이터셋", "/datasets"), new(_dataset.Name, null, disabled: true) })" Class="pa-0 mb-2" />
+
+    <div class="d-flex justify-space-between align-start mb-3">
+        <div>
+            <MudText Typo="Typo.h5" HtmlTag="h1">@_dataset.Name</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                @Display.TaskTypeText(_dataset.TaskType) · 클래스 [@string.Join(", ", _dataset.Classes)]
+            </MudText>
+        </div>
+        <div class="d-flex gap-2">
+            <AuthorizeView Roles="Labeler,Engineer,Admin">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Draw"
+                           Href="@($"/datasets/{Id}/label")">라벨링 시작</MudButton>
+            </AuthorizeView>
+            <AuthorizeView Roles="Engineer,Admin" Context="eng">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PhotoCamera"
+                           OnClick="@(() => _uploadOpen = true)">이미지 올리기</MudButton>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Archive"
+                           OnClick="@(() => _snapshotOpen = true)">버전 만들기</MudButton>
+            </AuthorizeView>
+        </div>
+    </div>
+
+    @if (_dataset.Stats is { } stats)
+    {
+        <MudGrid Class="mb-2">
+            <MudItem xs="6" sm="3"><StatCard Title="이미지" Value="@stats.ImageCount.ToString()" Icon="@Icons.Material.Filled.PhotoLibrary" /></MudItem>
+            <MudItem xs="6" sm="3"><StatCard Title="라벨 완료" Value="@stats.Labeled.ToString()" Icon="@Icons.Material.Filled.Draw"
+                                             Sub="@($"미라벨 {stats.Unlabeled}")" Color="Color.Info" /></MudItem>
+            <MudItem xs="6" sm="3"><StatCard Title="검토 완료" Value="@stats.Reviewed.ToString()" Icon="@Icons.Material.Filled.FactCheck" Color="Color.Success" /></MudItem>
+            <MudItem xs="6" sm="3"><StatCard Title="분할" Value="@($"{stats.TrainCount}/{stats.ValCount}/{stats.TestCount}")"
+                                             Icon="@Icons.Material.Filled.CallSplit" Sub="학습/검증/시험" /></MudItem>
+        </MudGrid>
+
+        @if (stats.PerClass.Count > 0)
+        {
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">클래스별 라벨 수</MudText>
+                <div class="d-flex flex-wrap gap-2 mt-1">
+                    @foreach (var kv in stats.PerClass.OrderByDescending(k => k.Value))
+                    {
+                        <MudChip T="string" Size="Size.Small">@kv.Key: @kv.Value</MudChip>
+                    }
+                </div>
+            </MudPaper>
+        }
+    }
+
+    <MudPaper Class="pa-3 mb-3" Outlined="true">
+        <div class="d-flex flex-wrap gap-3 align-center">
+            <MudSelect T="LabelStatus?" Value="_status" ValueChanged="OnStatusChanged" Label="라벨 상태"
+                       Clearable="true" Margin="Margin.Dense" Style="min-width:160px">
+                @foreach (var s in Enum.GetValues<LabelStatus>())
+                {
+                    <MudSelectItem T="LabelStatus?" Value="@s">@Display.LabelStatusText(s)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField @bind-Value="_search" Label="파일명 검색" Margin="Margin.Dense" Immediate="true"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          OnKeyUp="OnSearchKeyAsync" Style="min-width:200px" />
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => LoadImagesAsync())">조회</MudButton>
+            <MudSpacer />
+            @if (_selectedIds.Count > 0)
+            {
+                <MudText Typo="Typo.body2">@(_selectedIds.Count)장 선택</MudText>
+                <AuthorizeView Roles="Labeler,Engineer,Admin">
+                    <MudMenu Label="분할 지정" Variant="Variant.Outlined" Size="Size.Small">
+                        @foreach (var split in Enum.GetValues<DatasetSplit>())
+                        {
+                            <MudMenuItem OnClick="@(() => SetSplitAsync(split))">@Display.SplitText(split)</MudMenuItem>
+                        }
+                    </MudMenu>
+                </AuthorizeView>
+                <AuthorizeView Roles="Engineer,Admin" Context="eng">
+                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" OnClick="RemoveSelectedAsync">데이터셋에서 빼기</MudButton>
+                </AuthorizeView>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => { _selectedIds.Clear(); })">선택 해제</MudButton>
+            }
+            <AuthorizeView Roles="Engineer,Admin" Context="eng2">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.CallSplit"
+                           OnClick="AutoSplitAsync">자동 분할 8:2</MudButton>
+            </AuthorizeView>
+        </div>
+    </MudPaper>
+
+    @if (_loadingImages)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (_images.Count == 0)
+    {
+        <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+            <MudIcon Icon="@Icons.Material.Filled.PhotoLibrary" Size="Size.Large" Class="mud-text-secondary" />
+            <MudText Typo="Typo.body1" Class="mt-2">조건에 맞는 이미지가 없습니다.</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px">
+            @foreach (var image in _images)
+            {
+                var selected = _selectedIds.Contains(image.Id);
+                <MudPaper Elevation="@(selected ? 6 : 1)" Class="pa-1"
+                          Style="@($"position:relative; cursor:pointer; outline:{(selected ? "3px solid var(--mud-palette-primary)" : "none")}")"
+                          @onclick="@(() => Toggle(image.Id))">
+                    <img src="@image.ThumbnailUrl" alt="@image.FileName" loading="lazy"
+                         style="width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:3px; display:block" />
+                    <div style="position:absolute; top:6px; left:6px; display:flex; gap:4px">
+                        <MudChip T="string" Size="Size.Small" Color="@Display.LabelStatusColor(image.LabelStatus ?? LabelStatus.Unlabeled)">
+                            @Display.LabelStatusText(image.LabelStatus ?? LabelStatus.Unlabeled)
+                        </MudChip>
+                        @if (image.Split is { } split)
+                        {
+                            <MudChip T="string" Size="Size.Small">@Display.SplitText(split)</MudChip>
+                        }
+                    </div>
+                    @if (image.LockedBy is { } locker)
+                    {
+                        <div style="position:absolute; top:6px; right:6px">
+                            <MudTooltip Text="@($"{locker} 작업 중")">
+                                <MudIcon Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" Size="Size.Small" />
+                            </MudTooltip>
+                        </div>
+                    }
+                    <div class="pa-1">
+                        <MudText Typo="Typo.caption" Style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                            @image.FileName
+                        </MudText>
+                        <div class="d-flex justify-space-between align-center">
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                @image.Width×@image.Height · 라벨 @(image.AnnotationCount ?? 0)
+                            </MudText>
+                            <MudIconButton Icon="@Icons.Material.Filled.Draw" Size="Size.Small"
+                                           Href="@($"/datasets/{Id}/label/{image.Id}")" aria-label="라벨링" />
+                        </div>
+                    </div>
+                </MudPaper>
+            }
+        </div>
+
+        @if (_total > _images.Count)
+        {
+            <div class="d-flex justify-center mt-4">
+                <MudButton Variant="Variant.Outlined" OnClick="LoadMoreAsync" Disabled="@_loadingImages">
+                    더 보기 (@_images.Count / @_total)
+                </MudButton>
+            </div>
+        }
+    }
+}
+
+@* ── 이미지 업로드 ── *@
+<MudDialog @bind-Visible="_uploadOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">이미지 올리기</MudText></TitleContent>
+    <DialogContent>
+        <MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="OnFilesPicked" Accept=".jpg,.jpeg,.png,.bmp,.webp"
+                       MaximumFileCount="500">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AttachFile" FullWidth="true">
+                    @(_files.Count == 0 ? "이미지 선택 (여러 장 가능)" : $"{_files.Count}장 선택됨")
+                </MudButton>
+            </ActivatorContent>
+        </MudFileUpload>
+
+        <MudTextField @bind-Value="_uploadTags" Label="태그 (쉼표 구분, 선택)" Class="mt-3" Placeholder="야간, 재검" />
+        <MudTextField @bind-Value="_uploadLineId" Label="라인 ID (선택)" Class="mt-3" />
+        <MudCheckBox T="bool" @bind-Value="_addToDataset" Label="올린 뒤 이 데이터셋에 담기" Class="mt-2" />
+
+        @if (_uploading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mt-3" />
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@_uploadProgress</MudText>
+        }
+        @if (_uploadError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_uploadError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _uploadOpen = false)" Disabled="@_uploading">닫기</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_files.Count == 0 || _uploading)"
+                   OnClick="UploadAsync">올리기</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── 스냅샷 ── *@
+<MudDialog @bind-Visible="_snapshotOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">데이터셋 버전 만들기</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+            지금의 이미지와 라벨을 그대로 굳혀 학습이 대상으로 삼을 버전을 만듭니다. 만든 뒤에는 바뀌지 않습니다.
+        </MudText>
+        <MudTextField @bind-Value="_snapshotName" Label="버전 이름 (선택)" Placeholder="비우면 날짜로 지정됩니다" />
+        <MudCheckBox T="bool" @bind-Value="_reviewedOnly" Label="검토를 마친 이미지만 담기" Class="mt-2" />
+        <MudCheckBox T="bool" @bind-Value="_includeUnlabeled" Label="라벨 없는 이미지도 담기 (배경 샘플)" Class="mt-1" />
+        @if (_snapshotError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_snapshotError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _snapshotOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@_snapshotting" OnClick="CreateSnapshotAsync">만들기</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private DatasetDto? _dataset;
+    private List<ImageDto> _images = [];
+    private readonly HashSet<Guid> _selectedIds = [];
+    private int _total;
+    private bool _loadingImages;
+    private string? _error;
+
+    private LabelStatus? _status;
+    private string _search = "";
+
+    private bool _uploadOpen, _uploading, _addToDataset = true;
+    private IReadOnlyList<IBrowserFile> _files = [];
+    private string _uploadTags = "", _uploadLineId = "", _uploadProgress = "";
+    private string? _uploadError;
+
+    private bool _snapshotOpen, _snapshotting, _reviewedOnly, _includeUnlabeled;
+    private string _snapshotName = "";
+    private string? _snapshotError;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _dataset = await Api.DatasetAsync(Id);
+            await LoadImagesAsync();
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    private async Task LoadImagesAsync(bool append = false)
+    {
+        _loadingImages = true;
+        try
+        {
+            var page = await Api.ImagesAsync(Id, inDataset: true, labelStatus: _status,
+                search: string.IsNullOrWhiteSpace(_search) ? null : _search,
+                skip: append ? _images.Count : 0, take: 60);
+            _images = append ? [.. _images, .. page.Items] : page.Items.ToList();
+            _total = page.Total;
+            if (!append) _selectedIds.Clear();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loadingImages = false; }
+    }
+
+    private Task LoadMoreAsync() => LoadImagesAsync(append: true);
+
+    private async Task OnStatusChanged(LabelStatus? status)
+    {
+        _status = status;
+        await LoadImagesAsync();
+    }
+
+    private async Task OnSearchKeyAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadImagesAsync();
+    }
+
+    private void Toggle(Guid imageId)
+    {
+        if (!_selectedIds.Add(imageId)) _selectedIds.Remove(imageId);
+    }
+
+    private void OnFilesPicked(IReadOnlyList<IBrowserFile> files)
+    {
+        _files = files;
+        _uploadError = null;
+    }
+
+    private async Task UploadAsync()
+    {
+        _uploading = true;
+        _uploadError = null;
+        try
+        {
+            var tags = _uploadTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var uploaded = new List<Guid>();
+            var errors = new List<string>();
+
+            // 한 번에 다 보내면 큰 요청 하나가 되어 실패 시 전부 날아간다. 묶음으로 나눠 보낸다.
+            const int batchSize = 10;
+            for (int i = 0; i < _files.Count; i += batchSize)
+            {
+                var batch = _files.Skip(i).Take(batchSize).ToList();
+                _uploadProgress = $"{i + 1}~{Math.Min(i + batch.Count, _files.Count)} / {_files.Count}장";
+                StateHasChanged();
+
+                var streams = batch.Select(f => (f.Name, (Stream)f.OpenReadStream(maxAllowedSize: 64L * 1024 * 1024))).ToList();
+                try
+                {
+                    var result = await Api.UploadImagesAsync(streams, ImageSource.Manual,
+                        string.IsNullOrWhiteSpace(_uploadLineId) ? null : _uploadLineId, tags);
+                    uploaded.AddRange(result.Results.Select(r => r.Image.Id));
+                    errors.AddRange(result.Errors);
+                }
+                finally
+                {
+                    foreach (var (_, stream) in streams) await stream.DisposeAsync();
+                }
+            }
+
+            if (_addToDataset && uploaded.Count > 0)
+                await Api.AddImagesAsync(Id, uploaded.Distinct().ToArray(), DatasetSplit.Train);
+
+            Snackbar.Add($"{uploaded.Count}장 처리했습니다", Severity.Success);
+            foreach (var e in errors.Take(5)) Snackbar.Add(e, Severity.Warning);
+
+            _uploadOpen = false;
+            _files = [];
+            _dataset = await Api.DatasetAsync(Id);
+            await LoadImagesAsync();
+        }
+        catch (MlopsApiException ex) { _uploadError = ex.Describe(); }
+        catch (IOException ex) { _uploadError = $"파일을 읽지 못했습니다: {ex.Message}"; }
+        finally { _uploading = false; _uploadProgress = ""; }
+    }
+
+    private async Task SetSplitAsync(DatasetSplit split)
+    {
+        try
+        {
+            await Api.SetSplitAsync(Id, _selectedIds.ToArray(), split);
+            Snackbar.Add($"{_selectedIds.Count}장을 {Display.SplitText(split)} 으로 옮겼습니다", Severity.Success);
+            _dataset = await Api.DatasetAsync(Id);
+            await LoadImagesAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task RemoveSelectedAsync()
+    {
+        try
+        {
+            await Api.RemoveImagesAsync(Id, _selectedIds.ToArray());
+            Snackbar.Add("데이터셋에서 뺐습니다. 이미지는 풀에 남아 있습니다.", Severity.Success);
+            _dataset = await Api.DatasetAsync(Id);
+            await LoadImagesAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task AutoSplitAsync()
+    {
+        try
+        {
+            var counts = await Api.AutoSplitAsync(Id, 0.8, 0.2);
+            Snackbar.Add($"학습 {counts.GetValueOrDefault("train")} · 검증 {counts.GetValueOrDefault("val")} 으로 나눴습니다", Severity.Success);
+            _dataset = await Api.DatasetAsync(Id);
+            await LoadImagesAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task CreateSnapshotAsync()
+    {
+        _snapshotting = true;
+        _snapshotError = null;
+        try
+        {
+            var version = await Api.CreateSnapshotAsync(Id,
+                new CreateSnapshotRequest(string.IsNullOrWhiteSpace(_snapshotName) ? null : _snapshotName,
+                    _includeUnlabeled, _reviewedOnly));
+            Snackbar.Add($"버전 '{version.Name}' 을 만들었습니다 (이미지 {version.ImageCount}장)", Severity.Success);
+            _snapshotOpen = false;
+            Nav.NavigateTo("/dataset-versions");
+        }
+        catch (MlopsApiException ex) { _snapshotError = ex.Describe(); }
+        finally { _snapshotting = false; }
+    }
+}

@@ -1,0 +1,525 @@
+@page "/datasets/{DatasetId:guid}/label/{ImageId:guid?}"
+@attribute [Authorize(Roles = "Labeler,Engineer,Admin")]
+@implements IAsyncDisposable
+@inject MlopsApi Api
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>라벨링 · MLOps</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_error</MudAlert>
+}
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <div class="d-flex align-center gap-3">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Href="@($"/datasets/{DatasetId}")" aria-label="데이터셋으로" />
+        <div>
+            <MudText Typo="Typo.h6" HtmlTag="h1">@(_dataset?.Name ?? "라벨링")</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                @(_dataset is null ? "" : Display.TaskTypeText(_dataset.TaskType))
+                @if (_image is not null)
+                {
+                    <span> · @_image.FileName (@_image.Width×@_image.Height)</span>
+                }
+            </MudText>
+        </div>
+    </div>
+    <div class="d-flex align-center gap-2">
+        @if (_labels is { LockedByMe: false, LockedBy: not null })
+        {
+            <MudChip T="string" Color="Color.Warning" Icon="@Icons.Material.Filled.Lock">@_labels.LockedBy 작업 중</MudChip>
+        }
+        <MudChip T="string" Size="Size.Small" Color="@StatusColor">@Display.LabelStatusText(_labels?.Status ?? LabelStatus.Unlabeled)</MudChip>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.NavigateBefore"
+                   Disabled="@(_prevId is null)" OnClick="@(() => GoToAsync(_prevId))">이전</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Check"
+                   Disabled="@(_saving || ReadOnly)" OnClick="SaveAndNextAsync">
+            @(_saving ? "저장 중…" : "저장하고 다음")
+        </MudButton>
+    </div>
+</div>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" md="9">
+        <MudPaper Elevation="1" Class="pa-2">
+            <div class="d-flex align-center gap-2 mb-2 flex-wrap">
+                @if (_shapes.Length > 1)
+                {
+                    <MudToggleGroup T="string" Value="_mode" ValueChanged="SetModeAsync" Size="Size.Small" Color="Color.Primary">
+                        @foreach (var shape in _shapes)
+                        {
+                            <MudToggleItem T="string" Value="@ModeOf(shape)" Text="@Display.ShapeText(shape)" />
+                        }
+                    </MudToggleGroup>
+                }
+                <MudIconButton Icon="@Icons.Material.Filled.ZoomIn" Size="Size.Small" OnClick="@(() => ZoomAsync(1.25))" aria-label="확대" />
+                <MudIconButton Icon="@Icons.Material.Filled.ZoomOut" Size="Size.Small" OnClick="@(() => ZoomAsync(0.8))" aria-label="축소" />
+                <MudIconButton Icon="@Icons.Material.Filled.FitScreen" Size="Size.Small" OnClick="FitAsync" aria-label="맞춤" />
+                @if (_mode == "polygon")
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="FinishPolygonAsync"
+                               StartIcon="@Icons.Material.Filled.Done">폴리곤 닫기 (Enter)</MudButton>
+                }
+                <MudSpacer />
+                <MudSwitch T="bool" Value="_useOriginal" ValueChanged="ToggleOriginalAsync" Color="Color.Primary"
+                           Label="원본 해상도" />
+            </div>
+
+            <canvas id="@CanvasId" style="width:100%; height:calc(100vh - 300px); min-height:420px; border-radius:4px; touch-action:none;"></canvas>
+
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1 d-block">
+                끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음 클래스 · Delete 삭제 · Esc 선택 해제
+                @if (_mode == "polygon")
+                {
+                    <span> · 클릭으로 점 추가, 오른쪽 클릭이나 Enter 로 닫기</span>
+                }
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="3">
+        <MudPaper Elevation="1" Class="pa-3 mb-2">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">클래스</MudText>
+            @if (_classes.Length == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">클래스가 없습니다.</MudText>
+            }
+            else
+            {
+                <div class="d-flex flex-column gap-1">
+                    @for (int i = 0; i < _classes.Length; i++)
+                    {
+                        var index = i;
+                        var cls = _classes[i];
+                        <MudButton Variant="@(cls == _activeClass ? Variant.Filled : Variant.Outlined)"
+                                   Color="Color.Primary" Size="Size.Small" FullWidth="true"
+                                   Disabled="@ReadOnly" OnClick="@(() => PickClassAsync(cls))"
+                                   Style="@($"justify-content:flex-start; border-left:6px solid {ColorOf(index)}")">
+                            <span style="opacity:.6; margin-right:8px">@(index + 1)</span> @cls
+                        </MudButton>
+                    }
+                </div>
+            }
+        </MudPaper>
+
+        <MudPaper Elevation="1" Class="pa-3 mb-2">
+            <div class="d-flex justify-space-between align-center mb-1">
+                <MudText Typo="Typo.subtitle2">라벨 (@_annotations.Count)</MudText>
+                @if (_dirty)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">저장 안 됨</MudChip>
+                }
+            </div>
+            @if (_annotations.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">아직 없습니다.</MudText>
+            }
+            else
+            {
+                <MudList T="string" Dense="true">
+                    @for (int i = 0; i < _annotations.Count; i++)
+                    {
+                        var index = i;
+                        var a = _annotations[i];
+                        <MudListItem T="string" OnClick="@(() => SelectAsync(index))"
+                                     Style="@(index == _selected ? "background: var(--mud-palette-action-default-hover)" : "")">
+                            <div class="d-flex justify-space-between align-center">
+                                <div>
+                                    <MudText Typo="Typo.body2">
+                                        <span style="@($"color:{ColorOf(Array.IndexOf(_classes, a.ClassName))}")">■</span>
+                                        @a.ClassName
+                                    </MudText>
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                        @Display.ShapeText(a.Shape)@(a.Text is { Length: > 0 } t ? $" · {t}" : "")
+                                    </MudText>
+                                </div>
+                                <div class="d-flex align-center">
+                                    <MudMenu Icon="@Icons.Material.Filled.Palette" Size="Size.Small" Disabled="@ReadOnly"
+                                             aria-label="클래스 바꾸기">
+                                        @foreach (var cls in _classes)
+                                        {
+                                            <MudMenuItem OnClick="@(() => ChangeClassAsync(index, cls))">@cls</MudMenuItem>
+                                        }
+                                    </MudMenu>
+                                    @if (a.Shape == AnnotationShape.Text)
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                                       Disabled="@ReadOnly" OnClick="@(() => EditTextAsync(index))" />
+                                    }
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                                   Disabled="@ReadOnly" OnClick="@(() => DeleteAsync(index))" />
+                                </div>
+                            </div>
+                        </MudListItem>
+                    }
+                </MudList>
+            }
+        </MudPaper>
+
+        <MudPaper Elevation="1" Class="pa-3">
+            <MudText Typo="Typo.subtitle2" Class="mb-2">진행</MudText>
+            @if (_dataset?.Stats is { } stats)
+            {
+                <MudProgressLinear Color="Color.Success" Value="@(stats.ImageCount == 0 ? 0 : 100.0 * stats.Labeled / stats.ImageCount)" Class="mb-1" />
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    라벨 @stats.Labeled / @stats.ImageCount · 검토 @stats.Reviewed
+                </MudText>
+            }
+            <AuthorizeView Roles="Engineer,Admin">
+                <div class="d-flex gap-2 mt-3">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
+                               Disabled="@(_labels?.Status is null or LabelStatus.Unlabeled)" OnClick="@(() => ReviewAsync(true))">검토 승인</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               Disabled="@(_labels?.Status != LabelStatus.Reviewed)" OnClick="@(() => ReviewAsync(false))">반려</MudButton>
+                </div>
+            </AuthorizeView>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+<MudDialog @bind-Visible="_textOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">텍스트 입력</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_textValue" Label="인식 문자열" Immediate="true" AutoFocus="true"
+                      HelperText="이 영역이 담고 있는 글자를 그대로 적습니다" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _textOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="ApplyTextAsync">적용</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public Guid DatasetId { get; set; }
+    [Parameter] public Guid? ImageId { get; set; }
+
+    private const string CanvasId = "label-canvas";
+
+    private DatasetDto? _dataset;
+    private ImageDto? _image;
+    private ImageLabelsDto? _labels;
+    private List<AnnotationDto> _annotations = [];
+    private string[] _classes = [];
+    private AnnotationShape[] _shapes = [];
+    private string _activeClass = "";
+    private string _mode = "box";
+    private int _selected = -1;
+    private bool _dirty, _saving, _useOriginal;
+    private string? _error;
+    private Guid? _prevId;
+
+    private bool _textOpen;
+    private string _textValue = "";
+    private int _textIndex = -1;
+
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<Labeling>? _self;
+    private bool _canvasReady;
+
+    private bool ReadOnly => _labels is { LockedByMe: false, LockedBy: not null };
+    private Color StatusColor => Display.LabelStatusColor(_labels?.Status ?? LabelStatus.Unlabeled);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _self = DotNetObjectReference.Create(this);
+        try
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/label-canvas.js");
+        }
+        catch (JSException ex)
+        {
+            _error = $"캔버스를 불러오지 못했습니다: {ex.Message}";
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_dataset?.Id != DatasetId)
+        {
+            _dataset = await Api.DatasetAsync(DatasetId);
+            _classes = _dataset.Classes;
+            _shapes = _dataset.TaskType.AllowedFor();
+            _mode = ModeOf(_shapes.FirstOrDefault());
+            _activeClass = _classes.FirstOrDefault() ?? "";
+        }
+
+        // 이미지가 지정되지 않으면 다음 라벨링 대상으로 보낸다
+        if (ImageId is null)
+        {
+            var next = await Api.NextToLabelAsync(DatasetId, null);
+            if (next.ImageId is { } id) { Nav.NavigateTo($"/datasets/{DatasetId}/label/{id}"); return; }
+            _error = "라벨링할 이미지가 없습니다.";
+            return;
+        }
+
+        await LoadImageAsync(ImageId.Value);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_module is null || _canvasReady || _image is null) return;
+        try
+        {
+            await _module.InvokeVoidAsync("create", CanvasId, _self, new
+            {
+                mode = _mode,
+                classes = _classes,
+                readOnly = ReadOnly,
+            });
+            _canvasReady = true;
+            await RenderCurrentAsync();
+        }
+        catch (JSException ex) { _error = ex.Message; }
+    }
+
+    private async Task LoadImageAsync(Guid imageId)
+    {
+        _error = null;
+        try
+        {
+            _image = await Api.ImageAsync(imageId);
+            // 잠금을 잡아야 남이 같은 이미지를 고치지 않는다
+            try { _labels = await Api.LockImageAsync(DatasetId, imageId); }
+            catch (MlopsApiException ex) when (ex.Status == System.Net.HttpStatusCode.Conflict)
+            {
+                _labels = await Api.LabelsAsync(DatasetId, imageId);
+                Snackbar.Add(ex.Message, Severity.Warning);
+            }
+            _annotations = _labels.Annotations.ToList();
+            _selected = -1;
+            _dirty = false;
+            _dataset = await Api.DatasetAsync(DatasetId);
+            if (_canvasReady) await RenderCurrentAsync();
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    private async Task RenderCurrentAsync()
+    {
+        if (_module is null || _image is null) return;
+        // 새 이미지를 올리기 전에 먼저 비운다. 남겨 두면 로딩 중에 이전 이미지의 라벨이 보이고,
+        // 그 상태에서 사용자가 손대면 엉뚱한 이미지에 라벨이 붙는다.
+        await _module.InvokeVoidAsync("setAnnotations", CanvasId, Array.Empty<object>());
+        await _module.InvokeVoidAsync("setReadOnly", CanvasId, ReadOnly);
+        await _module.InvokeVoidAsync("setMode", CanvasId, _mode);
+        await _module.InvokeVoidAsync("setActiveClass", CanvasId, _activeClass);
+        await _module.InvokeVoidAsync("loadImage", CanvasId, _useOriginal ? _image.OriginalUrl : _image.ViewUrl);
+        await _module.InvokeVoidAsync("setAnnotations", CanvasId, _annotations.Select(ToJs).ToArray());
+        _dirty = false;
+    }
+
+    // ───────────── 캔버스 → Blazor ─────────────
+
+    [JSInvokable]
+    public Task OnAnnotationsChanged(JsAnnotation[] annotations)
+    {
+        _annotations = annotations.Select(FromJs).ToList();
+        _dirty = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnSelectionChanged(int index)
+    {
+        _selected = index;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnClassChanged(string className)
+    {
+        _activeClass = className;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>OCR 은 사각형을 그리자마자 텍스트를 받아야 쓸모가 있다</summary>
+    [JSInvokable]
+    public Task OnTextRequested(int index)
+    {
+        _textIndex = index;
+        _textValue = index >= 0 && index < _annotations.Count ? _annotations[index].Text ?? "" : "";
+        _textOpen = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    public sealed record JsAnnotation(string Shape, string ClassName, double? X, double? Y, double? W, double? H,
+        double[][]? Points, string? Text);
+
+    private static object ToJs(AnnotationDto a) => new
+    {
+        shape = a.Shape.ToString().ToLowerInvariant(),
+        className = a.ClassName,
+        x = a.X, y = a.Y, w = a.W, h = a.H,
+        points = a.Points,
+        text = a.Text,
+    };
+
+    private static AnnotationDto FromJs(JsAnnotation a) => new(
+        Enum.Parse<AnnotationShape>(a.Shape, ignoreCase: true), a.ClassName,
+        a.X, a.Y, a.W, a.H, a.Points, a.Text);
+
+    // ───────────── 조작 ─────────────
+
+    private async Task SetModeAsync(string mode)
+    {
+        _mode = mode;
+        if (_module is not null) await _module.InvokeVoidAsync("setMode", CanvasId, mode);
+    }
+
+    private async Task PickClassAsync(string className)
+    {
+        _activeClass = className;
+        if (_module is null) return;
+        // 분류·이상탐지는 클래스를 고르는 것이 곧 라벨을 붙이는 것이다
+        if (_mode == "classification") await _module.InvokeVoidAsync("setClassification", CanvasId, className);
+        else await _module.InvokeVoidAsync("setActiveClass", CanvasId, className);
+    }
+
+    /// <summary>이미 붙은 라벨의 클래스를 바꾼다. 클래스 버튼과 숫자키는 다음에 그릴 것만 정한다.</summary>
+    private async Task ChangeClassAsync(int index, string className)
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("setAnnotationClass", CanvasId, index, className);
+    }
+
+    private async Task SelectAsync(int index)
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("selectAnnotation", CanvasId, index);
+    }
+
+    private async Task DeleteAsync(int index)
+    {
+        if (_module is null) return;
+        await _module.InvokeVoidAsync("selectAnnotation", CanvasId, index);
+        await _module.InvokeVoidAsync("deleteSelected", CanvasId);
+    }
+
+    private async Task EditTextAsync(int index)
+    {
+        _textIndex = index;
+        _textValue = _annotations[index].Text ?? "";
+        _textOpen = true;
+        await Task.CompletedTask;
+    }
+
+    private async Task ApplyTextAsync()
+    {
+        if (_module is not null && _textIndex >= 0)
+            await _module.InvokeVoidAsync("setText", CanvasId, _textIndex, _textValue);
+        _textOpen = false;
+    }
+
+    private async Task ZoomAsync(double factor)
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("zoom", CanvasId, factor);
+    }
+
+    private async Task FitAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("fit", CanvasId);
+    }
+
+    private async Task FinishPolygonAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("finishPolygon", CanvasId);
+    }
+
+    /// <summary>확대해서 세밀하게 볼 때만 원본을 받는다. 기본은 축소본이라 빠르다.</summary>
+    private async Task ToggleOriginalAsync(bool useOriginal)
+    {
+        _useOriginal = useOriginal;
+        if (_module is not null && _image is not null)
+        {
+            await _module.InvokeVoidAsync("loadImage", CanvasId, useOriginal ? _image.OriginalUrl : _image.ViewUrl);
+            await _module.InvokeVoidAsync("setAnnotations", CanvasId, _annotations.Select(ToJs).ToArray());
+        }
+    }
+
+    // ───────────── 저장 ─────────────
+
+    private async Task<bool> SaveAsync(bool markLabeled)
+    {
+        if (ReadOnly) { Snackbar.Add("다른 사람이 작업 중이라 저장할 수 없습니다.", Severity.Warning); return false; }
+        _saving = true;
+        try
+        {
+            _labels = await Api.SaveLabelsAsync(DatasetId, ImageId!.Value, new SaveLabelsRequest(_annotations, markLabeled));
+            _annotations = _labels.Annotations.ToList();
+            _dirty = false;
+            return true;
+        }
+        catch (MlopsApiException ex)
+        {
+            Snackbar.Add(ex.Describe(), Severity.Error);
+            return false;
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task SaveAndNextAsync()
+    {
+        if (!await SaveAsync(markLabeled: true)) return;
+        Snackbar.Add("저장했습니다", Severity.Success);
+
+        var next = await Api.NextToLabelAsync(DatasetId, ImageId);
+        if (next.ImageId is { } id) await GoToAsync(id);
+        else Snackbar.Add("라벨링할 이미지가 더 없습니다", Severity.Info);
+    }
+
+    private async Task GoToAsync(Guid? imageId)
+    {
+        if (imageId is null) return;
+        // 넘어가기 전에 지금 이미지의 잠금을 풀어 다른 사람이 이어받게 한다
+        if (ImageId is { } current) await Api.UnlockImageAsync(DatasetId, current);
+        _prevId = ImageId;
+        Nav.NavigateTo($"/datasets/{DatasetId}/label/{imageId}");
+    }
+
+    private async Task ReviewAsync(bool approved)
+    {
+        try
+        {
+            if (_dirty && !await SaveAsync(markLabeled: true)) return;
+            _labels = await Api.ReviewAsync(DatasetId, ImageId!.Value, approved);
+            _dataset = await Api.DatasetAsync(DatasetId);
+            Snackbar.Add(approved ? "검토 승인" : "반려했습니다", Severity.Success);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private static string ModeOf(AnnotationShape shape) => shape switch
+    {
+        AnnotationShape.Polygon => "polygon",
+        AnnotationShape.Classification => "classification",
+        AnnotationShape.Text => "text",
+        _ => "box",
+    };
+
+    private static string ColorOf(int index)
+    {
+        string[] palette = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00acc1", "#fdd835", "#6d4c41", "#3949ab", "#d81b60"];
+        return palette[(index < 0 ? 0 : index) % palette.Length];
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (ImageId is { } id && _labels?.LockedByMe == true) await Api.UnlockImageAsync(DatasetId, id);
+        }
+        catch (Exception) { /* 나가는 길이라 실패해도 잠금은 시간이 지나면 풀린다 */ }
+
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("destroy", CanvasId); await _module.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+        }
+        _self?.Dispose();
+    }
+}

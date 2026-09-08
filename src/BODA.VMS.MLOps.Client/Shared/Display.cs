@@ -112,4 +112,47 @@ public static class Display
     }
 
     public static string ScriptText(TrainingScript s) => s.FileName();
+
+    // ───────────── 데이터 관리·라벨링 ─────────────
+
+    public static string LabelStatusText(LabelStatus s) => s switch
+    {
+        LabelStatus.Unlabeled => "미라벨",
+        LabelStatus.InProgress => "작업 중",
+        LabelStatus.Labeled => "라벨 완료",
+        LabelStatus.Reviewed => "검토 완료",
+        _ => s.ToString(),
+    };
+
+    public static Color LabelStatusColor(LabelStatus s) => s switch
+    {
+        LabelStatus.Reviewed => Color.Success,
+        LabelStatus.Labeled => Color.Info,
+        LabelStatus.InProgress => Color.Warning,
+        _ => Color.Default,
+    };
+
+    public static string ShapeText(AnnotationShape shape) => shape switch
+    {
+        AnnotationShape.Box => "사각형",
+        AnnotationShape.Polygon => "폴리곤",
+        AnnotationShape.Classification => "분류",
+        AnnotationShape.Text => "텍스트",
+        _ => shape.ToString(),
+    };
+
+    public static string SplitText(DatasetSplit split) => split switch
+    {
+        DatasetSplit.Train => "학습",
+        DatasetSplit.Val => "검증",
+        _ => "시험",
+    };
+
+    public static string ImageSourceText(ImageSource source) => source switch
+    {
+        ImageSource.Manual => "직접 업로드",
+        ImageSource.LineNg => "라인 NG",
+        ImageSource.ActiveLearning => "능동 학습",
+        _ => source.ToString(),
+    };
 }

@@ -75,6 +75,7 @@
         {
             await Auth.SignInAsync(token);
             var me = await Api.MeAsync();                      // 서명·역할을 서버로 확인
+            await Api.EnsureImageCookieAsync();                // img 태그가 이미지를 받을 수 있게
             Snackbar.Add($"{me.Name} 으로 로그인했습니다 ({string.Join(", ", me.Roles)})", Severity.Success);
         }
         catch (MlopsApiException ex)
@@ -95,6 +96,7 @@
             if (issued is null) { _devAvailable = false; return; }
             _token = issued.Token;
             await Auth.SignInAsync(issued.Token);
+            await Api.EnsureImageCookieAsync();
             Snackbar.Add($"{role} 로 로그인했습니다", Severity.Success);
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
