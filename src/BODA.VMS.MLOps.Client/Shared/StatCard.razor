@@ -1,0 +1,28 @@
+@* 대시보드 요약 타일 *@
+
+<MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+    <div class="d-flex justify-space-between align-start">
+        <div>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@Title</MudText>
+            <MudText Typo="Typo.h5" Class="mt-1">@Value</MudText>
+            @if (!string.IsNullOrEmpty(Sub))
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">@Sub</MudText>
+            }
+        </div>
+        <MudIcon Icon="@Icon" Color="@Color" Size="Size.Large" />
+    </div>
+    @if (!string.IsNullOrEmpty(Href))
+    {
+        <MudButton Size="Size.Small" Href="@Href" Class="mt-2" EndIcon="@Icons.Material.Filled.ChevronRight">자세히</MudButton>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "";
+    [Parameter] public string? Sub { get; set; }
+    [Parameter] public string Icon { get; set; } = Icons.Material.Filled.Info;
+    [Parameter] public Color Color { get; set; } = Color.Default;
+    [Parameter] public string? Href { get; set; }
+}

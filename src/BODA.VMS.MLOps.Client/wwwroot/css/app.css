@@ -1,0 +1,27 @@
+html, body { margin: 0; font-family: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif; }
+
+.loading-screen {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100vh; gap: .5rem; color: #37474f;
+}
+.loading-title { font-size: 1.4rem; font-weight: 600; letter-spacing: .02em; }
+.loading-sub { font-size: .9rem; color: #78909c; }
+
+#blazor-error-ui {
+    background: #ffebee; color: #b71c1c; bottom: 0; box-shadow: 0 -1px 2px rgba(0,0,0,.2);
+    display: none; left: 0; padding: .8rem 1.2rem; position: fixed; width: 100%; z-index: 1500;
+}
+#blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: .75rem; top: .5rem; }
+
+/* 해시·경로처럼 잘려도 되는 고정폭 값 */
+.mono { font-family: 'Cascadia Mono', Consolas, monospace; font-size: .82rem; }
+
+/* 학습 로그 콘솔 */
+.log-console {
+    background: #1e1e1e; color: #d4d4d4; font-family: 'Cascadia Mono', Consolas, monospace;
+    font-size: .8rem; line-height: 1.45; padding: .75rem; border-radius: 4px;
+    height: 460px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+.log-console .lvl-Error, .log-console .lvl-Stderr { color: #f48771; }
+.log-console .lvl-Warn { color: #dcdcaa; }
+.log-console .lvl-Info { color: #9cdcfe; }

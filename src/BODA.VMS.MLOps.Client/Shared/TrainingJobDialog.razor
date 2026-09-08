@@ -1,0 +1,208 @@
+@* 학습 작업 제출 (Phase 3 §9). 하이퍼파라미터 항목은 서버의 화이트리스트에서 받아 그린다. *@
+@inject MlopsApi Api
+
+<MudDialog Visible="Visible" VisibleChanged="VisibleChanged"
+           Options="new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">학습 작업 제출</MudText></TitleContent>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else
+        {
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="Guid?" @bind-Value="_datasetId" Label="데이터셋 버전" Required="true"
+                               HelperText="작업 유형과 내보내기 형식이 스크립트와 맞아야 합니다">
+                        @foreach (var d in _datasets)
+                        {
+                            <MudSelectItem T="Guid?" Value="@d.Id">
+                                @d.Name — @Display.TaskTypeText(d.TaskType) / @d.ExportFormat (@Display.Size(d.SizeBytes))
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="Guid?" @bind-Value="_modelId" Label="결과를 등록할 모델 계열" Required="true"
+                               HelperText="학습이 끝나면 여기에 후보 버전이 생깁니다">
+                        @foreach (var m in _models)
+                        {
+                            <MudSelectItem T="Guid?" Value="@m.Id">@m.Name — @Display.TaskTypeText(m.TaskType)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="TrainingScript" Value="_script" ValueChanged="OnScriptChangedAsync" Label="스크립트">
+                        @foreach (var s in Enum.GetValues<TrainingScript>())
+                        {
+                            <MudSelectItem T="TrainingScript" Value="@s">@s.FileName() (@Display.TaskTypeText(s.TaskType()))</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" @bind-Value="_pretrainedRef" Label="사전학습 가중치" Clearable="true"
+                               HelperText="서버 미러에서만 받습니다">
+                        @foreach (var p in _pretrained)
+                        {
+                            <MudSelectItem T="string" Value="@p.Ref">@p.Ref (@Display.Size(p.TotalBytes))</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_backbone" Label="백본 (선택)" HelperText="예: dfine-small" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_seed" Label="Seed" HelperText="같은 입력·seed 면 같은 결과" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_priority" Label="우선순위" HelperText="큰 값이 먼저 배정됩니다" />
+                </MudItem>
+            </MudGrid>
+
+            @if (_script == TrainingScript.TrainYolo)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-3" Dense="true">
+                    Ultralytics YOLO 는 AGPL-3.0 입니다. Enterprise License 확인 문구를 남겨야 제출됩니다.
+                </MudAlert>
+                <MudTextField @bind-Value="_license" Label="라이선스 확인" Class="mt-2" Immediate="true"
+                              Placeholder="Ultralytics Enterprise #1234" />
+            }
+
+            <MudText Typo="Typo.subtitle2" Class="mt-5">하이퍼파라미터</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                이 목록은 서버 화이트리스트입니다. 비워 두면 스크립트 기본값을 씁니다.
+            </MudText>
+            <MudGrid Class="mt-1">
+                @foreach (var spec in _specs)
+                {
+                    <MudItem xs="6" md="3">
+                        @if (spec.Choices is { Length: > 0 })
+                        {
+                            <MudSelect T="string" Value="@Get(spec.Key)" ValueChanged="@(v => Set(spec.Key, v))"
+                                       Label="@spec.Key" Clearable="true" Dense="true">
+                                @foreach (var c in spec.Choices)
+                                {
+                                    <MudSelectItem T="string" Value="@c">@c</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                        else
+                        {
+                            <MudTextField T="string" Value="@Get(spec.Key)" ValueChanged="@(v => Set(spec.Key, v))"
+                                          Label="@spec.Key" Margin="Margin.Dense" Immediate="true"
+                                          HelperText="@RangeText(spec)" Placeholder="@spec.Default" />
+                        }
+                    </MudItem>
+                }
+            </MudGrid>
+
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-4">@_error</MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => VisibleChanged.InvokeAsync(false))" Disabled="@_submitting">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_submitting || _datasetId is null || _modelId is null)" OnClick="SubmitAsync">제출</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+    [Parameter] public EventCallback<TrainingJobDto> OnCreated { get; set; }
+
+    private List<DatasetVersionDto> _datasets = [];
+    private List<ModelDto> _models = [];
+    private List<PretrainedAssetDto> _pretrained = [];
+    private List<MlopsApi.HyperparamSpecDto> _specs = [];
+    private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+
+    private Guid? _datasetId, _modelId;
+    private TrainingScript _script = TrainingScript.TrainDfine;
+    private string? _pretrainedRef;
+    private string _backbone = "", _license = "";
+    private int _seed, _priority;
+    private bool _loading = true, _submitting, _loaded;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible || _loaded) return;
+        _loaded = true;
+        _loading = true;
+        try
+        {
+            _datasets = await Safe(() => Api.DatasetsAsync());
+            _models = await Safe(() => Api.ModelsAsync());
+            _pretrained = await Safe(() => Api.PretrainedAsync());
+            await LoadSpecsAsync();
+        }
+        finally { _loading = false; }
+    }
+
+    private static async Task<List<T>> Safe<T>(Func<Task<List<T>>> call)
+    {
+        try { return await call(); }
+        catch (MlopsApiException) { return []; }
+    }
+
+    private async Task OnScriptChangedAsync(TrainingScript script)
+    {
+        _script = script;
+        await LoadSpecsAsync();
+    }
+
+    private async Task LoadSpecsAsync()
+    {
+        try
+        {
+            _specs = await Api.HyperparamsAsync(_script);
+            // 스크립트를 바꾸면 그 스크립트에 없는 키는 버린다 (서버가 거부할 값)
+            foreach (var key in _values.Keys.ToList())
+                if (_specs.All(s => s.Key != key)) _values.Remove(key);
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    private string Get(string key) => _values.GetValueOrDefault(key, "");
+
+    private void Set(string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) _values.Remove(key);
+        else _values[key] = value.Trim();
+    }
+
+    private static string RangeText(MlopsApi.HyperparamSpecDto spec) =>
+        spec.Min is not null && spec.Max is not null ? $"{spec.Type} · {spec.Min}~{spec.Max}" : spec.Type;
+
+    private async Task SubmitAsync()
+    {
+        _submitting = true;
+        _error = null;
+        try
+        {
+            // 값은 문자열로 모으고 서버 화이트리스트가 타입·범위를 검증한다
+            var hyperparams = System.Text.Json.JsonSerializer.SerializeToElement(_values, MlopsJson.Options);
+            var created = await Api.CreateJobAsync(new CreateTrainingJobRequest(
+                _datasetId!.Value, _modelId!.Value, _script,
+                string.IsNullOrWhiteSpace(_backbone) ? null : _backbone,
+                string.IsNullOrWhiteSpace(_pretrainedRef) ? null : _pretrainedRef,
+                hyperparams, _seed, _priority, null, false,
+                string.IsNullOrWhiteSpace(_license) ? null : _license));
+
+            await VisibleChanged.InvokeAsync(false);
+            await OnCreated.InvokeAsync(created);
+        }
+        catch (MlopsApiException ex)
+        {
+            _error = ex.Code == ErrorCodes.DuplicateJob
+                ? $"{ex.Message} 설정을 바꾸거나 같은 조건으로 다시 돌리려면 작업 상세에서 '같은 설정으로 재실행' 을 쓰세요."
+                : ex.Describe();
+        }
+        finally { _submitting = false; }
+    }
+}

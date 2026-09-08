@@ -1,0 +1,46 @@
+@using Microsoft.AspNetCore.Components.Authorization
+
+<CascadingAuthenticationState>
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(Shared.MainLayout)">
+                <NotAuthorized>
+                    @if (context.User.Identity?.IsAuthenticated != true)
+                    {
+                        <Login />
+                    }
+                    else
+                    {
+                        <MudContainer MaxWidth="MaxWidth.Small" Class="mt-16">
+                            <MudAlert Severity="Severity.Warning">
+                                이 화면에 필요한 권한이 없습니다. 관리자에게 역할 부여를 요청하세요.
+                            </MudAlert>
+                        </MudContainer>
+                    }
+                </NotAuthorized>
+                <Authorizing>
+                    <MudProgressLinear Indeterminate="true" />
+                </Authorizing>
+            </AuthorizeRouteView>
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <LayoutView Layout="@typeof(Shared.MainLayout)">
+                <MudContainer MaxWidth="MaxWidth.Small" Class="mt-16">
+                    <MudAlert Severity="Severity.Info">없는 주소입니다.</MudAlert>
+                </MudContainer>
+            </LayoutView>
+        </NotFound>
+    </Router>
+</CascadingAuthenticationState>
+
+@* MudBlazor 7 은 네 provider 를 모두 요구한다. PopoverProvider 가 없으면
+   MudSelect·MudTooltip·MudMenu 가 렌더 중 예외를 던져 화면이 부분적으로 죽는다. *@
+<MudThemeProvider @bind-IsDarkMode="_dark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+@code {
+    private bool _dark;
+}

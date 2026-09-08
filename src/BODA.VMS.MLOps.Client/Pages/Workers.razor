@@ -1,0 +1,240 @@
+@page "/workers"
+@attribute [Authorize]
+@implements IDisposable
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>워커 · MLOps</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <div>
+        <MudText Typo="Typo.h5" HtmlTag="h1">학습 워커</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            워커는 서버로만 연결합니다. 서버는 워커 주소를 모르고, 방화벽 예외도 필요 없습니다.
+        </MudText>
+    </div>
+    <AuthorizeView Roles="Admin">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="@(() => { _newName = ""; _createOpen = true; })">워커 등록</MudButton>
+    </AuthorizeView>
+</div>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_workers.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.Memory" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">등록된 워커가 없습니다.</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
+            워커를 등록해 토큰을 받은 뒤, GPU PC 에서 configure 로 설정하세요.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudGrid>
+        @foreach (var w in _workers)
+        {
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                    <div class="d-flex justify-space-between align-start">
+                        <div>
+                            <MudText Typo="Typo.subtitle1">@w.Name</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                @(w.MachineName ?? "머신 미상") · 워커 @(w.WorkerVersion ?? "?")
+                            </MudText>
+                        </div>
+                        <MudChip T="string" Size="Size.Small" Color="@Display.WorkerColor(w.Status)">@Display.WorkerStatusText(w.Status)</MudChip>
+                    </div>
+
+                    @if (w.DisabledReason is { } reason)
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@reason</MudAlert>
+                    }
+
+                    @if (w.Capabilities is { } caps)
+                    {
+                        <MudSimpleTable Dense="true" Elevation="0" Class="mt-2">
+                            <tbody>
+                                <tr><td>GPU</td><td>@(caps.GpuName ?? "없음") @(caps.GpuMemMB > 0 ? $"({caps.GpuMemMB / 1024}GB)" : "")</td></tr>
+                                <tr><td>CUDA</td><td>@(caps.CudaAvailable ? caps.CudaVersion ?? "사용 가능" : "사용 불가")</td></tr>
+                                <tr><td>파이썬</td><td>@(caps.PythonVersion ?? "—")</td></tr>
+                                <tr><td>torch</td><td>@(caps.Packages.GetValueOrDefault("torch") ?? "—")</td></tr>
+                                <tr><td>디스크 여유</td><td>@caps.DiskFreeGB.ToString("0.#") GB</td></tr>
+                            </tbody>
+                        </MudSimpleTable>
+
+                        @if (caps.DiagnosticFailures is { Length: > 0 } failures)
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">
+                                @foreach (var f in failures)
+                                {
+                                    <MudText Typo="Typo.body2">@f</MudText>
+                                }
+                            </MudAlert>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2">아직 등록 보고가 없습니다.</MudText>
+                    }
+
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                        지원 작업: @(w.TaskTypes.Length == 0 ? "—" : string.Join(", ", w.TaskTypes.Select(Display.TaskTypeText)))
+                        · 마지막 하트비트 @Display.Ago(w.LastHeartbeatAt)
+                    </MudText>
+
+                    @if (w.CurrentJobId is { } jobId)
+                    {
+                        <MudButton Size="Size.Small" Class="mt-2" Variant="Variant.Outlined"
+                                   Href="@($"/training/{jobId}")" StartIcon="@Icons.Material.Filled.PlayArrow">진행 중인 작업 보기</MudButton>
+                    }
+
+                    <AuthorizeView Roles="Admin" Context="auth">
+                        <div class="d-flex gap-2 mt-3">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => RotateAsync(w))">토큰 재발급</MudButton>
+                            @if (w.Status == WorkerStatus.Disabled)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
+                                           OnClick="@(() => EnableAsync(w))">활성화</MudButton>
+                            }
+                            else
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                           OnClick="@(() => DisableAsync(w))">비활성화</MudButton>
+                            }
+                        </div>
+                    </AuthorizeView>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<MudDialog @bind-Visible="_createOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">워커 등록</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_newName" Label="워커 이름" Immediate="true" HelperText="예: GPU-01" />
+        @if (_issued is not null)
+        {
+            <MudAlert Severity="Severity.Success" Class="mt-4">
+                <MudText Typo="Typo.subtitle2">토큰은 지금 한 번만 보입니다</MudText>
+                <MudText Typo="Typo.body2" Class="mono mt-2" style="word-break:break-all">@_issued.Token</MudText>
+            </MudAlert>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-3 d-block">GPU PC 에서 아래를 실행하세요.</MudText>
+            <MudText Typo="Typo.body2" Class="mono mt-1" style="word-break:break-all">
+                BODA.VMS.MLOps.TrainWorker.exe configure --server @_origin --token @_issued.Token --name @_issued.Name
+            </MudText>
+        }
+        @if (_createError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_createError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseCreate">닫기</MudButton>
+        @if (_issued is null)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(string.IsNullOrWhiteSpace(_newName) || _creating)"
+                       OnClick="CreateAsync">발급</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    private List<WorkerDto> _workers = [];
+    private bool _loading = true;
+    private string? _error;
+    private Timer? _timer;
+
+    private bool _createOpen, _creating;
+    private string _newName = "";
+    private CreateWorkerResponse? _issued;
+    private string? _createError;
+    private string _origin = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _origin = Nav.BaseUri.TrimEnd('/');
+        await LoadAsync();
+        // 하트비트가 30초 주기라 화면도 그에 맞춰 새로 읽는다
+        _timer = new Timer(async _ => await InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); }),
+            null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _workers = await Api.WorkersAsync();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private async Task CreateAsync()
+    {
+        _creating = true;
+        _createError = null;
+        try
+        {
+            _issued = await Api.CreateWorkerAsync(new CreateWorkerRequest(_newName));
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _createError = ex.Describe(); }
+        finally { _creating = false; }
+    }
+
+    private void CloseCreate()
+    {
+        _createOpen = false;
+        _issued = null;
+        _createError = null;
+    }
+
+    private async Task RotateAsync(WorkerDto w)
+    {
+        try
+        {
+            _issued = await Api.RotateWorkerTokenAsync(w.Id);
+            _newName = w.Name;
+            _createOpen = true;
+            Snackbar.Add("옛 토큰은 즉시 무효가 됩니다. 워커 설정을 갱신하세요.", Severity.Warning);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task DisableAsync(WorkerDto w)
+    {
+        try
+        {
+            await Api.DisableWorkerAsync(w.Id, "관리자 비활성화");
+            Snackbar.Add($"{w.Name} 비활성화 — 토큰도 함께 막힙니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task EnableAsync(WorkerDto w)
+    {
+        try
+        {
+            await Api.EnableWorkerAsync(w.Id);
+            Snackbar.Add($"{w.Name} 활성화", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

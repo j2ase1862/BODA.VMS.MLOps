@@ -1,0 +1,181 @@
+@page "/pretrained"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>사전학습 미러 · MLOps</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <MudText Typo="Typo.h5" HtmlTag="h1">사전학습 미러</MudText>
+    <AuthorizeView Roles="Admin">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="@(() => { _newRef = _newLicense = _newSource = ""; _createError = null; _createOpen = true; })">자산 추가</MudButton>
+    </AuthorizeView>
+</div>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+    워커는 인터넷 대신 여기서만 가중치를 받습니다. 폐쇄망과 SSL 검사 백신 환경에서 학습이 막히지 않게 하려는 것입니다.
+</MudText>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_assets.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.CloudDownload" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">등록된 사전학습 자산이 없습니다.</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudExpansionPanels MultiExpansion="true">
+        @foreach (var a in _assets)
+        {
+            <MudExpansionPanel>
+                <TitleContent>
+                    <div class="d-flex justify-space-between align-center" style="width:100%">
+                        <div>
+                            <MudText Typo="Typo.body1">@a.Ref</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                파일 @(a.Files.Count)개 · @Display.Size(a.TotalBytes)
+                                @(string.IsNullOrWhiteSpace(a.License) ? "" : $" · {a.License}")
+                            </MudText>
+                        </div>
+                        @if (a.Files.Count == 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">파일 없음</MudChip>
+                        }
+                    </div>
+                </TitleContent>
+                <ChildContent>
+                    @if (!string.IsNullOrWhiteSpace(a.Source))
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">출처: @a.Source</MudText>
+                    }
+                    <MudSimpleTable Dense="true" Elevation="0" Class="mt-2">
+                        <thead><tr><th>파일</th><th>크기</th><th>SHA-256</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var f in a.Files)
+                            {
+                                <tr>
+                                    <td class="mono">@f.FileName</td>
+                                    <td>@Display.Size(f.SizeBytes)</td>
+                                    <td class="mono">@Display.Sha(f.Sha256)</td>
+                                    <td><MudButton Size="Size.Small" Href="@f.Url" Target="_blank">다운로드</MudButton></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+
+                    <AuthorizeView Roles="Admin" Context="auth">
+                        <div class="d-flex align-center gap-2 mt-3">
+                            <MudFileUpload T="IBrowserFile" FilesChanged="@(f => UploadAsync(a.Ref, f))" MaximumFileCount="1">
+                                <ActivatorContent>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Upload"
+                                               Disabled="@(_uploadingRef == a.Ref)">
+                                        @(_uploadingRef == a.Ref ? "업로드 중…" : "파일 추가")
+                                    </MudButton>
+                                </ActivatorContent>
+                            </MudFileUpload>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                       OnClick="@(() => DeleteAsync(a.Ref))">자산 삭제</MudButton>
+                        </div>
+                    </AuthorizeView>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+}
+
+<MudDialog @bind-Visible="_createOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">사전학습 자산 추가</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_newRef" Label="ref" Immediate="true"
+                      HelperText="영숫자·점·밑줄·하이픈. 예: dfine-small-obj2coco" />
+        <MudTextField @bind-Value="_newLicense" Label="라이선스" Class="mt-3" Placeholder="Apache-2.0"
+                      HelperText="허용 목록 밖 라이선스는 쓰지 마세요" />
+        <MudTextField @bind-Value="_newSource" Label="출처" Class="mt-3" Placeholder="hf://ustc-community/dfine-small-obj2coco" />
+        @if (_createError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_createError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _createOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(string.IsNullOrWhiteSpace(_newRef) || _creating)" OnClick="CreateAsync">추가</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<PretrainedAssetDto> _assets = [];
+    private bool _loading = true;
+    private string? _error;
+    private string? _uploadingRef;
+
+    private bool _createOpen, _creating;
+    private string _newRef = "", _newLicense = "", _newSource = "";
+    private string? _createError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _assets = await Api.PretrainedAsync();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private async Task CreateAsync()
+    {
+        _creating = true;
+        _createError = null;
+        try
+        {
+            await Api.CreatePretrainedAsync(new CreatePretrainedAssetRequest(_newRef,
+                string.IsNullOrWhiteSpace(_newLicense) ? null : _newLicense,
+                string.IsNullOrWhiteSpace(_newSource) ? null : _newSource));
+            _createOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _createError = ex.Describe(); }
+        finally { _creating = false; }
+    }
+
+    private async Task UploadAsync(string @ref, IBrowserFile? file)
+    {
+        if (file is null) return;
+        _uploadingRef = @ref;
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 2L * 1024 * 1024 * 1024);
+            await Api.UploadPretrainedFileAsync(@ref, file.Name, stream);
+            Snackbar.Add($"{file.Name} 업로드 완료", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        catch (IOException ex) { Snackbar.Add($"파일을 읽지 못했습니다: {ex.Message}", Severity.Error); }
+        finally { _uploadingRef = null; }
+    }
+
+    private async Task DeleteAsync(string @ref)
+    {
+        try
+        {
+            await Api.DeletePretrainedAsync(@ref);
+            Snackbar.Add($"{@ref} 삭제", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+}

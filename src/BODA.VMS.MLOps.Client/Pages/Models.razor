@@ -1,0 +1,166 @@
+@page "/models"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>모델 · MLOps</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" HtmlTag="h1">모델</MudText>
+    <AuthorizeView Roles="Engineer,Admin">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreate">새 모델</MudButton>
+    </AuthorizeView>
+</div>
+
+<MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
+    <div class="d-flex flex-wrap gap-4 align-center">
+        <MudSelect T="TaskType?" Value="_taskType" ValueChanged="OnTaskTypeChanged" Label="작업 유형"
+                   Clearable="true" Dense="true" Style="min-width:180px">
+            @foreach (var t in Enum.GetValues<TaskType>())
+            {
+                <MudSelectItem T="TaskType?" Value="@t">@Display.TaskTypeText(t)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_search" Label="이름 검색" Margin="Margin.Dense" Immediate="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Style="min-width:220px" />
+        <MudSwitch T="bool" Value="_archived" ValueChanged="OnArchivedChanged" Label="보관된 모델" Color="Color.Primary" />
+    </div>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (Filtered.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.Inventory2" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">조건에 맞는 모델이 없습니다.</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudGrid>
+        @foreach (var m in Filtered)
+        {
+            <MudItem xs="12" sm="6" md="4">
+                <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                    <div class="d-flex justify-space-between align-start">
+                        <MudText Typo="Typo.subtitle1">@m.Name</MudText>
+                        @if (m.ProductionVersion is { } prod)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">운영 v@(prod.Number)</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default">운영 없음</MudChip>
+                        }
+                    </div>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @Display.TaskTypeText(m.TaskType) · 클래스 @(m.Classes.Length)개 · 버전 @(m.VersionCount)개
+                    </MudText>
+                    @if (!string.IsNullOrWhiteSpace(m.Description))
+                    {
+                        <MudText Typo="Typo.body2" Class="mt-2">@m.Description</MudText>
+                    }
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                        레시피 바인딩 @(m.ActiveBindingCount)건 · 최근 업로드 @Display.Ago(m.LatestVersion?.CreatedAt)
+                    </MudText>
+                    <MudButton Class="mt-3" Size="Size.Small" Variant="Variant.Outlined"
+                               Href="@($"/models/{m.Id}")" EndIcon="@Icons.Material.Filled.ChevronRight">열기</MudButton>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<MudDialog @bind-Visible="_createOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">새 모델 계열</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_newName" Label="이름" Required="true" Immediate="true"
+                      HelperText="예: 라인A 스크래치 검출" />
+        <MudSelect T="TaskType" @bind-Value="_newTaskType" Label="작업 유형" Class="mt-3"
+                   HelperText="생성 후에는 바꿀 수 없습니다">
+            @foreach (var t in Enum.GetValues<TaskType>())
+            {
+                <MudSelectItem T="TaskType" Value="@t">@Display.TaskTypeText(t)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_newClasses" Label="클래스 (쉼표 구분)" Class="mt-3" Immediate="true"
+                      HelperText="순서가 ONNX 의 names 와 정확히 같아야 업로드가 통과합니다" Placeholder="good, defect" />
+        <MudTextField @bind-Value="_newDescription" Label="설명" Class="mt-3" Lines="2" />
+        @if (_createError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_createError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _createOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@_creating" OnClick="CreateAsync">만들기</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<ModelDto> _all = [];
+    private bool _loading = true;
+    private string? _error;
+
+    private TaskType? _taskType;
+    private bool _archived;
+    private string _search = "";
+
+    private bool _createOpen, _creating;
+    private string _newName = "", _newClasses = "", _newDescription = "";
+    private string? _createError;
+    private TaskType _newTaskType = TaskType.Detection;
+
+    private List<ModelDto> Filtered => _all
+        .Where(m => string.IsNullOrWhiteSpace(_search) || m.Name.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try { _all = await Api.ModelsAsync(_taskType, _archived); }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private async Task OnTaskTypeChanged(TaskType? value) { _taskType = value; await LoadAsync(); }
+    private async Task OnArchivedChanged(bool value) { _archived = value; await LoadAsync(); }
+
+    private void OpenCreate()
+    {
+        _newName = _newClasses = _newDescription = "";
+        _newTaskType = TaskType.Detection;
+        _createError = null;
+        _createOpen = true;
+    }
+
+    private async Task CreateAsync()
+    {
+        _createError = null;
+        var classes = _newClasses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (classes.Length == 0) { _createError = "클래스를 1개 이상 입력하세요."; return; }
+
+        _creating = true;
+        try
+        {
+            var created = await Api.CreateModelAsync(new CreateModelRequest(_newName, _newTaskType, classes,
+                string.IsNullOrWhiteSpace(_newDescription) ? null : _newDescription));
+            Snackbar.Add($"모델 '{created.Name}' 을 만들었습니다", Severity.Success);
+            _createOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _createError = ex.Describe(); }
+        finally { _creating = false; }
+    }
+}

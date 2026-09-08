@@ -1,0 +1,103 @@
+@* 라우트가 없는 컴포넌트 — App.razor 의 NotAuthorized 가 직접 그린다 *@
+@inject MlopsApi Api
+@inject JwtAuthenticationStateProvider Auth
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-16">
+    <MudPaper Class="pa-8" Elevation="2">
+        <MudText Typo="Typo.h5" Class="mb-2">BODA VMS MLOps</MudText>
+        <MudText Typo="Typo.body2" Class="mb-6 mud-text-secondary">
+            BODA VMS Web 에서 로그인해 받은 토큰으로 들어옵니다. 두 서버가 같은 서명 키를 쓰기 때문에 그대로 통합니다.
+        </MudText>
+
+        <MudTextField @bind-Value="_token" Label="액세스 토큰 (JWT)" Variant="Variant.Outlined"
+                      Lines="4" Class="mono" Placeholder="eyJhbGciOi..." Immediate="true" />
+
+        <MudButton Class="mt-4" FullWidth="true" Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@(string.IsNullOrWhiteSpace(_token) || _busy)" OnClick="SignInAsync">
+            @(_busy ? "확인 중…" : "로그인")
+        </MudButton>
+
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-4">@_error</MudAlert>
+        }
+
+        @if (_devAvailable)
+        {
+            <MudDivider Class="my-6" />
+            <MudText Typo="Typo.subtitle2" Class="mb-1">개발 서버 토큰</MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                이 서버는 Auth:EnableDevTokens 가 켜져 있습니다. 운영 배포에서는 꺼야 합니다.
+            </MudText>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+                @foreach (var role in new[] { "Admin", "Engineer", "Viewer" })
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@_busy"
+                               OnClick="@(() => DevSignInAsync(role))">@role 로 시작</MudButton>
+                }
+            </div>
+        }
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private string _token = "";
+    private string? _error;
+    private bool _busy;
+    private bool _devAvailable;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 개발 토큰 발급이 열려 있는지 확인 — 닫혀 있으면 404 라 버튼을 숨긴다
+        try { _devAvailable = await Api.DevTokenAsync("probe", []) is not null; }
+        catch (MlopsApiException) { _devAvailable = false; }
+        catch (HttpRequestException) { _devAvailable = false; }
+    }
+
+    private async Task SignInAsync()
+    {
+        _error = null;
+        var token = _token.Trim();
+        if (token.StartsWith("wk_", StringComparison.Ordinal))
+        {
+            _error = "워커 토큰(wk_)은 서비스 계정입니다. 화면 로그인에는 사용자 JWT 를 쓰세요.";
+            return;
+        }
+        if (JwtAuthenticationStateProvider.Parse(token) is null)
+        {
+            _error = "토큰을 읽을 수 없거나 이미 만료되었습니다.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await Auth.SignInAsync(token);
+            var me = await Api.MeAsync();                      // 서명·역할을 서버로 확인
+            Snackbar.Add($"{me.Name} 으로 로그인했습니다 ({string.Join(", ", me.Roles)})", Severity.Success);
+        }
+        catch (MlopsApiException ex)
+        {
+            await Auth.SignOutAsync();
+            _error = $"서버가 토큰을 거부했습니다: {ex.Describe()}";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task DevSignInAsync(string role)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var issued = await Api.DevTokenAsync(role.ToLowerInvariant(), [role]);
+            if (issued is null) { _devAvailable = false; return; }
+            _token = issued.Token;
+            await Auth.SignInAsync(issued.Token);
+            Snackbar.Add($"{role} 로 로그인했습니다", Severity.Success);
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _busy = false; }
+    }
+}

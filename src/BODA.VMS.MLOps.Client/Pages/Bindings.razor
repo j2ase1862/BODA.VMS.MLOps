@@ -1,0 +1,233 @@
+@page "/bindings"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>레시피 바인딩 · MLOps</PageTitle>
+
+<MudText Typo="Typo.h5" HtmlTag="h1">레시피 바인딩</MudText>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+    레시피의 검사 도구가 어느 모델 버전을 쓰는지 정합니다. 라인 PC 는 동기화 때 이 참조를 받아 아티팩트를 미리 내려받습니다.
+    롤백은 이력에서 이전 버전을 고르는 것으로 끝납니다.
+</MudText>
+
+<MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
+    <div class="d-flex flex-wrap gap-3 align-center">
+        <MudTextField @bind-Value="_recipeId" Label="레시피 ID" Immediate="true" Margin="Margin.Dense" Style="min-width:260px"
+                      OnKeyUp="@(e => { if (e.Key == "Enter") _ = LoadAsync(); })" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
+                   Disabled="@(string.IsNullOrWhiteSpace(_recipeId) || _loading)" OnClick="LoadAsync">조회</MudButton>
+        <AuthorizeView Roles="Engineer,Admin">
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Link"
+                       Disabled="@string.IsNullOrWhiteSpace(_recipeId)" OnClick="OpenBindAsync">도구에 모델 연결</MudButton>
+        </AuthorizeView>
+    </div>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_searched)
+{
+    var active = _bindings.Where(b => b.IsActive).ToList();
+    var history = _bindings.Where(b => !b.IsActive).ToList();
+
+    <MudText Typo="Typo.subtitle1" Class="mb-2">활성 바인딩 (@active.Count)</MudText>
+    @if (active.Count == 0)
+    {
+        <MudPaper Class="pa-6" Outlined="true">
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">이 레시피에는 바인딩이 없습니다.</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Elevation="1" Class="mb-6">
+            <MudTable Items="@active" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh>도구</MudTh>
+                    <MudTh>모델</MudTh>
+                    <MudTh>모드</MudTh>
+                    <MudTh>해석된 버전</MudTh>
+                    <MudTh>참조</MudTh>
+                    <MudTh>변경</MudTh>
+                    <MudTh />
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="도구"><span class="mono">@context.ToolId</span></MudTd>
+                    <MudTd DataLabel="모델"><MudLink Href="@($"/models/{context.ModelId}")">@context.ModelName</MudLink></MudTd>
+                    <MudTd DataLabel="모드">@(context.Mode == BindingMode.Pinned ? "버전 고정" : "운영 추종")</MudTd>
+                    <MudTd DataLabel="해석된 버전">
+                        @if (context.ResolvedNumber is { } n)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">v@(n)</MudChip>
+                            <span class="mono">@Display.Sha(context.ResolvedSha256)</span>
+                        }
+                        else
+                        {
+                            <MudTooltip Text="운영 승격된 버전이 없어 라인 PC 가 모델을 받지 못합니다">
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning">해석 불가</MudChip>
+                            </MudTooltip>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="참조"><span class="mono">@context.Reference</span></MudTd>
+                    <MudTd DataLabel="변경">@Display.When(context.BoundAt)<br /><span class="mud-text-secondary">@context.BoundBy</span></MudTd>
+                    <MudTd>
+                        <AuthorizeView Roles="Engineer,Admin" Context="auth">
+                            <MudButton Size="Size.Small" Disabled="@(context.PreviousBindingId is null)"
+                                       OnClick="@(() => RollbackAsync(context))">롤백</MudButton>
+                        </AuthorizeView>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudPaper>
+    }
+
+    @if (history.Count > 0)
+    {
+        <MudText Typo="Typo.subtitle1" Class="mb-2">이력 (@history.Count)</MudText>
+        <MudPaper Elevation="1">
+            <MudTable Items="@history" Dense="true" Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh>도구</MudTh>
+                    <MudTh>모델</MudTh>
+                    <MudTh>버전</MudTh>
+                    <MudTh>사유</MudTh>
+                    <MudTh>변경</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="도구"><span class="mono">@context.ToolId</span></MudTd>
+                    <MudTd DataLabel="모델">@context.ModelName</MudTd>
+                    <MudTd DataLabel="버전">@(context.VersionNumber is { } n ? $"v{n}" : "운영 추종")</MudTd>
+                    <MudTd DataLabel="사유">@(context.Reason ?? "—")</MudTd>
+                    <MudTd DataLabel="변경">@Display.When(context.BoundAt) · @context.BoundBy</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudPaper>
+    }
+}
+
+<MudDialog @bind-Visible="_bindOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">도구에 모델 연결</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField Value="@_recipeId" Label="레시피 ID" ReadOnly="true" />
+        <MudTextField @bind-Value="_toolId" Label="도구 ID" Class="mt-3" Immediate="true"
+                      HelperText="레시피 안 도구의 GUID" />
+        <MudSelect T="Guid?" Value="_bindModelId" ValueChanged="OnModelChangedAsync" Label="모델" Class="mt-3">
+            @foreach (var m in _models)
+            {
+                <MudSelectItem T="Guid?" Value="@m.Id">@m.Name — @Display.TaskTypeText(m.TaskType)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudRadioGroup T="BindingMode" @bind-Value="_mode" Class="mt-3">
+            <MudRadio T="BindingMode" Value="@BindingMode.FollowProduction">운영 추종 — 승격하면 자동으로 따라갑니다</MudRadio>
+            <MudRadio T="BindingMode" Value="@BindingMode.Pinned">버전 고정 — 명시한 버전만 씁니다</MudRadio>
+        </MudRadioGroup>
+        @if (_mode == BindingMode.Pinned)
+        {
+            <MudSelect T="Guid?" @bind-Value="_bindVersionId" Label="버전" Class="mt-3">
+                @foreach (var v in _versions)
+                {
+                    <MudSelectItem T="Guid?" Value="@v.Id">v@(v.Number) — @Display.StageText(v.Stage) (@Display.Sha(v.Sha256))</MudSelectItem>
+                }
+            </MudSelect>
+        }
+        <MudTextField @bind-Value="_bindReason" Label="사유" Class="mt-3" HelperText="감사 로그에 남습니다" />
+        @if (_bindError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_bindError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _bindOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_binding || string.IsNullOrWhiteSpace(_toolId) || _bindModelId is null)" OnClick="BindAsync">연결</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private string _recipeId = "";
+    private List<ModelBindingDto> _bindings = [];
+    private List<ModelDto> _models = [];
+    private List<ModelVersionDto> _versions = [];
+    private bool _loading, _searched;
+    private string? _error;
+
+    private bool _bindOpen, _binding;
+    private string _toolId = "", _bindReason = "";
+    private Guid? _bindModelId, _bindVersionId;
+    private BindingMode _mode = BindingMode.FollowProduction;
+    private string? _bindError;
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_recipeId)) return;
+        _loading = true;
+        _error = null;
+        try
+        {
+            _bindings = await Api.BindingsAsync(_recipeId.Trim());
+            _searched = true;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private async Task OpenBindAsync()
+    {
+        _toolId = _bindReason = "";
+        _bindModelId = _bindVersionId = null;
+        _mode = BindingMode.FollowProduction;
+        _bindError = null;
+        _bindOpen = true;
+        try { _models = await Api.ModelsAsync(); }
+        catch (MlopsApiException ex) { _bindError = ex.Describe(); }
+    }
+
+    private async Task OnModelChangedAsync(Guid? modelId)
+    {
+        _bindModelId = modelId;
+        _bindVersionId = null;
+        _versions = [];
+        if (modelId is null) return;
+        try { _versions = await Api.VersionsAsync(modelId.Value); }
+        catch (MlopsApiException ex) { _bindError = ex.Describe(); }
+    }
+
+    private async Task BindAsync()
+    {
+        _binding = true;
+        _bindError = null;
+        try
+        {
+            if (_mode == BindingMode.Pinned && _bindVersionId is null)
+            {
+                _bindError = "고정할 버전을 고르세요.";
+                return;
+            }
+            await Api.SetBindingAsync(_recipeId.Trim(), _toolId.Trim(),
+                new SetBindingRequest(_mode, _bindVersionId, _bindModelId,
+                    string.IsNullOrWhiteSpace(_bindReason) ? null : _bindReason));
+            Snackbar.Add("바인딩을 저장했습니다. 다음 레시피 동기화 때 라인에 반영됩니다.", Severity.Success);
+            _bindOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _bindError = ex.Describe(); }
+        finally { _binding = false; }
+    }
+
+    private async Task RollbackAsync(ModelBindingDto binding)
+    {
+        try
+        {
+            var rolled = await Api.RollbackBindingAsync(binding.Id, new RollbackRequest("화면에서 롤백"));
+            Snackbar.Add($"{binding.ToolId} → v{rolled.ResolvedNumber?.ToString() ?? "?"} 로 되돌렸습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+}

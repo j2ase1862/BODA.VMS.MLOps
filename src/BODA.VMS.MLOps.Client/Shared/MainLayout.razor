@@ -1,0 +1,58 @@
+@inherits LayoutComponentBase
+@inject JwtAuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+<MudLayout>
+    <MudAppBar Elevation="1">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="메뉴" />
+        <MudText Typo="Typo.h6" Class="ml-2">BODA VMS MLOps</MudText>
+        <MudSpacer />
+        <AuthorizeView>
+            <Authorized>
+                <MudChip T="string" Size="Size.Small" Color="Color.Surface" Icon="@Icons.Material.Filled.Person">
+                    @context.User.Identity?.Name (@RoleText(context))
+                </MudChip>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" StartIcon="@Icons.Material.Filled.Logout"
+                           OnClick="SignOutAsync">로그아웃</MudButton>
+            </Authorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" Elevation="1" ClipMode="DrawerClipMode.Always">
+        <MudNavMenu>
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">대시보드</MudNavLink>
+            <MudNavLink Href="/models" Icon="@Icons.Material.Filled.Inventory2">모델</MudNavLink>
+            <MudNavLink Href="/bindings" Icon="@Icons.Material.Filled.Link">레시피 바인딩</MudNavLink>
+            <MudDivider Class="my-2" />
+            <MudNavLink Href="/training" Icon="@Icons.Material.Filled.ModelTraining">학습 작업</MudNavLink>
+            <MudNavLink Href="/datasets" Icon="@Icons.Material.Filled.FolderZip">데이터셋 버전</MudNavLink>
+            <MudNavLink Href="/workers" Icon="@Icons.Material.Filled.Memory">워커</MudNavLink>
+            <MudNavLink Href="/pretrained" Icon="@Icons.Material.Filled.CloudDownload">사전학습 미러</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawerOpen = true;
+
+    private static string RoleText(AuthenticationState state)
+    {
+        var roles = state.User.Claims
+            .Where(c => c.Type == System.Security.Claims.ClaimTypes.Role)
+            .Select(c => c.Value).ToArray();
+        return roles.Length == 0 ? "역할 없음" : string.Join(", ", roles);
+    }
+
+    private async Task SignOutAsync()
+    {
+        await Auth.SignOutAsync();
+        Nav.NavigateTo("/", forceLoad: false);
+    }
+}

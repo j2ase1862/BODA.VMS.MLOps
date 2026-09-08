@@ -1,0 +1,160 @@
+@page "/datasets"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>데이터셋 버전 · MLOps</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-2">
+    <MudText Typo="Typo.h5" HtmlTag="h1">데이터셋 버전</MudText>
+    <AuthorizeView Roles="Engineer,Admin">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
+                   OnClick="@(() => { _uploadOpen = true; _uploadError = null; })">버전 업로드</MudButton>
+    </AuthorizeView>
+</div>
+<MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+    학습은 항상 버전에 대해 실행합니다. 지금은 내보내기 zip 을 올려 버전을 고정하고,
+    이미지 풀과 라벨링은 데이터 관리 단계에서 이 위에 얹습니다.
+</MudText>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+<MudPaper Elevation="1">
+    <MudTable Items="@_datasets" Dense="true" Hover="true" Loading="@_loading" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>이름</MudTh>
+            <MudTh>작업 유형</MudTh>
+            <MudTh>형식</MudTh>
+            <MudTh>이미지</MudTh>
+            <MudTh>클래스</MudTh>
+            <MudTh>크기</MudTh>
+            <MudTh>매니페스트 해시</MudTh>
+            <MudTh>등록</MudTh>
+            <MudTh />
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="이름">@context.Name</MudTd>
+            <MudTd DataLabel="작업 유형">@Display.TaskTypeText(context.TaskType)</MudTd>
+            <MudTd DataLabel="형식"><span class="mono">@context.ExportFormat</span></MudTd>
+            <MudTd DataLabel="이미지">@(context.ImageCount > 0 ? context.ImageCount.ToString() : "—")</MudTd>
+            <MudTd DataLabel="클래스">@(context.Classes.Length == 0 ? "—" : string.Join(", ", context.Classes))</MudTd>
+            <MudTd DataLabel="크기">@Display.Size(context.SizeBytes)</MudTd>
+            <MudTd DataLabel="매니페스트 해시"><span class="mono">@Display.Sha(context.ManifestHash)</span></MudTd>
+            <MudTd DataLabel="등록">@Display.When(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
+            <MudTd><MudButton Size="Size.Small" Href="@context.ExportUrl" Target="_blank">다운로드</MudButton></MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="pa-4">등록된 데이터셋 버전이 없습니다.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+<MudDialog @bind-Visible="_uploadOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">데이터셋 버전 업로드</MudText></TitleContent>
+    <DialogContent>
+        <MudFileUpload T="IBrowserFile" FilesChanged="@(f => { _file = f; _uploadError = null; })" Accept=".zip" MaximumFileCount="1">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AttachFile" FullWidth="true">
+                    @(_file?.Name ?? "내보내기 zip 선택")
+                </MudButton>
+            </ActivatorContent>
+        </MudFileUpload>
+        @if (_file is not null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(_file.Size)</MudText>
+        }
+
+        <MudTextField @bind-Value="_name" Label="이름" Class="mt-3" Immediate="true" Placeholder="라인A 스크래치 2026-09" />
+        <MudSelect T="TaskType" @bind-Value="_taskType" Label="작업 유형" Class="mt-3">
+            @foreach (var t in Enum.GetValues<TaskType>())
+            {
+                <MudSelectItem T="TaskType" Value="@t">@Display.TaskTypeText(t)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="string" @bind-Value="_format" Label="내보내기 형식" Class="mt-3"
+                   HelperText="스크립트가 읽는 형식과 같아야 합니다">
+            @foreach (var f in Formats)
+            {
+                <MudSelectItem T="string" Value="@f.Key">@f.Key — @f.Value</MudSelectItem>
+            }
+        </MudSelect>
+        <MudNumericField T="int" @bind-Value="_imageCount" Label="이미지 수 (선택)" Class="mt-3" />
+        <MudTextField @bind-Value="_classes" Label="클래스 (쉼표 구분, 선택)" Class="mt-3" />
+
+        @if (_uploading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mt-4" />
+        }
+        @if (_uploadError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_uploadError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _uploadOpen = false)" Disabled="@_uploading">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_file is null || string.IsNullOrWhiteSpace(_name) || _uploading)" OnClick="UploadAsync">업로드</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private static readonly Dictionary<string, string> Formats = new()
+    {
+        ["yolo"] = "data.yaml + images/labels (검출)",
+        ["imagefolder"] = "클래스별 폴더 (분류)",
+        ["mvtec"] = "MVTec 구조 (이상탐지)",
+        ["ppocr"] = "PP-OCR 라벨 텍스트 (OCR)",
+        ["coco"] = "COCO json (세그멘테이션)",
+    };
+
+    private List<DatasetVersionDto> _datasets = [];
+    private bool _loading = true;
+    private string? _error;
+
+    private bool _uploadOpen, _uploading;
+    private IBrowserFile? _file;
+    private string _name = "", _classes = "", _format = "yolo";
+    private TaskType _taskType = TaskType.Detection;
+    private int _imageCount;
+    private string? _uploadError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _datasets = await Api.DatasetsAsync();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private async Task UploadAsync()
+    {
+        if (_file is null) return;
+        _uploading = true;
+        _uploadError = null;
+        try
+        {
+            var classes = _classes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            await using var stream = _file.OpenReadStream(maxAllowedSize: 50L * 1024 * 1024 * 1024);
+            var created = await Api.UploadDatasetAsync(_file.Name, stream,
+                new DatasetVersionUploadMeta(_name, _taskType, _format, _imageCount, classes.Length > 0 ? classes : null));
+
+            Snackbar.Add($"데이터셋 '{created.Name}' 등록 (해시 {Display.Sha(created.ManifestHash)})", Severity.Success);
+            _uploadOpen = false;
+            _file = null;
+            _name = "";
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _uploadError = ex.Describe(); }
+        catch (IOException ex) { _uploadError = $"파일을 읽지 못했습니다: {ex.Message}"; }
+        finally { _uploading = false; }
+    }
+}

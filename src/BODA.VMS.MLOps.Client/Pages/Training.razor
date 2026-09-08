@@ -1,0 +1,133 @@
+@page "/training"
+@attribute [Authorize]
+@implements IAsyncDisposable
+@inject MlopsApi Api
+@inject TrainingHubClient Hub
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>학습 작업 · MLOps</PageTitle>
+
+<div class="d-flex justify-space-between align-center mb-4">
+    <MudText Typo="Typo.h5" HtmlTag="h1">학습 작업</MudText>
+    <AuthorizeView Roles="Engineer,Admin">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreateAsync">작업 제출</MudButton>
+    </AuthorizeView>
+</div>
+
+<MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
+    <MudSelect T="TrainingJobState?" Value="_state" ValueChanged="OnStateChanged" Label="상태" Clearable="true"
+               Dense="true" Style="max-width:220px">
+        @foreach (var s in Enum.GetValues<TrainingJobState>())
+        {
+            <MudSelectItem T="TrainingJobState?" Value="@s">@Display.JobStateText(s)</MudSelectItem>
+        }
+    </MudSelect>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+<MudPaper Elevation="1">
+    <MudTable Items="@_jobs" Dense="true" Hover="true" Loading="@_loading" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>상태</MudTh>
+            <MudTh>스크립트</MudTh>
+            <MudTh>진행</MudTh>
+            <MudTh>에폭</MudTh>
+            <MudTh>손실 / 지표</MudTh>
+            <MudTh>우선순위</MudTh>
+            <MudTh>경과</MudTh>
+            <MudTh>제출</MudTh>
+            <MudTh />
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="상태">
+                <MudChip T="string" Size="Size.Small" Color="@Display.JobColor(context.State)">@Display.JobStateText(context.State)</MudChip>
+                @if (context.CancelRequested && context.State is not (TrainingJobState.Cancelled or TrainingJobState.Failed or TrainingJobState.Succeeded))
+                {
+                    <MudTooltip Text="취소를 요청했습니다. 워커가 프로세스를 정리하는 중입니다."><MudIcon Icon="@Icons.Material.Filled.HourglassBottom" Size="Size.Small" /></MudTooltip>
+                }
+            </MudTd>
+            <MudTd DataLabel="스크립트"><span class="mono">@context.Script.FileName()</span></MudTd>
+            <MudTd DataLabel="진행" Style="min-width:140px">
+                <MudProgressLinear Color="@Display.JobColor(context.State)" Value="@context.Progress" Size="Size.Small" />
+                <MudText Typo="Typo.caption">@context.Progress.ToString("0.#")%</MudText>
+            </MudTd>
+            <MudTd DataLabel="에폭">@(context.TotalEpochs > 0 ? $"{context.CurrentEpoch}/{context.TotalEpochs}" : "—")</MudTd>
+            <MudTd DataLabel="손실 / 지표">
+                @(context.LastLoss?.ToString("0.####") ?? "—") / @(context.LastMetric?.ToString("0.###") ?? "—")
+            </MudTd>
+            <MudTd DataLabel="우선순위">@context.Priority</MudTd>
+            <MudTd DataLabel="경과">@Display.Duration(context.StartedAt ?? context.AssignedAt, context.FinishedAt)</MudTd>
+            <MudTd DataLabel="제출">@Display.Ago(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
+            <MudTd><MudButton Size="Size.Small" Href="@($"/training/{context.Id}")">상세</MudButton></MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="pa-4">작업이 없습니다.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+<TrainingJobDialog @bind-Visible="_createOpen" OnCreated="OnCreated" />
+
+@code {
+    private List<TrainingJobDto> _jobs = [];
+    private bool _loading = true;
+    private string? _error;
+    private TrainingJobState? _state;
+    private bool _createOpen;
+    private IDisposable? _subscription;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        try
+        {
+            // 진행률이 바뀔 때마다 목록도 따라 움직인다 (폴링 없이)
+            _subscription = await Hub.WatchAllJobsAsync(job => InvokeAsync(() =>
+            {
+                var index = _jobs.FindIndex(j => j.Id == job.Id);
+                if (index >= 0) _jobs[index] = job;
+                else if (_state is null || job.State == _state) _jobs.Insert(0, job);
+                StateHasChanged();
+                return Task.CompletedTask;
+            }));
+        }
+        catch (Exception)
+        {
+            // SignalR 이 막혀도 목록은 보인다
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _jobs = await Api.JobsAsync(_state);
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private async Task OnStateChanged(TrainingJobState? state) { _state = state; await LoadAsync(); }
+
+    private Task OpenCreateAsync() { _createOpen = true; return Task.CompletedTask; }
+
+    private void OnCreated(TrainingJobDto job)
+    {
+        Snackbar.Add("작업을 큐에 넣었습니다", Severity.Success);
+        Nav.NavigateTo($"/training/{job.Id}");
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _subscription?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

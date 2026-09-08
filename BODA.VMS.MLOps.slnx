@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/BODA.VMS.MLOps.Client/BODA.VMS.MLOps.Client.csproj" />
     <Project Path="src/BODA.VMS.MLOps.Contracts/BODA.VMS.MLOps.Contracts.csproj" />
     <Project Path="src/BODA.VMS.MLOps.Core/BODA.VMS.MLOps.Core.csproj" />
     <Project Path="src/BODA.VMS.MLOps.Server/BODA.VMS.MLOps.Server.csproj" />

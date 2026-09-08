@@ -152,7 +152,13 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.UseWebAssemblyDebugging();
 }
+
+// 관리 화면 (Blazor WASM). 인증은 API 가 하고, 정적 파일 자체는 익명으로 내보낸다.
+app.UseBlazorFrameworkFiles();
+app.UseStaticFiles();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -167,7 +173,10 @@ api.MapDatasetEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");
 app.MapHub<TrainingHub>("/hubs/training");
-app.MapGet("/health", () => Results.Ok(new { status = "ok", version = typeof(Program).Assembly.GetName().Version?.ToString() })).AllowAnonymous();
+app.MapGet("/health", () => Results.Ok(new { status = "ok", version = typeof(ServerEntryPoint).Assembly.GetName().Version?.ToString() })).AllowAnonymous();
+
+// 클라이언트 라우팅(/models/{id} 등)은 index.html 로 넘긴다. /api 와 /hubs 는 위에서 이미 처리됐다.
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

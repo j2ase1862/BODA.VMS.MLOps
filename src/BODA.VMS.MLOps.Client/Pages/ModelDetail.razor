@@ -1,0 +1,394 @@
+@page "/models/{Id:guid}"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>@(_model?.Name ?? "모델") · MLOps</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_model is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudBreadcrumbs Items="@(new List<BreadcrumbItem> {
+        new("모델", "/models"), new(_model.Name, null, disabled: true) })" Class="pa-0 mb-2" />
+
+    <div class="d-flex justify-space-between align-start mb-4">
+        <div>
+            <MudText Typo="Typo.h5" HtmlTag="h1">@_model.Name</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                @Display.TaskTypeText(_model.TaskType) · 클래스 [@string.Join(", ", _model.Classes)]
+            </MudText>
+            @if (!string.IsNullOrWhiteSpace(_model.Description))
+            {
+                <MudText Typo="Typo.body2" Class="mt-1">@_model.Description</MudText>
+            }
+        </div>
+        <AuthorizeView Roles="Engineer,Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
+                       OnClick="@(() => _uploadOpen = true)">버전 업로드</MudButton>
+        </AuthorizeView>
+    </div>
+
+    <MudPaper Elevation="1">
+        <MudTable Items="@_versions" Dense="true" Hover="true" Loading="@_loadingVersions" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>버전</MudTh>
+                <MudTh>스테이지</MudTh>
+                <MudTh>규약</MudTh>
+                <MudTh>입력</MudTh>
+                <MudTh>지표</MudTh>
+                <MudTh>크기</MudTh>
+                <MudTh>SHA-256</MudTh>
+                <MudTh>출처</MudTh>
+                <MudTh>등록</MudTh>
+                <MudTh />
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="버전">v@(context.Number)</MudTd>
+                <MudTd DataLabel="스테이지">
+                    <MudChip T="string" Size="Size.Small" Color="@Display.StageColor(context.Stage)">@Display.StageText(context.Stage)</MudChip>
+                </MudTd>
+                <MudTd DataLabel="규약">
+                    @Display.FormatText(context.Format)
+                    @if (context.Warnings.Length > 0)
+                    {
+                        <MudTooltip Text="@string.Join(" / ", context.Warnings)">
+                            <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Small" />
+                        </MudTooltip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="입력">@(context.InputSize?.ToString() ?? "—")</MudTd>
+                <MudTd DataLabel="지표">@MetricText(context)</MudTd>
+                <MudTd DataLabel="크기">@Display.Size(context.SizeBytes)</MudTd>
+                <MudTd DataLabel="SHA-256"><span class="mono">@Display.Sha(context.Sha256)</span></MudTd>
+                <MudTd DataLabel="출처">
+                    @if (context.TrainingJobId is { } jobId)
+                    {
+                        <MudLink Href="@($"/training/{jobId}")">학습 작업</MudLink>
+                    }
+                    else
+                    {
+                        <span>수동 등록</span>
+                    }
+                </MudTd>
+                <MudTd DataLabel="등록">@Display.When(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
+                <MudTd>
+                    <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
+                        <MudButton OnClick="@(() => OpenDetail(context))">상세</MudButton>
+                        <MudButton Href="@MlopsApi.ArtifactUrl(context.Id)" Target="_blank">다운로드</MudButton>
+                        <AuthorizeView Roles="Engineer,Admin" Context="auth">
+                            <MudButton OnClick="@(() => OpenPromote(context))">스테이지</MudButton>
+                        </AuthorizeView>
+                    </MudButtonGroup>
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Class="pa-4">아직 등록된 버전이 없습니다. 학습을 돌리거나 ONNX 를 직접 올리세요.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudPaper>
+}
+
+@* ── 버전 상세 드로어 ── *@
+<MudDrawer @bind-Open="_detailOpen" Anchor="Anchor.End" Elevation="3" Width="520px" Variant="DrawerVariant.Temporary">
+    @if (_detail is not null)
+    {
+        <MudDrawerHeader>
+            <MudText Typo="Typo.h6">v@(_detail.Number) 상세</MudText>
+        </MudDrawerHeader>
+        <div class="pa-4" style="overflow-y:auto">
+            <MudChip T="string" Size="Size.Small" Color="@Display.StageColor(_detail.Stage)">@Display.StageText(_detail.Stage)</MudChip>
+            @if (_detail.License is { } lic)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning">@lic</MudChip>
+            }
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4">아티팩트</MudText>
+            <MudSimpleTable Dense="true" Elevation="0">
+                <tbody>
+                    <tr><td>SHA-256</td><td class="mono">@_detail.Sha256</td></tr>
+                    <tr><td>크기</td><td>@Display.Size(_detail.SizeBytes)</td></tr>
+                    <tr><td>규약</td><td>@Display.FormatText(_detail.Format)</td></tr>
+                    <tr><td>입력 크기</td><td>@(_detail.InputSize?.ToString() ?? "—")</td></tr>
+                    <tr><td>클래스</td><td>@string.Join(", ", _detail.Classes)</td></tr>
+                    <tr><td>검증</td><td>@(_detail.ValidationStatus ?? "미실행")</td></tr>
+                </tbody>
+            </MudSimpleTable>
+
+            @if (_detail.Metrics.Count > 0)
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-4">지표</MudText>
+                <MudSimpleTable Dense="true" Elevation="0">
+                    <tbody>
+                        @foreach (var kv in _detail.Metrics.OrderBy(k => k.Key))
+                        {
+                            <tr><td>@kv.Key</td><td>@kv.Value.ToString("0.####")</td></tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4">ONNX 메타데이터</MudText>
+            @if (_detail.Metadata.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">metadata_props 가 없습니다.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Elevation="0">
+                    <tbody>
+                        @foreach (var kv in _detail.Metadata.OrderBy(k => k.Key))
+                        {
+                            <tr><td>@kv.Key</td><td class="mono" style="word-break:break-all">@kv.Value</td></tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+
+            @if (_detail.Warnings.Length > 0)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-4" Dense="true">
+                    @foreach (var w in _detail.Warnings)
+                    {
+                        <MudText Typo="Typo.body2">@w</MudText>
+                    }
+                </MudAlert>
+            }
+
+            <MudText Typo="Typo.subtitle2" Class="mt-4">스테이지 이력</MudText>
+            @if (_detail.StageHistory is { Count: > 0 } history)
+            {
+                <MudTimeline TimelinePosition="TimelinePosition.Start">
+                    @foreach (var h in history)
+                    {
+                        <MudTimelineItem Color="@Display.StageColor(h.ToStage)" Size="Size.Small">
+                            <MudText Typo="Typo.body2">@Display.StageText(h.FromStage) → @Display.StageText(h.ToStage)</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                @Display.When(h.ChangedAt) · @h.ChangedBy @(string.IsNullOrWhiteSpace(h.Reason) ? "" : $"· {h.Reason}")
+                            </MudText>
+                        </MudTimelineItem>
+                    }
+                </MudTimeline>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">아직 승격 이력이 없습니다.</MudText>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_detail.Notes))
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-4">메모</MudText>
+                <MudText Typo="Typo.body2">@_detail.Notes</MudText>
+            }
+        </div>
+    }
+</MudDrawer>
+
+@* ── 업로드 ── *@
+<MudDialog @bind-Visible="_uploadOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">ONNX 버전 업로드</MudText></TitleContent>
+    <DialogContent>
+        <MudFileUpload T="IBrowserFile" FilesChanged="OnFilePicked" Accept=".onnx" MaximumFileCount="1">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AttachFile" FullWidth="true">
+                    @(_file?.Name ?? "ONNX 파일 선택")
+                </MudButton>
+            </ActivatorContent>
+        </MudFileUpload>
+        @if (_file is not null)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(_file.Size)</MudText>
+        }
+
+        <MudTextField @bind-Value="_uploadLicense" Label="라이선스" Class="mt-3"
+                      HelperText="YOLO 파생 모델은 필수입니다 (예: Ultralytics Enterprise #1234)" />
+        <MudTextField @bind-Value="_uploadClasses" Label="클래스 (쉼표 구분, 선택)" Class="mt-3"
+                      HelperText="ONNX 에 names 가 없을 때만 씁니다" />
+        <MudNumericField T="int?" @bind-Value="_uploadInputSize" Label="입력 크기 (선택)" Class="mt-3"
+                         HelperText="ONNX 에 imgsz 가 없을 때만 씁니다" />
+        <MudTextField @bind-Value="_uploadNotes" Label="메모" Class="mt-3" Lines="2" />
+
+        @if (_uploading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mt-4" />
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">업로드 후 서버가 규약을 판별합니다…</MudText>
+        }
+        @if (_uploadError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_uploadError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _uploadOpen = false)" Disabled="@_uploading">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_file is null || _uploading)"
+                   OnClick="UploadAsync">업로드</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ── 스테이지 변경 ── *@
+<MudDialog @bind-Visible="_promoteOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">스테이지 변경 (v@(_promoting?.Number))</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+            현재 @Display.StageText(_promoting?.Stage ?? ModelStage.Candidate).
+            Production 은 모델당 하나뿐이라, 승격하면 이전 운영 버전은 스테이징으로 내려갑니다.
+        </MudText>
+        <MudSelect T="ModelStage" @bind-Value="_targetStage" Label="변경할 스테이지">
+            @foreach (var s in Enum.GetValues<ModelStage>())
+            {
+                <MudSelectItem T="ModelStage" Value="@s">@Display.StageText(s)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_promoteReason" Label="사유" Class="mt-3" HelperText="감사 로그에 남습니다" />
+        @if (_promoting?.Format == ModelFormat.Yolo && _targetStage == ModelStage.Production)
+        {
+            <MudCheckBox T="bool" @bind-Value="_confirmLicense" Color="Color.Warning" Class="mt-2"
+                         Label="Ultralytics Enterprise License 보유를 확인했습니다" />
+        }
+        @if (_promoteError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_promoteError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _promoteOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@_promotingBusy" OnClick="PromoteAsync">변경</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private ModelDto? _model;
+    private List<ModelVersionDto> _versions = [];
+    private bool _loadingVersions = true;
+    private string? _error;
+
+    private bool _detailOpen;
+    private ModelVersionDto? _detail;
+
+    private bool _uploadOpen, _uploading;
+    private IBrowserFile? _file;
+    private string _uploadLicense = "", _uploadClasses = "", _uploadNotes = "";
+    private int? _uploadInputSize;
+    private string? _uploadError;
+
+    private bool _promoteOpen, _promotingBusy, _confirmLicense;
+    private ModelVersionDto? _promoting;
+    private ModelStage _targetStage = ModelStage.Staging;
+    private string _promoteReason = "";
+    private string? _promoteError;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        _loadingVersions = true;
+        try
+        {
+            _model = await Api.ModelAsync(Id);
+            _versions = await Api.VersionsAsync(Id);
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loadingVersions = false; }
+    }
+
+    private static string MetricText(ModelVersionDto v)
+    {
+        if (v.Metrics.TryGetValue("map50", out var map)) return $"mAP50 {map:0.###}";
+        if (v.Metrics.TryGetValue("accuracy", out var acc)) return $"정확도 {acc:0.###}";
+        return v.Metrics.Count > 0 ? $"{v.Metrics.Count}개" : "—";
+    }
+
+    private async Task OpenDetail(ModelVersionDto version)
+    {
+        _detail = version;
+        _detailOpen = true;
+        try { _detail = await Api.VersionAsync(version.Id); }  // 스테이지 이력까지 채운다
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private void OnFilePicked(IBrowserFile? file)
+    {
+        _file = file;
+        _uploadError = null;
+    }
+
+    private async Task UploadAsync()
+    {
+        if (_file is null) return;
+        _uploading = true;
+        _uploadError = null;
+        try
+        {
+            var classes = _uploadClasses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var meta = new VersionUploadMeta(
+                classes.Length > 0 ? classes : null,
+                _uploadInputSize,
+                string.IsNullOrWhiteSpace(_uploadLicense) ? null : _uploadLicense,
+                string.IsNullOrWhiteSpace(_uploadNotes) ? null : _uploadNotes);
+
+            // 2GB 상한까지 허용 — 브라우저 스트림 크기 제한을 풀어 준다
+            await using var stream = _file.OpenReadStream(maxAllowedSize: 2L * 1024 * 1024 * 1024);
+            var created = await Api.UploadVersionAsync(Id, _file.Name, stream, meta);
+
+            Snackbar.Add($"v{created.Number} 등록 ({Display.FormatText(created.Format)})", Severity.Success);
+            foreach (var w in created.Warnings) Snackbar.Add(w, Severity.Warning);
+            _uploadOpen = false;
+            _file = null;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex)
+        {
+            _uploadError = ex.Code switch
+            {
+                ErrorCodes.MissingNames => $"{ex.Message} 아래 '클래스' 칸을 채우고 다시 시도하세요.",
+                ErrorCodes.MissingInputSize => $"{ex.Message} 아래 '입력 크기' 칸을 채우고 다시 시도하세요.",
+                ErrorCodes.LicenseRequired => $"{ex.Message} 아래 '라이선스' 칸을 채우세요.",
+                _ => ex.Describe(),
+            };
+        }
+        catch (IOException ex) { _uploadError = $"파일을 읽지 못했습니다: {ex.Message}"; }
+        finally { _uploading = false; }
+    }
+
+    private void OpenPromote(ModelVersionDto version)
+    {
+        _promoting = version;
+        _targetStage = version.Stage switch
+        {
+            ModelStage.Candidate => ModelStage.Staging,
+            ModelStage.Staging => ModelStage.Production,
+            _ => ModelStage.Staging,
+        };
+        _promoteReason = "";
+        _confirmLicense = false;
+        _promoteError = null;
+        _promoteOpen = true;
+    }
+
+    private async Task PromoteAsync()
+    {
+        if (_promoting is null) return;
+        _promotingBusy = true;
+        _promoteError = null;
+        try
+        {
+            var updated = await Api.PromoteAsync(_promoting.Id,
+                new PromoteRequest(_targetStage, string.IsNullOrWhiteSpace(_promoteReason) ? null : _promoteReason, _confirmLicense));
+            Snackbar.Add($"v{updated.Number} → {Display.StageText(updated.Stage)}", Severity.Success);
+            _promoteOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _promoteError = ex.Describe(); }
+        finally { _promotingBusy = false; }
+    }
+}

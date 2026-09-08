@@ -1,0 +1,328 @@
+@page "/training/{Id:guid}"
+@attribute [Authorize]
+@implements IAsyncDisposable
+@inject MlopsApi Api
+@inject TrainingHubClient Hub
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>학습 작업 · MLOps</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_job is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudBreadcrumbs Items="@(new List<BreadcrumbItem> {
+        new("학습 작업", "/training"), new($"{_job.Script.FileName()}", null, disabled: true) })" Class="pa-0 mb-2" />
+
+    <div class="d-flex justify-space-between align-start mb-4">
+        <div>
+            <div class="d-flex align-center gap-2">
+                <MudText Typo="Typo.h5" HtmlTag="h1">@_job.Script.FileName()</MudText>
+                <MudChip T="string" Color="@Display.JobColor(_job.State)">@Display.JobStateText(_job.State)</MudChip>
+                @if (!_hubConnected && !IsTerminal)
+                {
+                    <MudTooltip Text="실시간 연결이 없어 5초마다 새로 읽습니다">
+                        <MudIcon Icon="@Icons.Material.Filled.CloudOff" Size="Size.Small" Color="Color.Warning" />
+                    </MudTooltip>
+                }
+            </div>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                @Display.TaskTypeText(_job.TaskType) · 시도 @_job.Attempt/@_job.MaxAttempts · @_job.CreatedBy 제출 @Display.Ago(_job.CreatedAt)
+            </MudText>
+        </div>
+        <div class="d-flex gap-2">
+            @if (_job.ResultModelVersionId is { } versionId)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.Inventory2"
+                           Href="@($"/models/{_job.ModelId}")">결과 모델 보기</MudButton>
+            }
+            <AuthorizeView Roles="Engineer,Admin">
+                @if (!IsTerminal)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop"
+                               Disabled="@(_job.CancelRequested || _busy)" OnClick="CancelAsync">
+                        @(_job.CancelRequested ? "취소 요청됨" : "취소")
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Replay"
+                               Disabled="@_busy" OnClick="RetryAsync">같은 설정으로 재실행</MudButton>
+                }
+            </AuthorizeView>
+        </div>
+    </div>
+
+    @if (_job.Error is { } err)
+    {
+        <MudAlert Severity="@(_job.State == TrainingJobState.Cancelled ? Severity.Info : Severity.Error)" Class="mb-4">
+            <MudText Typo="Typo.subtitle2">@(_job.FailureKind ?? "오류")</MudText>
+            <MudText Typo="Typo.body2">@err</MudText>
+            @if (_job.FailureKind == FailureKinds.WorkerLost)
+            {
+                <MudText Typo="Typo.caption">워커 하트비트가 끊겼습니다. 워커 화면에서 상태를 확인하세요.</MudText>
+            }
+        </MudAlert>
+    }
+
+    <MudGrid>
+        <MudItem xs="12" md="8">
+            <MudPaper Class="pa-4 mb-4" Elevation="1">
+                <div class="d-flex justify-space-between align-center mb-1">
+                    <MudText Typo="Typo.subtitle1">진행률</MudText>
+                    <MudText Typo="Typo.body2">
+                        @(_job.TotalEpochs > 0 ? $"에폭 {_job.CurrentEpoch}/{_job.TotalEpochs}" : "에폭 정보 없음")
+                        · @Display.Duration(_job.StartedAt ?? _job.AssignedAt, _job.FinishedAt)
+                    </MudText>
+                </div>
+                <MudProgressLinear Color="@Display.JobColor(_job.State)" Value="@_job.Progress" Size="Size.Large" />
+                <div class="d-flex gap-6 mt-3">
+                    <div>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">진행</MudText>
+                        <MudText Typo="Typo.h6">@_job.Progress.ToString("0.#")%</MudText>
+                    </div>
+                    <div>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">손실</MudText>
+                        <MudText Typo="Typo.h6">@(_job.LastLoss?.ToString("0.####") ?? "—")</MudText>
+                    </div>
+                    <div>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">지표</MudText>
+                        <MudText Typo="Typo.h6">@(_job.LastMetric?.ToString("0.###") ?? "—")</MudText>
+                    </div>
+                </div>
+            </MudPaper>
+
+            <MudPaper Class="pa-4" Elevation="1">
+                <div class="d-flex justify-space-between align-center mb-2">
+                    <MudText Typo="Typo.subtitle1">로그</MudText>
+                    <MudSwitch T="bool" @bind-Value="_follow" Label="자동 스크롤" Color="Color.Primary" />
+                </div>
+                <div class="log-console" id="log-console">
+                    @if (_logs.Count == 0)
+                    {
+                        <span class="mud-text-secondary">아직 로그가 없습니다.</span>
+                    }
+                    @foreach (var line in _logs)
+                    {
+                        <div class="@($"lvl-{line.Level}")">@line.Text</div>
+                    }
+                </div>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="4">
+            <MudPaper Class="pa-4 mb-4" Elevation="1">
+                <MudText Typo="Typo.subtitle1" Class="mb-2">설정</MudText>
+                <MudSimpleTable Dense="true" Elevation="0">
+                    <tbody>
+                        <tr><td>스크립트</td><td class="mono">@_job.Script.FileName()</td></tr>
+                        <tr><td>백본</td><td>@(_job.Backbone ?? "—")</td></tr>
+                        <tr><td>사전학습</td><td>@(_job.PretrainedRef ?? "—")</td></tr>
+                        <tr><td>Seed</td><td>@_job.Seed</td></tr>
+                        <tr><td>우선순위</td><td>@_job.Priority</td></tr>
+                        <tr><td>데이터셋</td><td class="mono">@_job.DatasetVersionId.ToString()[..8]</td></tr>
+                    </tbody>
+                </MudSimpleTable>
+
+                @if (_job.Hyperparams.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-3">하이퍼파라미터</MudText>
+                    <MudSimpleTable Dense="true" Elevation="0">
+                        <tbody>
+                            @foreach (var kv in _job.Hyperparams.OrderBy(k => k.Key))
+                            {
+                                <tr><td>@kv.Key</td><td class="mono">@kv.Value</td></tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+
+            @if (_artifacts.Count > 0)
+            {
+                <MudPaper Class="pa-4 mb-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">아티팩트</MudText>
+                    <MudList T="string" Dense="true">
+                        @foreach (var a in _artifacts)
+                        {
+                            <MudListItem T="string" Href="@a.Url" Target="_blank" Icon="@Icons.Material.Filled.Download">
+                                <MudText Typo="Typo.body2">@a.FileName</MudText>
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(a.SizeBytes) · @Display.Sha(a.Sha256)</MudText>
+                            </MudListItem>
+                        }
+                    </MudList>
+                </MudPaper>
+            }
+
+            @if (_job.Reproducibility is { } repro)
+            {
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">재현성</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        같은 입력·설정·seed 로 다시 돌리면 같은 결과가 나와야 합니다.
+                    </MudText>
+                    <MudSimpleTable Dense="true" Elevation="0" Class="mt-2">
+                        <tbody>
+                            <tr><td>데이터셋 해시</td><td class="mono">@Display.Sha(repro.DatasetManifestHash)</td></tr>
+                            <tr><td>스크립트 해시</td><td class="mono">@Display.Sha(repro.ScriptSha256)</td></tr>
+                            <tr><td>워커</td><td>@(repro.WorkerName ?? "—")</td></tr>
+                            <tr><td>GPU</td><td>@(repro.GpuName ?? "—")</td></tr>
+                            <tr><td>파이썬</td><td>@(repro.PythonVersion ?? "—")</td></tr>
+                            <tr><td>Seed</td><td>@repro.Seed</td></tr>
+                        </tbody>
+                    </MudSimpleTable>
+                    @if (repro.Packages.Count > 0)
+                    {
+                        <MudExpansionPanels Elevation="0" Class="mt-2">
+                            <MudExpansionPanel Text="@($"패키지 {repro.Packages.Count}개")">
+                                <MudSimpleTable Dense="true" Elevation="0">
+                                    <tbody>
+                                        @foreach (var kv in repro.Packages.OrderBy(k => k.Key))
+                                        {
+                                            <tr><td>@kv.Key</td><td class="mono">@kv.Value</td></tr>
+                                        }
+                                    </tbody>
+                                </MudSimpleTable>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+                </MudPaper>
+            }
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private TrainingJobDto? _job;
+    private List<JobLogLineDto> _logs = [];
+    private List<JobArtifactDto> _artifacts = [];
+    private string? _error;
+    private bool _busy, _follow = true, _hubConnected;
+    private long _lastSeq;
+    private IAsyncDisposable? _watch;
+    private Timer? _poll;
+
+    private bool IsTerminal => _job?.State is TrainingJobState.Succeeded or TrainingJobState.Failed or TrainingJobState.Cancelled;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await StopWatchAsync();
+        _logs = [];
+        _lastSeq = 0;
+        await LoadAsync();
+
+        if (_job is null) return;
+        if (!IsTerminal) await StartWatchAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _job = await Api.JobAsync(Id);
+            var page = await Api.JobLogsAsync(Id, _lastSeq, 2000);
+            if (page.Lines.Count > 0)
+            {
+                _logs.AddRange(page.Lines);
+                _lastSeq = page.NextSeq;
+            }
+            _artifacts = await Api.JobArtifactsAsync(Id);
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    private async Task StartWatchAsync()
+    {
+        try
+        {
+            _watch = await Hub.WatchJobAsync(Id,
+                onProgress: job => InvokeAsync(() => { _job = job; StateHasChanged(); return Task.CompletedTask; }),
+                onLog: lines => InvokeAsync(async () =>
+                {
+                    foreach (var l in lines.Where(l => l.Seq > _lastSeq))
+                    {
+                        _logs.Add(l);
+                        _lastSeq = l.Seq;
+                    }
+                    StateHasChanged();
+                    await ScrollAsync();
+                }),
+                onDone: job => InvokeAsync(async () =>
+                {
+                    _job = job;
+                    _artifacts = await SafeArtifactsAsync();
+                    StateHasChanged();
+                }));
+            _hubConnected = true;
+        }
+        catch (Exception)
+        {
+            // SignalR 을 못 붙이면 폴링으로 대체한다 (프록시가 웹소켓을 막는 환경)
+            _hubConnected = false;
+            _poll = new Timer(async _ => await InvokeAsync(async () =>
+            {
+                await LoadAsync();
+                StateHasChanged();
+                if (IsTerminal) { _poll?.Dispose(); _poll = null; }
+            }), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        }
+    }
+
+    private async Task<List<JobArtifactDto>> SafeArtifactsAsync()
+    {
+        try { return await Api.JobArtifactsAsync(Id); }
+        catch (MlopsApiException) { return _artifacts; }
+    }
+
+    private async Task ScrollAsync()
+    {
+        if (!_follow) return;
+        try { await JS.InvokeVoidAsync("eval", "var e=document.getElementById('log-console'); if(e) e.scrollTop=e.scrollHeight;"); }
+        catch (JSException) { /* 렌더 전 호출 */ }
+    }
+
+    private async Task CancelAsync()
+    {
+        _busy = true;
+        try
+        {
+            _job = await Api.CancelJobAsync(Id, "화면에서 취소");
+            Snackbar.Add("취소를 요청했습니다. 워커가 프로세스를 정리합니다.", Severity.Info);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task RetryAsync()
+    {
+        _busy = true;
+        try
+        {
+            var created = await Api.RetryJobAsync(Id);
+            Snackbar.Add("같은 설정으로 새 작업을 만들었습니다", Severity.Success);
+            Nav.NavigateTo($"/training/{created.Id}");
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task StopWatchAsync()
+    {
+        if (_watch is not null) { await _watch.DisposeAsync(); _watch = null; }
+        _poll?.Dispose();
+        _poll = null;
+    }
+
+    public async ValueTask DisposeAsync() => await StopWatchAsync();
+}

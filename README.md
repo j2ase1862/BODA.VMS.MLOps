@@ -13,7 +13,8 @@ BODA.VMS.MLOps.slnx
 ├── src/BODA.VMS.MLOps.Core        순수 로직 — 도메인 열거형·model:// 참조·작업 상태 머신
 │                                  ONNX 규약 판별 확장·하이퍼파라미터 화이트리스트·인자 조립
 ├── src/BODA.VMS.MLOps.Contracts   서버 ↔ 워커 ↔ 브라우저 공용 DTO
-├── src/BODA.VMS.MLOps.Server      관리 서버 (ASP.NET Core 8, SQLite WAL, SignalR)
+├── src/BODA.VMS.MLOps.Server      관리 서버 (ASP.NET Core 8, SQLite WAL, SignalR) — 화면도 함께 호스팅
+├── src/BODA.VMS.MLOps.Client      관리 화면 (Blazor WebAssembly + MudBlazor)
 ├── src/BODA.VMS.MLOps.TrainWorker 학습 워커 (Windows 서비스, GPU PC)
 ├── tests/BODA.VMS.MLOps.Tests     xUnit 90개 — 규약·상태 머신·API·워커 프로토콜·E2E
 ├── scripts/                       학습 스크립트(VMS 리포와 동일 규약) + 진단·허용 목록·가짜 스크립트
@@ -33,7 +34,7 @@ D:\Repo\VMS\tools\pack-contracts.ps1
 dotnet build BODA.VMS.MLOps.slnx
 dotnet test  BODA.VMS.MLOps.slnx
 
-# 서버 (Swagger: http://localhost:5310/swagger)
+# 서버 + 관리 화면 (화면 http://localhost:5310 · API 문서 /swagger)
 dotnet run --project src/BODA.VMS.MLOps.Server
 
 # 워커 (GPU PC)
@@ -44,6 +45,24 @@ BODA.VMS.MLOps.TrainWorker.exe
 서버는 시작할 때 `Jwt:Key` 가 32자 이상인지 확인하고, 없으면 부팅을 멈춥니다.
 개발은 `dotnet user-secrets set "Jwt:Key" "<32자 이상>"`, 운영은 환경변수 `Jwt__Key` 를 씁니다.
 BODA.VMS.Web 과 같은 키·발급자를 쓰면 기존 로그인 토큰이 그대로 통합니다.
+스키마는 마이그레이션으로만 바꿉니다. 서버는 부팅할 때 밀린 마이그레이션을 적용합니다.
+
+## 관리 화면
+
+서버와 같은 주소로 열립니다. 로그인은 BODA.VMS.Web 에서 받은 토큰을 붙여넣는 방식이고,
+개발 서버에서 `Auth:EnableDevTokens` 가 켜져 있으면 역할별 버튼으로 바로 들어갈 수 있습니다.
+
+| 화면 | 하는 일 |
+|---|---|
+| 대시보드 | 모델·워커·진행 중 학습·데이터셋 요약, 진단 실패 워커 경고 |
+| 모델 · 모델 상세 | 계열 생성, ONNX 업로드, 버전 표, 스테이지 승격, 버전 상세 드로어(메타데이터·지표·이력) |
+| 레시피 바인딩 | 도구에 모델 연결, 운영 추종/버전 고정, 롤백, 이력 |
+| 학습 작업 · 상세 | 작업 제출(서버 화이트리스트 기반 하이퍼파라미터), 실시간 진행률·로그, 취소·재실행, 재현성 레코드 |
+| 데이터셋 버전 | 내보내기 zip 업로드, 매니페스트 해시 확인 |
+| 워커 | 상태·GPU·진단, 토큰 발급/재발급, 비활성화 |
+| 사전학습 미러 | 자산·파일 관리, 해시 확인 |
+
+실시간 로그는 SignalR 로 받고, 웹소켓이 막힌 환경에서는 자동으로 폴링으로 내려갑니다.
 
 ## 인증과 역할
 
@@ -154,6 +173,5 @@ E2E 테스트는 인메모리 서버에 실제 `JobRunner` 를 붙여 작업 제
 - 데이터셋 export 를 zip 단일 파일에서 매니페스트 기반 재개 가능 다운로드로 (수십 GB 대비)
 - 세그멘테이션 스크립트 `train_rfdetr_seg.py` 도입, OCR venv 분리 검토
 - 워커 MSI(WiX) 와 오프라인 wheel 번들
-- Blazor 화면 (모델 목록·상세·워커·작업 생성·실시간 로그)
-- 생산 이력 modelVersionId 연동과 모델별 NG 율 통계
-- EF Core 마이그레이션 도입 (현재는 시작 시 `EnsureCreated`)
+- 생산 이력 modelVersionId 연동과 모델별 NG 율 통계 화면
+- VMS 리포 연동 PR (`ModelReferenceResolver`, VisionSetup 의 [레지스트리…] 버튼, WPF 도구 업로드 버튼)

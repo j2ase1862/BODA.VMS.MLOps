@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <!--
+    MLOps 관리 화면 (Blazor WebAssembly + MudBlazor). MLOps 서버가 정적 파일로 호스팅하고
+    같은 오리진의 /api 를 호출한다. BODA.VMS.Web 과 같은 JWT 를 쓰므로 그 쪽 로그인 토큰이 그대로 통한다.
+    설계: Phase 1 §7 (모델 목록·상세·버전 드로어·바인딩) · Phase 3 §9 (워커·작업 생성·작업 상세·사전학습 미러)
+  -->
+  <PropertyGroup>
+    <RootNamespace>BODA.VMS.MLOps.Client</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.*" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.*" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="8.0.*" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.*" />
+    <PackageReference Include="Blazored.LocalStorage" Version="4.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.*" />
+    <PackageReference Include="MudBlazor" Version="7.15.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BODA.VMS.MLOps.Contracts\BODA.VMS.MLOps.Contracts.csproj" />
+  </ItemGroup>
+</Project>

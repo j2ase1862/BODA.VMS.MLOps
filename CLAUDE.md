@@ -76,6 +76,14 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 통째로 날린 적이 있습니다. 그래서 개발 스토리지 경로를 `.dev-storage` 로 두었습니다.
 무엇이든 지우기 전에 대상이 실제로 무엇인지 먼저 확인하세요.
 
+**Razor 는 `v@expr` 을 이메일 주소로 봅니다.** `v@version.Number` 는 식으로 평가되지 않고 글자 그대로 나갑니다.
+`v@(version.Number)` 로 감싸세요. 한글 접미사도 같습니다 — `@count개` 는 `개` 를 멤버로 읽으므로 `@(count)개` 로 씁니다.
+둘 다 컴파일은 통과하고 화면에서만 드러나므로, 화면을 고쳤으면 브라우저로 한 번 띄워 보세요.
+
+**MudBlazor 7 은 provider 네 개를 모두 요구합니다.** `MudThemeProvider`, `MudPopoverProvider`,
+`MudDialogProvider`, `MudSnackbarProvider`. 팝오버 provider 가 빠지면 `MudSelect`·`MudTooltip` 이
+렌더 중 예외를 던져 화면 일부가 죽습니다. 빌드는 통과합니다.
+
 ## 손대면 안 되는 것
 
 `scripts/train_*.py` 는 VMS 리포(`VMS.DeepLearning/scripts`)의 복사본입니다.

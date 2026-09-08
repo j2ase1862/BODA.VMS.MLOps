@@ -1,0 +1,152 @@
+@page "/"
+@attribute [Authorize]
+@inject MlopsApi Api
+
+<PageTitle>대시보드 · MLOps</PageTitle>
+<MudText Typo="Typo.h5" HtmlTag="h1" Class="mb-6">대시보드</MudText>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" sm="6" md="3">
+            <StatCard Title="모델 계열" Value="@_models.Count.ToString()" Icon="@Icons.Material.Filled.Inventory2"
+                      Sub="@($"운영 배포 {_models.Count(m => m.ProductionVersion is not null)}건")" Href="/models" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <StatCard Title="워커" Value="@($"{_workers.Count(w => w.Status is WorkerStatus.Online or WorkerStatus.Busy)} / {_workers.Count}")"
+                      Icon="@Icons.Material.Filled.Memory" Sub="사용 가능 / 전체" Href="/workers"
+                      Color="@(_workers.Any(w => w.Status == WorkerStatus.Disabled) ? Color.Warning : Color.Default)" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <StatCard Title="진행 중인 학습" Value="@_active.Count.ToString()" Icon="@Icons.Material.Filled.ModelTraining"
+                      Sub="@($"대기 {_jobs.Count(j => j.State == TrainingJobState.Queued)}건")" Href="/training" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <StatCard Title="데이터셋 버전" Value="@_datasets.Count.ToString()" Icon="@Icons.Material.Filled.FolderZip"
+                      Sub="@Display.Size(_datasets.Sum(d => d.SizeBytes))" Href="/datasets" />
+        </MudItem>
+    </MudGrid>
+
+    @if (_disabled.Count > 0)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-6">
+            <MudText Typo="Typo.subtitle2">작업을 받지 못하는 워커가 있습니다</MudText>
+            @foreach (var w in _disabled)
+            {
+                <MudText Typo="Typo.body2">@w.Name — @(w.DisabledReason ?? "비활성")</MudText>
+            }
+        </MudAlert>
+    }
+
+    <MudGrid Class="mt-2">
+        <MudItem xs="12" md="7">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.subtitle1" Class="mb-3">최근 학습 작업</MudText>
+                @if (_jobs.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">아직 제출된 작업이 없습니다.</MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <thead>
+                            <tr><th>상태</th><th>스크립트</th><th>진행</th><th>제출</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var j in _jobs.Take(8))
+                            {
+                                <tr>
+                                    <td><MudChip T="string" Size="Size.Small" Color="@Display.JobColor(j.State)">@Display.JobStateText(j.State)</MudChip></td>
+                                    <td class="mono">@j.Script.FileName()</td>
+                                    <td style="min-width:120px">
+                                        <MudProgressLinear Color="@Display.JobColor(j.State)" Value="@j.Progress" Size="Size.Small" />
+                                    </td>
+                                    <td>@Display.Ago(j.CreatedAt)</td>
+                                    <td><MudButton Size="Size.Small" Href="@($"/training/{j.Id}")">보기</MudButton></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="5">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.subtitle1" Class="mb-3">운영 중인 모델</MudText>
+                @{
+                    var production = _models.Where(m => m.ProductionVersion is not null).ToList();
+                }
+                @if (production.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">Production 으로 승격된 버전이 없습니다.</MudText>
+                }
+                else
+                {
+                    <MudList T="string" Dense="true">
+                        @foreach (var m in production)
+                        {
+                            <MudListItem T="string" Href="@($"/models/{m.Id}")">
+                                <div class="d-flex justify-space-between align-center">
+                                    <div>
+                                        <MudText Typo="Typo.body2">@m.Name</MudText>
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                            @Display.TaskTypeText(m.TaskType) · 바인딩 @m.ActiveBindingCount 건
+                                        </MudText>
+                                    </div>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">v@(m.ProductionVersion!.Number)</MudChip>
+                                </div>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private List<ModelDto> _models = [];
+    private List<WorkerDto> _workers = [];
+    private List<TrainingJobDto> _jobs = [];
+    private List<DatasetVersionDto> _datasets = [];
+    private List<WorkerDto> _disabled = [];
+    private List<TrainingJobDto> _active = [];
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // 하나가 권한 부족이어도 나머지는 보여 준다
+            _models = await Safe(() => Api.ModelsAsync(), []);
+            _workers = await Safe(() => Api.WorkersAsync(), []);
+            _jobs = await Safe(() => Api.JobsAsync(take: 20), []);
+            _datasets = await Safe(() => Api.DatasetsAsync(), []);
+
+            _disabled = _workers.Where(w => w.Status == WorkerStatus.Disabled).ToList();
+            _active = _jobs.Where(j => j.State is not (TrainingJobState.Queued or TrainingJobState.Succeeded
+                or TrainingJobState.Failed or TrainingJobState.Cancelled)).ToList();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task<T> Safe<T>(Func<Task<T>> call, T fallback)
+    {
+        try { return await call(); }
+        catch (MlopsApiException) { return fallback; }
+    }
+}
