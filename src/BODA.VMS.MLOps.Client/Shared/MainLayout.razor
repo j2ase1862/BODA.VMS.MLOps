@@ -44,6 +44,20 @@
 @code {
     private bool _drawerOpen = true;
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+
+    /// <summary>
+    /// 이미지용 쿠키를 앱이 뜰 때마다 확보한다.
+    /// 로그인 화면에서만 받으면, 토큰이 브라우저에 남아 있는 사람은 로그인 화면을 거치지 않으므로
+    /// 쿠키 없이 들어와 썸네일과 캔버스가 전부 401 이 된다. 쿠키가 만료된 뒤에도 같은 일이 생긴다.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is null) return;
+        var state = await AuthState;
+        if (state.User.Identity?.IsAuthenticated == true) await Api.EnsureImageCookieAsync();
+    }
+
     private static string RoleText(AuthenticationState state)
     {
         var roles = state.User.Claims

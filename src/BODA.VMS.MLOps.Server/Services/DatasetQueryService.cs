@@ -24,6 +24,14 @@ public sealed class DatasetQueryService(MlopsDbContext db, TimeProvider clock)
             .Where(s => s.DatasetId == id && imageIds.Contains(s.ImageId))
             .ToDictionaryAsync(s => s.ImageId, ct);
 
+        // 격자가 썸네일 위에 라벨을 겹쳐 그린다. 한 장에 몇 개뿐이라 한 페이지분을 한 번에 읽어도 가볍다.
+        var annotations = (await db.Annotations.AsNoTracking()
+                .Where(a => a.DatasetId == id && imageIds.Contains(a.ImageId)).ToListAsync(ct))
+            .GroupBy(a => a.ImageId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<AnnotationDto>)g
+                .Select(a => Core.Labeling.AnnotationPayload.FromJson(a.Shape, a.ClassName, a.PayloadJson))
+                .Where(a => a is not null).Select(a => a!.ToDto()).ToList());
+
         var now = clock.GetUtcNow().UtcDateTime;
         return images.Select(i =>
         {
@@ -33,7 +41,8 @@ public sealed class DatasetQueryService(MlopsDbContext db, TimeProvider clock)
                 state?.Status ?? Core.Domain.LabelStatus.Unlabeled,
                 splits.TryGetValue(i.Id, out var split) ? split : null,
                 state?.AnnotationCount ?? 0,
-                locked ? state!.LockedBy : null);
+                locked ? state!.LockedBy : null,
+                annotations.GetValueOrDefault(i.Id));
         }).ToList();
     }
 

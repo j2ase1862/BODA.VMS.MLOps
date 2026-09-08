@@ -15,12 +15,13 @@ public static class DataMapping
                 stats.AnnotationCount, stats.TrainCount, stats.ValCount, stats.TestCount, stats.PerClass));
 
     public static ImageDto ToDto(this Image i,
-        LabelStatus? labelStatus = null, DatasetSplit? split = null, int? annotationCount = null, string? lockedBy = null) =>
+        LabelStatus? labelStatus = null, DatasetSplit? split = null, int? annotationCount = null, string? lockedBy = null,
+        IReadOnlyList<AnnotationDto>? annotations = null) =>
         new(i.Id, i.Sha256, i.FileName, i.ContentType, i.Width, i.Height, i.SizeBytes,
             i.Source, i.LineId, i.InspectionId, Mapping.Json(i.TagsJson, Array.Empty<string>()), i.PerceptualHash,
             i.CapturedAt, i.CreatedBy, i.CreatedAt,
             ImageUrl(i.Id, "thumb"), ImageUrl(i.Id, "view"), ImageUrl(i.Id, "original"),
-            labelStatus, split, annotationCount, lockedBy);
+            labelStatus, split, annotationCount, lockedBy, annotations);
 
     public static string ImageUrl(Guid imageId, string variant) => $"/api/images/{imageId}/{variant}";
 

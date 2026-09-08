@@ -122,8 +122,35 @@ else
                 <MudPaper Elevation="@(selected ? 6 : 1)" Class="pa-1"
                           Style="@($"position:relative; cursor:pointer; outline:{(selected ? "3px solid var(--mud-palette-primary)" : "none")}")"
                           @onclick="@(() => Toggle(image.Id))">
-                    <img src="@image.ThumbnailUrl" alt="@image.FileName" loading="lazy"
-                         style="width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:3px; display:block" />
+                    <div style="position:relative">
+                        <img src="@image.ThumbnailUrl" alt="@image.FileName" loading="lazy"
+                             style="width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:3px; display:block" />
+                        @* 붙은 라벨을 썸네일 위에 그대로 얹는다 — 좌표가 정규화라 크기에 상관없이 맞는다.
+                           목록에서 어떤 이미지가 어떻게 라벨됐는지 열어 보지 않고도 알 수 있다. *@
+                        @if (image.Annotations is { Count: > 0 } overlay)
+                        {
+                            <svg viewBox="0 0 100 100" preserveAspectRatio="none"
+                                 style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none">
+                                @foreach (var a in overlay)
+                                {
+                                    var color = ColorOf(Array.IndexOf(_dataset!.Classes, a.ClassName));
+                                    if (a.Points is { Length: >= 3 } points)
+                                    {
+                                        <polygon points="@string.Join(' ', points.Select(p => $"{p[0] * 100:0.##},{p[1] * 100:0.##}"))"
+                                                 fill="@color" fill-opacity="0.25" stroke="@color" stroke-width="0.8"
+                                                 vector-effect="non-scaling-stroke" />
+                                    }
+                                    else if (a is { X: not null, Y: not null, W: not null, H: not null })
+                                    {
+                                        <rect x="@((a.X.Value * 100).ToString("0.##"))" y="@((a.Y.Value * 100).ToString("0.##"))"
+                                              width="@((a.W.Value * 100).ToString("0.##"))" height="@((a.H.Value * 100).ToString("0.##"))"
+                                              fill="@color" fill-opacity="0.2" stroke="@color" stroke-width="0.8"
+                                              vector-effect="non-scaling-stroke" />
+                                    }
+                                }
+                            </svg>
+                        }
+                    </div>
                     <div style="position:absolute; top:6px; left:6px; display:flex; gap:4px">
                         <MudChip T="string" Size="Size.Small" Color="@Display.LabelStatusColor(image.LabelStatus ?? LabelStatus.Unlabeled)">
                             @Display.LabelStatusText(image.LabelStatus ?? LabelStatus.Unlabeled)
@@ -149,8 +176,10 @@ else
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                                 @image.Width×@image.Height · 라벨 @(image.AnnotationCount ?? 0)
                             </MudText>
-                            <MudIconButton Icon="@Icons.Material.Filled.Draw" Size="Size.Small"
-                                           Href="@($"/datasets/{Id}/label/{image.Id}")" aria-label="라벨링" />
+                            <MudTooltip Text="크게 보고 라벨 고치기">
+                                <MudIconButton Icon="@Icons.Material.Filled.OpenInFull" Size="Size.Small" Color="Color.Primary"
+                                               Href="@($"/datasets/{Id}/label/{image.Id}")" aria-label="라벨 보기" />
+                            </MudTooltip>
                         </div>
                     </div>
                 </MudPaper>
@@ -278,6 +307,13 @@ else
     {
         _status = status;
         await LoadImagesAsync();
+    }
+
+    /// <summary>라벨링 캔버스와 같은 색을 써서 격자와 상세가 어긋나 보이지 않게 한다</summary>
+    private static string ColorOf(int index)
+    {
+        string[] palette = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00acc1", "#fdd835", "#6d4c41", "#3949ab", "#d81b60"];
+        return palette[(index < 0 ? 0 : index) % palette.Length];
     }
 
     private async Task OnSearchKeyAsync(KeyboardEventArgs e)

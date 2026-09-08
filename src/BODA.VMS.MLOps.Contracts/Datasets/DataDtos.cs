@@ -24,7 +24,12 @@ public sealed record ImageDto(
     DateTime? CapturedAt, string CreatedBy, DateTime CreatedAt,
     string ThumbnailUrl, string ViewUrl, string OriginalUrl,
     /// <summary>데이터셋 범위로 조회했을 때만 채워진다</summary>
-    LabelStatus? LabelStatus = null, DatasetSplit? Split = null, int? AnnotationCount = null, string? LockedBy = null);
+    LabelStatus? LabelStatus = null, DatasetSplit? Split = null, int? AnnotationCount = null, string? LockedBy = null,
+    /// <summary>
+    /// 격자에서 썸네일 위에 라벨을 겹쳐 그리기 위한 것. 데이터셋 범위 조회에서만 채워진다.
+    /// 좌표가 정규화라 썸네일 크기에 그대로 얹을 수 있다.
+    /// </summary>
+    IReadOnlyList<AnnotationDto>? Annotations = null);
 
 public sealed record ImagePageDto(IReadOnlyList<ImageDto> Items, int Total, int Skip, int Take);
 

@@ -61,7 +61,9 @@ public static class AuthEndpoints
                 Secure = request.IsHttps,
                 SameSite = SameSiteMode.Strict,         // 다른 사이트에서 부르는 요청에는 붙지 않는다
                 Path = ImageCookie.Path,                // 이미지 경로 밖으로는 나가지 않는다
-                MaxAge = TimeSpan.FromHours(12),
+                // 만료를 따로 두지 않는다. 브라우저를 닫으면 사라지고, 다시 열면 화면이 다시 받아 간다.
+                // 시간을 박아 두면 탭을 오래 열어 둔 사람의 이미지가 어느 순간부터 안 보인다.
+                // 담긴 토큰 자체가 만료되면 서버가 어차피 거부하므로 수명이 짧아지지는 않는다.
             });
             return Results.NoContent();
         }).RequireAuthorization(Policies.Viewer);
