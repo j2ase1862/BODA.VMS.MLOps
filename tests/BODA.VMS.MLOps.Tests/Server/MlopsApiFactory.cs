@@ -28,7 +28,7 @@ public sealed class ManualTimeProvider : TimeProvider
 /// 서버 통합 테스트 팩토리 — 임시 SQLite·스토리지, 개발 토큰 발급 허용, 스크립트 폴더에 train_fake.py 를 train_dfine.py 등으로 배치.
 /// 감독자(JobSupervisor)는 주기를 길게 두고 테스트에서 직접 호출한다.
 /// </summary>
-public sealed class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
+public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
 {
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "mlops-tests", Guid.NewGuid().ToString("N"));
     public string ScriptsRoot => Path.Combine(Root, "scripts");
@@ -53,6 +53,10 @@ public sealed class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
         builder.UseSetting("Mlops:ScriptsRoot", ScriptsRoot);
         builder.UseSetting("Mlops:SupervisorIntervalSec", "3600");
         builder.UseSetting("Mlops:MaxModelBytes", (64L * 1024 * 1024).ToString());
+        // SAM 은 기본으로 꺼 둔다. 서버 프로젝트 폴더에 모델을 둔 개발 PC 에서만 켜지면
+        // 같은 시험이 사람마다 다르게 도는 셈이 된다. 켜는 쪽은 SamEnabledFactory 가 따로 맡는다.
+        builder.UseSetting("Sam:EncoderPath", "");
+        builder.UseSetting("Sam:DecoderPath", "");
         builder.UseSetting("Urls", "");
         builder.ConfigureServices(services =>
         {

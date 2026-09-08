@@ -4,7 +4,8 @@
 
 ## 이 리포가 하는 일
 
-BODA VMS MLOps 플랫폼. 검사 모델의 등록·배포(Phase 1)와 웹에서 제출하는 학습(Phase 3)을 구현합니다.
+BODA VMS MLOps 플랫폼. 검사 모델의 등록·배포(Phase 1), 데이터 관리(Phase 2),
+웹에서 제출하는 학습(Phase 3), 브라우저 라벨링(Phase 4)을 구현합니다.
 설계 근거는 `docs/` 의 문서 3종이고, 코드 주석은 그 문서의 절 번호를 인용합니다.
 동작을 바꿀 때는 해당 절과 어긋나지 않는지 먼저 확인하세요.
 
@@ -28,6 +29,8 @@ dotnet run --project src/BODA.VMS.MLOps.Server   # http://localhost:5310/swagger
 
 **모델 규약은 런타임이 정의합니다.** 레지스트리는 판별과 검증만 하고 변환하지 않습니다.
 판별은 `InferenceSession` 없이 protobuf 만 읽습니다. 업로드 경로에서 ONNX 세션을 만들지 마세요.
+서버가 `InferenceSession` 을 여는 곳은 SAM 보조(`SamAssistService`) 하나뿐이고, 그 모델은
+관리자가 설치 폴더에 둔 것이라 업로드된 파일이 아닙니다.
 
 **하이퍼파라미터는 화이트리스트 밖이면 거부합니다.** `HyperparamWhitelist` 가 서버(작업 생성)와
 워커(실행 직전) 양쪽에서 같은 규칙으로 검사합니다. 스크립트 인자는 `ProcessStartInfo.ArgumentList` 로만
@@ -98,7 +101,17 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 **클래스 선택(숫자키·클래스 버튼)은 다음에 그릴 것만 정합니다.** 선택된 라벨을 함께 바꾸면
 방금 그린 박스가 조용히 다른 클래스가 됩니다. 이미 붙은 라벨은 `setAnnotationClass` 로만 바꿉니다.
 
+**SAM 모델 파일은 저장소에 없습니다.** `src/BODA.VMS.MLOps.Server/models/sam` 에 4개 파일
+(`mobile_sam_{encoder,decoder}.onnx` 와 각각의 `.onnx.data`)이 한 세트로 있어야 켜집니다.
+없으면 기능만 꺼진 채 서버가 그대로 뜨므로, "SAM 버튼이 안 보인다" 는 대개 파일 문제입니다.
+`/api/sam/status` 의 `message` 가 이유를 말해 줍니다. 테스트는 기본으로 SAM 을 끄고 돌리고
+(`MlopsApiFactory` 가 경로를 비웁니다), 모델이 있는 PC 에서만 `SamInferenceTests` 가 실제 추론을 확인합니다.
+
+**SAM 클릭은 확정 전까지 라벨이 아닙니다.** 미리보기는 캔버스 안에만 있고 Enter 로 확정해야
+`annotations` 에 들어갑니다. 이미지를 바꾸거나 모드를 바꾸면 `clearSam` 이 미리보기를 버립니다 —
+남겨 두면 다음 사진에 이전 사진의 폴리곤이 붙습니다.
+
 ## 손대면 안 되는 것
 
-`scripts/train_*.py` 는 VMS 리포(`VMS.DeepLearning/scripts`)의 복사본입니다.
+`scripts/train_*.py` 와 `scripts/export_mobile_sam.py` 는 VMS 리포(`VMS.DeepLearning/scripts`)의 복사본입니다.
 여기서 고치지 말고 VMS 리포에서 고친 뒤 가져오세요. `train_fake.py` 와 `worker_diag.py` 는 이 리포 것입니다.

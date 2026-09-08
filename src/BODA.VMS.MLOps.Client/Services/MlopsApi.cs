@@ -190,6 +190,25 @@ public sealed class MlopsApi(HttpClient http)
     public Task<NextImageDto> NextToLabelAsync(Guid datasetId, Guid? after) =>
         GetAsync<NextImageDto>($"/api/datasets/{datasetId}/next-to-label{(after is null ? "" : $"?after={after}")}");
 
+    // ───────────── SAM 보조 라벨링 ─────────────
+
+    /// <summary>모델이 없으면 Available=false 로 돌아온다 — 화면은 SAM 버튼을 숨긴다.</summary>
+    public async Task<SamStatusDto> SamStatusAsync()
+    {
+        try { return await GetAsync<SamStatusDto>("/api/sam/status"); }
+        catch (MlopsApiException ex) { return new SamStatusDto(false, false, ex.Message); }
+    }
+
+    /// <summary>이미지를 열 때 임베딩을 미리 만들게 한다. 실패해도 클릭할 때 다시 만들면 되므로 조용히 넘긴다.</summary>
+    public async Task SamPrepareAsync(Guid imageId)
+    {
+        try { await PostAsync<SamPrepareRequest, object?>("/api/sam/prepare", new SamPrepareRequest(imageId)); }
+        catch (MlopsApiException) { }
+    }
+
+    public Task<SamPredictResponse> SamPredictAsync(Guid imageId, IReadOnlyList<SamPointDto> points) =>
+        PostAsync<SamPredictRequest, SamPredictResponse>("/api/sam/predict", new SamPredictRequest(imageId, points));
+
     // ───────────── 데이터셋 버전·사전학습 ─────────────
 
     public Task<List<DatasetVersionDto>> DatasetsAsync() => GetAsync<List<DatasetVersionDto>>("/api/dataset-versions");

@@ -23,6 +23,11 @@
          ImageSharp 3.x 는 Six Labors Split License 로 상용 제약이 있어 쓰지 않는다. -->
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.9" />
+    <!-- SAM 보조 라벨링(개발 문서 §5.4)의 MobileSAM 인코더·디코더 실행. MIT 라이선스(§8 허용 목록).
+         CPU 판을 쓴다 — 관리 서버에 GPU 가 있다는 보장이 없고, 인코더는 이미지당 한 번뿐이라 CPU 로도 쓸 만하다.
+         GPU 가 있는 현장은 Microsoft.ML.OnnxRuntime.Gpu 로 바꾸기만 하면 된다 (코드 변경 없음).
+         모델 파일이 없으면 기능만 꺼지고 서버는 그대로 뜬다. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.21.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BODA.VMS.MLOps.Core\BODA.VMS.MLOps.Core.csproj" />

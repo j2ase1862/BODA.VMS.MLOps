@@ -12,3 +12,8 @@ TestResults/
 Logs/
 __pycache__/
 *.pyc
+
+# SAM 보조 라벨링 모델 (MobileSAM, Apache 2.0). 88MB 라 저장소에 넣지 않는다.
+# scripts/export_mobile_sam.py 로 만들거나 VMS.DeepLearning\models\sam 에서 복사한다.
+# .onnx 와 .onnx.data 가 한 세트다 — 둘 다 있어야 한다.
+**/models/sam/

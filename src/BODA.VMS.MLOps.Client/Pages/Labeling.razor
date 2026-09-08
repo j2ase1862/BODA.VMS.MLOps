@@ -46,12 +46,12 @@
     <MudItem xs="12" md="9">
         <MudPaper Elevation="1" Class="pa-2">
             <div class="d-flex align-center gap-2 mb-2 flex-wrap">
-                @if (_shapes.Length > 1)
+                @if (_modes.Count > 1)
                 {
                     <MudToggleGroup T="string" Value="_mode" ValueChanged="SetModeAsync" Size="Size.Small" Color="Color.Primary">
-                        @foreach (var shape in _shapes)
+                        @foreach (var (value, text) in _modes)
                         {
-                            <MudToggleItem T="string" Value="@ModeOf(shape)" Text="@Display.ShapeText(shape)" />
+                            <MudToggleItem T="string" Value="@value" Text="@text" />
                         }
                     </MudToggleGroup>
                 }
@@ -62,6 +62,20 @@
                 {
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="FinishPolygonAsync"
                                StartIcon="@Icons.Material.Filled.Done">폴리곤 닫기 (Enter)</MudButton>
+                }
+                @if (_mode == "sam")
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" OnClick="ConfirmSamAsync"
+                               StartIcon="@Icons.Material.Filled.Done">확정 (Enter)</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearSamAsync"
+                               StartIcon="@Icons.Material.Filled.Close">취소 (Esc)</MudButton>
+                    @if (_shapes.Contains(AnnotationShape.Box) && _shapes.Contains(AnnotationShape.Polygon))
+                    {
+                        <MudToggleGroup T="string" Value="_samShape" ValueChanged="SetSamShapeAsync" Size="Size.Small">
+                            <MudToggleItem T="string" Value="@("polygon")" Text="폴리곤으로" />
+                            <MudToggleItem T="string" Value="@("box")" Text="사각형으로" />
+                        </MudToggleGroup>
+                    }
                 }
                 <MudSpacer />
                 <MudSwitch T="bool" Value="_useOriginal" ValueChanged="ToggleOriginalAsync" Color="Color.Primary"
@@ -75,6 +89,10 @@
                 @if (_mode == "polygon")
                 {
                     <span> · 클릭으로 점 추가, 오른쪽 클릭이나 Enter 로 닫기</span>
+                }
+                @if (_mode == "sam")
+                {
+                    <span> · 객체를 클릭하면 경계를 만들어 줍니다. Shift+클릭(또는 오른쪽 클릭)은 빼고 싶은 곳, Backspace 는 마지막 점 취소</span>
                 }
             </MudText>
         </MudPaper>
@@ -204,8 +222,13 @@
     private List<AnnotationDto> _annotations = [];
     private string[] _classes = [];
     private AnnotationShape[] _shapes = [];
+    private List<(string Value, string Text)> _modes = [];
     private string _activeClass = "";
     private string _mode = "box";
+
+    // SAM 보조 — 모델이 없으면 _samStatus.Available 이 false 라 모드 자체가 나타나지 않는다
+    private SamStatusDto? _samStatus;
+    private string _samShape = "polygon";
     private int _selected = -1;
     private bool _dirty, _saving, _useOriginal;
     private string? _error;
@@ -225,6 +248,7 @@
     protected override async Task OnInitializedAsync()
     {
         _self = DotNetObjectReference.Create(this);
+        _samStatus = await Api.SamStatusAsync();
         try
         {
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/label-canvas.js");
@@ -242,6 +266,8 @@
             _dataset = await Api.DatasetAsync(DatasetId);
             _classes = _dataset.Classes;
             _shapes = _dataset.TaskType.AllowedFor();
+            _samShape = _shapes.Contains(AnnotationShape.Polygon) ? "polygon" : "box";
+            _modes = BuildModes();
             _mode = ModeOf(_shapes.FirstOrDefault());
             _activeClass = _classes.FirstOrDefault() ?? "";
         }
@@ -268,6 +294,7 @@
                 mode = _mode,
                 classes = _classes,
                 readOnly = ReadOnly,
+                samShape = _samShape,
             });
             _canvasReady = true;
             await RenderCurrentAsync();
@@ -293,6 +320,9 @@
             _dirty = false;
             _dataset = await Api.DatasetAsync(DatasetId);
             if (_canvasReady) await RenderCurrentAsync();
+
+            // 인코더가 무거워서 첫 클릭이 느리다. 사진을 여는 동안 미리 돌려 둔다 — 기다리지 않는다.
+            if (SamOffered) _ = Api.SamPrepareAsync(imageId);
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
     }
@@ -305,6 +335,7 @@
         await _module.InvokeVoidAsync("setAnnotations", CanvasId, Array.Empty<object>());
         await _module.InvokeVoidAsync("setReadOnly", CanvasId, ReadOnly);
         await _module.InvokeVoidAsync("setMode", CanvasId, _mode);
+        await _module.InvokeVoidAsync("setSamShape", CanvasId, _samShape);
         await _module.InvokeVoidAsync("setActiveClass", CanvasId, _activeClass);
         await _module.InvokeVoidAsync("loadImage", CanvasId, _useOriginal ? _image.OriginalUrl : _image.ViewUrl);
         await _module.InvokeVoidAsync("setAnnotations", CanvasId, _annotations.Select(ToJs).ToArray());
@@ -348,6 +379,32 @@
         StateHasChanged();
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// 캔버스가 클릭할 때마다 부른다. 서버에 물어 미리보기 폴리곤을 받아 캔버스로 돌려준다.
+    /// seq 를 그대로 되돌려 주므로, 늦게 도착한 응답은 캔버스가 스스로 버린다.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnSamPointsRequested(int seq, JsSamPoint[] points)
+    {
+        if (_module is null || ImageId is not { } imageId) return;
+
+        var request = points.Select(p => new SamPointDto(p.X, p.Y, p.Foreground)).ToList();
+        try
+        {
+            var response = await Api.SamPredictAsync(imageId, request);
+            var preview = response.Mask is { } mask
+                ? new { points = mask.Points, x = mask.X, y = mask.Y, w = mask.W, h = mask.H, score = mask.Score }
+                : null;
+            await _module.InvokeVoidAsync("setSamPreview", CanvasId, seq, preview, response.Message);
+        }
+        catch (MlopsApiException ex)
+        {
+            await _module.InvokeVoidAsync("setSamPreview", CanvasId, seq, null, ex.Message);
+        }
+    }
+
+    public sealed record JsSamPoint(double X, double Y, bool Foreground);
 
     public sealed record JsAnnotation(string Shape, string ClassName, double? X, double? Y, double? W, double? H,
         double[][]? Points, string? Text);
@@ -428,6 +485,36 @@
     private async Task FinishPolygonAsync()
     {
         if (_module is not null) await _module.InvokeVoidAsync("finishPolygon", CanvasId);
+    }
+
+    // ───────────── SAM 보조 ─────────────
+
+    /// <summary>SAM 을 쓸 수 있는 데이터셋인가. 분류·이상탐지·OCR 은 클릭 분할로 얻을 것이 없다.</summary>
+    private bool SamOffered =>
+        _samStatus is { Available: true }
+        && (_shapes.Contains(AnnotationShape.Box) || _shapes.Contains(AnnotationShape.Polygon));
+
+    private List<(string Value, string Text)> BuildModes()
+    {
+        var modes = _shapes.Select(shape => (ModeOf(shape), Display.ShapeText(shape))).ToList();
+        if (SamOffered) modes.Add(("sam", "SAM 클릭"));
+        return modes;
+    }
+
+    private async Task SetSamShapeAsync(string shape)
+    {
+        _samShape = shape;
+        if (_module is not null) await _module.InvokeVoidAsync("setSamShape", CanvasId, shape);
+    }
+
+    private async Task ConfirmSamAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("confirmSam", CanvasId);
+    }
+
+    private async Task ClearSamAsync()
+    {
+        if (_module is not null) await _module.InvokeVoidAsync("clearSam", CanvasId);
     }
 
     /// <summary>확대해서 세밀하게 볼 때만 원본을 받는다. 기본은 축소본이라 빠르다.</summary>

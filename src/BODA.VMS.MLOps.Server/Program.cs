@@ -6,6 +6,7 @@ using BODA.VMS.MLOps.Server.Data;
 using BODA.VMS.MLOps.Server.Endpoints;
 using BODA.VMS.MLOps.Server.Hubs;
 using BODA.VMS.MLOps.Server.Services;
+using BODA.VMS.MLOps.Server.Services.Sam;
 using BODA.VMS.MLOps.Server.Storage;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -37,6 +38,7 @@ builder.Services.Configure<FormOptions>(o =>
 builder.Services.Configure<MlopsOptions>(builder.Configuration.GetSection(MlopsOptions.Section));
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Section));
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.Section));
+builder.Services.Configure<SamOptions>(builder.Configuration.GetSection(SamOptions.Section));
 builder.Services.AddSingleton(TimeProvider.System);
 
 // 바인딩·본문 파싱 실패를 예외로 올려 ApiExceptionMiddleware 가 ApiError JSON 으로 변환하게 한다.
@@ -75,6 +77,8 @@ builder.Services.AddScoped<DatasetService>();
 builder.Services.AddScoped<DatasetQueryService>();
 builder.Services.AddScoped<LabelingService>();
 builder.Services.AddScoped<DatasetSnapshotService>();
+// SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
+builder.Services.AddSingleton<SamAssistService>();
 builder.Services.AddHostedService<JobSupervisor>();
 
 builder.Services.AddSignalR().AddJsonProtocol(o =>
@@ -163,6 +167,12 @@ using (var scope = app.Services.CreateScope())
     var (manifest, _) = scripts.GetManifest();
     app.Logger.LogInformation("스토리지 {Root} · 스크립트 {Count}개 ({ScriptsRoot})",
         scope.ServiceProvider.GetRequiredService<IOptions<MlopsOptions>>().Value.ResolvedStorageRoot(), manifest.Count, scripts.Root);
+
+    // SAM 보조는 있으면 쓰고 없으면 조용히 넘어간다 — 모델 없이도 손으로 그리는 길이 그대로 열려 있다
+    var samStatus = app.Services.GetRequiredService<SamAssistService>().Status();
+    app.Logger.LogInformation("SAM 보조 라벨링 {State}{Reason}",
+        samStatus.Available ? "사용 가능" : "사용 안 함",
+        samStatus.Message is null ? "" : $" — {samStatus.Message}");
 }
 
 app.UseMiddleware<ApiExceptionMiddleware>();
@@ -189,6 +199,7 @@ api.MapTrainingJobEndpoints();
 api.MapPretrainedEndpoints();
 api.MapDatasetEndpoints();
 api.MapImageEndpoints();
+api.MapSamEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");
 app.MapHub<TrainingHub>("/hubs/training");
