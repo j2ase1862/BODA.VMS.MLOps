@@ -19,6 +19,10 @@
     <PackageReference Include="Serilog.AspNetCore" Version="8.*" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.0.*" />
+    <!-- 이미지 디코딩·축소본·지각 해시. MIT 라이선스라 허용 목록(개발 문서 §8)에 맞는다.
+         ImageSharp 3.x 는 Six Labors Split License 로 상용 제약이 있어 쓰지 않는다. -->
+    <PackageReference Include="SkiaSharp" Version="2.88.9" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.9" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BODA.VMS.MLOps.Core\BODA.VMS.MLOps.Core.csproj" />

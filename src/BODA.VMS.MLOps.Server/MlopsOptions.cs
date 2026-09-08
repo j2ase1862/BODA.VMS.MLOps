@@ -17,6 +17,12 @@ public sealed class MlopsOptions
     /// <summary>데이터셋 zip 크기 상한 (기본 50GB)</summary>
     public long MaxDatasetBytes { get; set; } = 50L * 1024 * 1024 * 1024;
 
+    /// <summary>이미지 한 장의 크기 상한. 2448×2048 무압축 BMP 가 15MB 라 넉넉히 잡는다 (개발 문서 §5.2).</summary>
+    public long MaxImageBytes { get; set; } = 64L * 1024 * 1024;
+
+    /// <summary>라벨링 잠금이 유지되는 시간. 브라우저가 그냥 닫혀도 이 시간이 지나면 다른 사람이 이어받는다.</summary>
+    public int LabelLockMinutes { get; set; } = 10;
+
     public int HeartbeatSec { get; set; } = 30;
     /// <summary>하트비트 3회 소실 → Offline + WorkerLost (Phase 3 §3)</summary>
     public int HeartbeatLostSec { get; set; } = 90;

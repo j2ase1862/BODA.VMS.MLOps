@@ -16,6 +16,11 @@ public class MlopsDbContext(DbContextOptions<MlopsDbContext> options) : DbContex
     public DbSet<PretrainedAsset> PretrainedAssets => Set<PretrainedAsset>();
     public DbSet<DatasetVersion> DatasetVersions => Set<DatasetVersion>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Dataset> Datasets => Set<Dataset>();
+    public DbSet<Image> Images => Set<Image>();
+    public DbSet<DatasetImage> DatasetImages => Set<DatasetImage>();
+    public DbSet<Annotation> Annotations => Set<Annotation>();
+    public DbSet<ImageLabelState> ImageLabelStates => Set<ImageLabelState>();
 
     /// <summary>
     /// 동시성 토큰 갱신. EF 는 UPDATE 의 WHERE 에 원래 Stamp 를 넣으므로, 그 사이 다른 요청이 같은 행을 고쳤다면
@@ -120,7 +125,55 @@ public class MlopsDbContext(DbContextOptions<MlopsDbContext> options) : DbContex
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.TaskType).HasConversion<string>();
+            e.Property(x => x.Source).HasConversion<string>();
             e.HasIndex(x => x.ManifestHash);
+            e.HasIndex(x => x.DatasetId);
+        });
+
+        b.Entity<Dataset>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.TaskType).HasConversion<string>();
+            e.HasIndex(x => x.Name);
+        });
+
+        b.Entity<Image>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Source).HasConversion<string>();
+            // 같은 파일은 한 벌만 — 재업로드는 기존 레코드를 돌려준다
+            e.HasIndex(x => x.Sha256).IsUnique();
+            e.HasIndex(x => x.PerceptualHash);
+            e.HasIndex(x => x.CreatedAt);
+            e.HasIndex(x => x.InspectionId);
+        });
+
+        b.Entity<DatasetImage>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Split).HasConversion<string>();
+            e.HasIndex(x => new { x.DatasetId, x.ImageId }).IsUnique();
+            e.HasIndex(x => x.ImageId);
+        });
+
+        b.Entity<Annotation>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Shape).HasConversion<string>();
+            e.Property(x => x.ClassName).HasMaxLength(200).IsRequired();
+            e.HasIndex(x => new { x.DatasetId, x.ImageId });
+        });
+
+        b.Entity<ImageLabelState>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Stamp).IsConcurrencyToken();
+            e.Property(x => x.Status).HasConversion<string>();
+            e.HasIndex(x => new { x.DatasetId, x.ImageId }).IsUnique();
+            // 라벨링 큐는 (데이터셋, 상태) 로 훑고 불확실도 순으로 정렬한다
+            e.HasIndex(x => new { x.DatasetId, x.Status });
         });
 
         b.Entity<AuditLog>(e =>

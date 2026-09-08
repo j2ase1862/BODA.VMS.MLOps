@@ -37,6 +37,10 @@ public static class MlopsJson
         var o = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            // 한글을 \uXXXX 로 이스케이프하지 않는다. 기본 인코더를 쓰면 DB 에 저장된 JSON 문자열과
+            // 사용자가 입력한 문자열이 달라져 태그·클래스 검색이 어긋나고, 오류 메시지도 읽을 수 없게 나간다.
+            // JSON 을 HTML 에 그대로 박지 않으므로 이 인코더로 인한 위험은 없다.
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
         o.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
         return o;

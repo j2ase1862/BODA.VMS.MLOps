@@ -97,7 +97,21 @@ public static class StorageKeys
     public static string Model(string sha256) => $"models/{sha256[..2]}/{sha256}.onnx";
     public static string JobFile(Guid jobId, string fileName) => $"jobs/{jobId:N}/{SafeName(fileName)}";
     public static string Dataset(Guid id) => $"datasets/{id:N}.zip";
+    public static string DatasetManifest(Guid id) => $"datasets/{id:N}.manifest.json";
     public static string Pretrained(string @ref, string fileName) => $"pretrained/{SafeName(@ref)}/{SafeName(fileName)}";
+
+    // 이미지도 내용 주소 지정 — 같은 사진을 여러 번 올려도 한 벌만 남는다
+    public static string Image(string sha256, string extension) =>
+        $"images/{sha256[..2]}/{sha256}{NormalizeExtension(extension)}";
+    public static string Thumbnail(string sha256) => $"images/{sha256[..2]}/{sha256}-thumb.jpg";
+    public static string View(string sha256) => $"images/{sha256[..2]}/{sha256}-view.jpg";
+
+    private static string NormalizeExtension(string extension)
+    {
+        var e = extension.Trim().ToLowerInvariant();
+        if (!e.StartsWith('.')) e = "." + e;
+        return e.Length is > 1 and <= 6 && e.Skip(1).All(char.IsLetterOrDigit) ? e : ".bin";
+    }
 
     /// <summary>파일명 화이트리스트 — 경로 구분자·상위 이동 금지</summary>
     public static string SafeName(string name)

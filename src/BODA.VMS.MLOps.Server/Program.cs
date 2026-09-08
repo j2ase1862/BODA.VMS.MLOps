@@ -48,6 +48,8 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
     o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    // 한글을 이스케이프하지 않는다 — 응답이 읽을 수 있어야 하고, DB 에 저장된 값과도 어긋나지 않는다
+    o.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
 });
 
 // SQLite (WAL) + EF Core
@@ -66,12 +68,20 @@ builder.Services.AddScoped<WorkerRegistryService>();
 builder.Services.AddScoped<TrainingJobService>();
 builder.Services.AddScoped<PretrainedMirrorService>();
 builder.Services.AddScoped<DatasetVersionService>();
+// 데이터 관리·라벨링 (개발 문서 §5.2·§5.4)
+builder.Services.AddSingleton<ImageProcessor>();
+builder.Services.AddScoped<ImagePoolService>();
+builder.Services.AddScoped<DatasetService>();
+builder.Services.AddScoped<DatasetQueryService>();
+builder.Services.AddScoped<LabelingService>();
+builder.Services.AddScoped<DatasetSnapshotService>();
 builder.Services.AddHostedService<JobSupervisor>();
 
 builder.Services.AddSignalR().AddJsonProtocol(o =>
 {
     o.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter(System.Text.Json.JsonNamingPolicy.CamelCase));
     o.PayloadSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    o.PayloadSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
 });
 
 // 인증: JWT(BODA.VMS.Web 와 같은 키) + 워커 토큰(wk_…) — Authorization 헤더 접두사로 자동 선택
@@ -170,6 +180,7 @@ api.MapWorkerEndpoints();
 api.MapTrainingJobEndpoints();
 api.MapPretrainedEndpoints();
 api.MapDatasetEndpoints();
+api.MapImageEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");
 app.MapHub<TrainingHub>("/hubs/training");

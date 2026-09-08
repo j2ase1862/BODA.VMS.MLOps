@@ -190,20 +190,35 @@ public class PretrainedAsset
     public DateTime AddedAt { get; set; }
 }
 
-/// <summary>Phase 2 선행 최소 구현 — 내보내기 zip 으로 고정된 데이터셋 버전</summary>
+/// <summary>
+/// 학습이 대상으로 삼는 불변 스냅샷 (개발 문서 §5.2 — 학습은 항상 버전에 대해 실행).
+/// 만들어지는 길이 둘이다: 플랫폼 데이터셋을 굳힌 Snapshot, 밖에서 만든 zip 을 올린 Upload.
+/// Snapshot 은 매니페스트만 먼저 굳히고, 내보내기 zip 은 처음 요청될 때 만들어 캐시한다.
+/// </summary>
 public class DatasetVersion
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = "";
     public TaskType TaskType { get; set; }
     public string ExportFormat { get; set; } = "yolo";
+    /// <summary>이미지 목록·라벨·분할을 합쳐 만든 해시. 재현성 레코드가 이 값을 남긴다.</summary>
     public string ManifestHash { get; set; } = "";
-    public string StorageKey { get; set; } = "";
+    /// <summary>내보내기 zip 의 위치. Snapshot 은 처음 내보낼 때 채워진다.</summary>
+    public string? StorageKey { get; set; }
     public long SizeBytes { get; set; }
     public int ImageCount { get; set; }
+    public int AnnotationCount { get; set; }
     public string ClassesJson { get; set; } = "[]";
     public string CreatedBy { get; set; } = "";
     public DateTime CreatedAt { get; set; }
+
+    public DatasetVersionSource Source { get; set; }
+    /// <summary>Snapshot 이면 원본 데이터셋</summary>
+    public Guid? DatasetId { get; set; }
+    /// <summary>Snapshot 의 매니페스트(JSON) 위치 — 이미지 id·라벨·분할이 굳어 있다</summary>
+    public string? ManifestKey { get; set; }
+    /// <summary>분할별 장 수 요약 (json)</summary>
+    public string SplitCountsJson { get; set; } = "{}";
 }
 
 /// <summary>감사 로그 — 카테고리 Model / Dataset / Training / Worker (개발 문서 §7)</summary>

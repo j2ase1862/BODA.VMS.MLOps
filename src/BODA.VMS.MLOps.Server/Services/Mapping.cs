@@ -60,7 +60,11 @@ public static class Mapping
     public static DatasetVersionDto ToDto(this DatasetVersion d) =>
         new(d.Id, d.Name, d.TaskType, d.ExportFormat, d.ManifestHash, d.SizeBytes, d.ImageCount,
             Json(d.ClassesJson, Array.Empty<string>()), d.CreatedBy, d.CreatedAt,
-            $"/api/dataset-versions/{d.Id}/export?format={d.ExportFormat}");
+            $"/api/dataset-versions/{d.Id}/export?format={d.ExportFormat}",
+            d.Source, d.DatasetId, d.AnnotationCount,
+            Json(d.SplitCountsJson, new Dictionary<string, int>()),
+            // 스냅샷은 처음 내보낼 때 zip 이 만들어지므로, 아직 없으면 "만들어야 함" 으로 알린다
+            d.StorageKey is not null);
 
     public static JobLogLineDto ToDto(this JobLogChunk c) => new(c.Seq, c.Level, c.Text, c.At);
 

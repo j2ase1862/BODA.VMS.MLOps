@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Datasets;
+using BODA.VMS.MLOps.Core.Domain;
 using BODA.VMS.MLOps.Server.Auth;
 using BODA.VMS.MLOps.Server.Data;
 using BODA.VMS.MLOps.Server.Data.Entities;
@@ -11,8 +12,9 @@ using Microsoft.Extensions.Options;
 namespace BODA.VMS.MLOps.Server.Services;
 
 /// <summary>
-/// Phase 2 선행 최소 구현: 내보내기 zip 을 올리면 데이터셋 버전이 된다 (manifestHash = zip SHA-256).
-/// Phase 2 에서 이미지 풀·라벨·스냅샷 생성이 이 위에 얹히며, 워커가 쓰는 export API 규약은 그대로 유지한다.
+/// 데이터셋 버전 조회와 zip 업로드.
+/// 스냅샷을 만드는 일은 <see cref="DatasetSnapshotService"/> 가 맡고, 여기는 밖에서 만든 zip 을 받는 길이다
+/// (WPF 도구가 내보낸 데이터셋을 그대로 학습에 쓰는 경우).
 /// </summary>
 public sealed class DatasetVersionService(
     MlopsDbContext db, IArtifactStorage storage, AuditService audit, IOptions<MlopsOptions> options, TimeProvider clock)
@@ -39,29 +41,42 @@ public sealed class DatasetVersionService(
             {
                 Id = id, Name = meta.Name.Trim(), TaskType = meta.TaskType, ExportFormat = format,
                 ManifestHash = temp.Sha256, StorageKey = key, SizeBytes = temp.SizeBytes, ImageCount = meta.ImageCount,
-                ClassesJson = Mapping.ToJson(meta.Classes ?? []), CreatedBy = user.Name, CreatedAt = clock.GetUtcNow().UtcDateTime,
+                ClassesJson = Mapping.ToJson(meta.Classes ?? []), CreatedBy = user.Name,
+                CreatedAt = clock.GetUtcNow().UtcDateTime, Source = DatasetVersionSource.Upload,
             };
             db.DatasetVersions.Add(dv);
-            audit.Record(AuditService.Dataset, "VersionCreated", user.Name, id.ToString(), new { dv.Name, dv.TaskType, format, dv.ManifestHash, dv.SizeBytes });
+            audit.Record(AuditService.Dataset, "VersionUploaded", user.Name, id.ToString(),
+                new { dv.Name, dv.TaskType, format, dv.ManifestHash, dv.SizeBytes });
             await db.SaveChangesAsync(ct);
             return dv.ToDto();
         }
         finally { TempFileWriter.TryDelete(temp.TempPath); }
     }
 
-    public async Task<List<DatasetVersionDto>> ListAsync(CancellationToken ct) =>
-        (await db.DatasetVersions.AsNoTracking().OrderByDescending(d => d.CreatedAt).ToListAsync(ct)).Select(d => d.ToDto()).ToList();
+    public async Task<List<DatasetVersionDto>> ListAsync(Guid? datasetId, CancellationToken ct)
+    {
+        var q = db.DatasetVersions.AsNoTracking().AsQueryable();
+        if (datasetId is not null) q = q.Where(d => d.DatasetId == datasetId);
+        return (await q.OrderByDescending(d => d.CreatedAt).ToListAsync(ct)).Select(d => d.ToDto()).ToList();
+    }
 
     public async Task<DatasetVersionDto> GetAsync(Guid id, CancellationToken ct) =>
-        (await db.DatasetVersions.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct) ?? throw ApiException.NotFound("데이터셋 버전")).ToDto();
+        (await db.DatasetVersions.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct)
+         ?? throw ApiException.NotFound("데이터셋 버전")).ToDto();
 
-    public async Task<(Stream Stream, DatasetVersion Version)> OpenExportAsync(Guid id, string? format, CancellationToken ct)
+    /// <summary>버전을 지운다. 학습 작업이 참조하고 있으면 막는다 — 재현성 레코드가 가리키는 대상이기 때문이다.</summary>
+    public async Task DeleteAsync(Guid id, CurrentUser user, CancellationToken ct)
     {
-        var dv = await db.DatasetVersions.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct) ?? throw ApiException.NotFound("데이터셋 버전");
-        if (!string.IsNullOrWhiteSpace(format) && !format.Equals(dv.ExportFormat, StringComparison.OrdinalIgnoreCase))
-            throw ApiException.BadRequest(ErrorCodes.Validation, $"이 버전은 {dv.ExportFormat} 형식으로만 내보낼 수 있습니다 (요청: {format}).");
-        if (!storage.Exists(dv.StorageKey)) throw ApiException.NotFound("데이터셋 파일");
-        return (storage.OpenRead(dv.StorageKey), dv);
+        var version = await db.DatasetVersions.FirstOrDefaultAsync(d => d.Id == id, ct) ?? throw ApiException.NotFound("데이터셋 버전");
+        if (await db.TrainingJobs.AnyAsync(j => j.DatasetVersionId == id, ct))
+            throw ApiException.Conflict(ErrorCodes.Validation, "이 버전으로 만든 학습 작업이 있어 지울 수 없습니다.");
+
+        db.DatasetVersions.Remove(version);
+        audit.Record(AuditService.Dataset, "VersionDeleted", user.Name, id.ToString(), new { version.Name });
+        await db.SaveChangesAsync(ct);
+
+        if (version.StorageKey is { } key) await storage.DeleteAsync(key, ct);
+        if (version.ManifestKey is { } manifest) await storage.DeleteAsync(manifest, ct);
     }
 
     /// <summary>
