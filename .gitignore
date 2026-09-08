@@ -1,0 +1,14 @@
+bin/
+obj/
+*.user
+*.db
+*.db-wal
+*.db-shm
+.vs/
+TestResults/
+# 개발 실행 산출물. 소스 폴더 Storage\ 와 이름이 겹치지 않도록 점을 붙였다
+# (Windows 경로는 대소문자를 구분하지 않아 "storage" 를 지우면 "Storage" 가 함께 지워진다)
+.dev-storage/
+Logs/
+__pycache__/
+*.pyc

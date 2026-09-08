@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MLOps 플랫폼 공용 순수 로직 (서버·워커·테스트 공유). 외부 의존은 VMS.Core.Contracts(규약 계층)뿐.
+      · Domain   — 열거형·모델 참조(model://) 파서·작업 상태 머신
+      · Onnx     — 규약 판별 확장(dfine/yolo/yoloseg/classifier/unknown), names/imgsz 메타 파서, 그래프 형상 리더
+      · Training — 하이퍼파라미터 화이트리스트, ArgumentList 기반 인자 조립
+      · Hashing  — SHA-256 유틸
+  -->
+  <PropertyGroup>
+    <RootNamespace>BODA.VMS.MLOps.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="VMS.Core.Contracts" Version="1.31.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BODA.VMS.MLOps.Tests" />
+  </ItemGroup>
+</Project>

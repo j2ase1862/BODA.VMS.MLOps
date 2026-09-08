@@ -1,0 +1,24 @@
+# 워커 venv 패키지 (개발 문서 §8 허용 목록 · Phase 3 §6). 여기 없는 패키지는 워커가 설치를 거부한다.
+# 온라인:   pip install -r requirements-allowlist.txt
+# 오프라인: pip install --no-index --find-links <wheel 번들> -r requirements-allowlist.txt
+# torch 는 CUDA 12.4 wheel 인덱스에서 받는다 (온라인): --extra-index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.5,<2.8
+torchvision>=0.20,<0.23
+transformers>=4.52,<5
+safetensors>=0.4
+onnx>=1.16
+onnxruntime>=1.19
+onnxscript>=0.1
+pyyaml>=6
+numpy>=1.26,<3
+pillow>=10
+tqdm>=4.66
+torchmetrics>=1.4
+pycocotools>=2.0.8
+scipy>=1.11
+matplotlib>=3.8
+opencv-python-headless>=4.9
+anomalib>=1.1,<2
+truststore>=0.9
+psutil>=5.9

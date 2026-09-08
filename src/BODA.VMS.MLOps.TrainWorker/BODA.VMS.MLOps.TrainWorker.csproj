@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <!--
+    VMS.TrainWorker — GPU PC 의 Windows 서비스. 서버로만 아웃바운드 HTTP.
+      Agent       : 등록·하트비트·long-poll·보고
+      Environment : venv 부트스트랩·자기진단·패키지 허용 목록
+      Jobs        : 데이터셋/사전학습/스크립트 캐시 → train_*.py 실행(프로토콜 파싱·워치독·취소·OOM 재시도) → 아티팩트 업로드
+  -->
+  <PropertyGroup>
+    <RootNamespace>BODA.VMS.MLOps.TrainWorker</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <UserSecretsId>boda-vms-trainworker-7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.*" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BODA.VMS.MLOps.Core\BODA.VMS.MLOps.Core.csproj" />
+    <ProjectReference Include="..\BODA.VMS.MLOps.Contracts\BODA.VMS.MLOps.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BODA.VMS.MLOps.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 설치 패키지 동봉: 진단 스크립트·허용 목록·train_*.py 초기본 (서버 매니페스트와 다르면 서버 버전으로 교체) -->
+    <None Include="..\..\scripts\worker_diag.py;..\..\scripts\requirements-allowlist.txt;..\..\scripts\train_*.py" Link="scripts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

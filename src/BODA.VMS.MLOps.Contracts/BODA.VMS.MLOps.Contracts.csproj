@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 서버 ↔ 워커 ↔ (향후) 브라우저 클라이언트가 공유하는 API DTO. 의존성 없음(System.Text.Json 직렬화 기준). -->
+  <PropertyGroup>
+    <RootNamespace>BODA.VMS.MLOps.Contracts</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BODA.VMS.MLOps.Core\BODA.VMS.MLOps.Core.csproj" />
+  </ItemGroup>
+</Project>

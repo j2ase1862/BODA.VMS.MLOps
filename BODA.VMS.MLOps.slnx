@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BODA.VMS.MLOps.Contracts/BODA.VMS.MLOps.Contracts.csproj" />
+    <Project Path="src/BODA.VMS.MLOps.Core/BODA.VMS.MLOps.Core.csproj" />
+    <Project Path="src/BODA.VMS.MLOps.Server/BODA.VMS.MLOps.Server.csproj" />
+    <Project Path="src/BODA.VMS.MLOps.TrainWorker/BODA.VMS.MLOps.TrainWorker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BODA.VMS.MLOps.Tests/BODA.VMS.MLOps.Tests.csproj" />
+  </Folder>
+</Solution>

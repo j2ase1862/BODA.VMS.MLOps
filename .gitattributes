@@ -1,0 +1,16 @@
+# 저장소에는 LF 로 두고 체크아웃 때 플랫폼에 맞춘다
+* text=auto
+
+*.cs      text diff=csharp
+*.csproj  text
+*.slnx    text
+*.json    text
+*.md      text
+*.py      text
+*.ps1     text eol=crlf
+*.txt     text
+
+*.onnx    binary
+*.zip     binary
+*.png     binary
+*.pdf     binary

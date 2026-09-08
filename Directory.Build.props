@@ -1,0 +1,17 @@
+<Project>
+  <!-- 솔루션 공용 설정. 릴리즈마다 Version 만 갱신. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <Company>BODA Vision AI</Company>
+    <Product>BODA VMS MLOps</Product>
+    <Copyright>Copyright © BODA Vision AI 2026</Copyright>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- 서버·워커는 Windows 서비스 전용 배포(DPAPI·UseWindowsService). 플랫폼 경고는 프로젝트 범위로 억제 -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+</Project>
