@@ -153,4 +153,46 @@ public class OnnxInspectorTests
         OnnxModelInspector.ProbeFormat(new Dictionary<string, string> { ["model_format"] = "ppocr" }, [], []).Should().Be(ModelFormat.PpOcr);
         OnnxModelInspector.ProbeFormat(meta, [new("a", [])], [new("b", []), new("c", []), new("d", [])]).Should().Be(ModelFormat.Unknown);
     }
+
+    /// <summary>
+    /// RF-DETR 세그멘테이션 내보내기 (roboflow/rf-detr 의 export 가 정하는 이름 그대로).
+    /// dets·labels 만 있으면 검출 전용이라 세그가 아니다 — masks 가 4차원으로 함께 있어야 한다.
+    /// </summary>
+    [Fact]
+    public void ProbeFormat_reads_rfdetr_segmentation()
+    {
+        var meta = new Dictionary<string, string>();
+        OnnxTensorInfo[] segOutputs =
+        [
+            new("dets", [1, 300, 4]), new("labels", [1, 300, 3]), new("masks", [1, 300, 150, 150]),
+        ];
+
+        OnnxModelInspector.ProbeFormat(meta, [new("input", [1, 3, 560, 560])], segOutputs)
+            .Should().Be(ModelFormat.RfdetrSeg);
+
+        // 검출 전용 RF-DETR 은 세그가 아니다
+        OnnxModelInspector.ProbeFormat(meta, [new("input", [1, 3, 560, 560])],
+            [new("dets", [1, 300, 4]), new("labels", [1, 300, 3])])
+            .Should().NotBe(ModelFormat.RfdetrSeg);
+
+        // 이름만 맞고 모양이 다른 파일을 세그로 등록하면 라인에서 마스크를 읽다 터진다
+        OnnxModelInspector.ProbeFormat(meta, [new("input", [1, 3, 560, 560])],
+            [new("dets", [1, 300, 4]), new("labels", [1, 300, 3]), new("masks", [1, 300, 150])])
+            .Should().NotBe(ModelFormat.RfdetrSeg);
+
+        // metadata 로도 읽는다 (스크립트가 새겨 넣는 값)
+        OnnxModelInspector.ProbeFormat(new Dictionary<string, string> { ["model_format"] = "rfdetrseg" }, [], [])
+            .Should().Be(ModelFormat.RfdetrSeg);
+    }
+
+    /// <summary>
+    /// 스크립트가 낸 규약과 레지스트리가 판별한 규약이 어긋나면 아티팩트 등록에서 걸러야 한다.
+    /// 전에는 세그 스크립트만 Unknown 이라 그 대조가 통째로 비어 있었다.
+    /// </summary>
+    [Fact]
+    public void Every_training_script_declares_the_format_it_produces()
+    {
+        foreach (var script in Enum.GetValues<TrainingScript>())
+            script.ExpectedFormat().Should().NotBe(ModelFormat.Unknown, "{0} 가 내는 규약을 대조할 수 없다", script);
+    }
 }

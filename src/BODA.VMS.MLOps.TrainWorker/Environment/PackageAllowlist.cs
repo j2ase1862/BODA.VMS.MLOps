@@ -18,8 +18,9 @@ public static class PackageAllowlist
         "anomalib", "lightning", "pytorch-lightning", "omegaconf", "jsonargparse", "rich", "scikit-learn", "scikit-image", "kornia", "freia",
         // OCR (Apache 2.0)
         "paddlepaddle", "paddlepaddle-gpu", "paddleocr", "paddle2onnx", "rapidfuzz", "lmdb", "imgaug", "shapely", "pyclipper",
-        // 검출 (Apache 2.0)
-        "rfdetr", "supervision",
+        // 검출·세그멘테이션 (Apache 2.0). rfdetr[train] 이 끌고 오는 것까지 함께 연다 —
+        // 하나라도 빠지면 워커가 설치를 거부해 세그멘테이션 학습이 시작되지 않는다.
+        "rfdetr", "supervision", "peft", "torch-hungarian", "torch_hungarian", "roboflow",
         // 라벨링 보조 (Apache 2.0)
         "mobile-sam", "mobile_sam", "segment-anything",
         // SSL 검사 백신 환경 대응

@@ -284,6 +284,7 @@ public sealed class ModelRegistryService(
         ModelFormat.Unknown => true,
         ModelFormat.DFine or ModelFormat.Yolo => t == TaskType.Detection,
         ModelFormat.YoloSeg => t == TaskType.Segmentation,
+        ModelFormat.RfdetrSeg => t == TaskType.Segmentation,
         ModelFormat.Classifier => t == TaskType.Classification,
         ModelFormat.Anomaly => t == TaskType.Anomaly,
         ModelFormat.PpOcr => t == TaskType.Ocr,

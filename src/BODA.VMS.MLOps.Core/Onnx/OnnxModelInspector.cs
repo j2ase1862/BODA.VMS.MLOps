@@ -75,6 +75,7 @@ public static class OnnxModelInspector
                 case "dfine": case "rtdetr": return ModelFormat.DFine;
                 case "yolo": return ModelFormat.Yolo;
                 case "yoloseg": case "yolo-seg": case "yolo_seg": return ModelFormat.YoloSeg;
+                case "rfdetrseg": case "rfdetr-seg": case "rfdetr_seg": return ModelFormat.RfdetrSeg;
                 case "classifier": case "classification": return ModelFormat.Classifier;
                 case "anomaly": case "patchcore": case "anomalib": return ModelFormat.Anomaly;
                 case "ppocr": case "paddleocr": return ModelFormat.PpOcr;
@@ -84,6 +85,10 @@ public static class OnnxModelInspector
         var inNames = inputs.Select(i => i.Name).ToList();
         var outNames = outputs.Select(o => o.Name).ToList();
         if (DetectionModelFormatProbe.IsDFineLayout(inNames, outNames)) return ModelFormat.DFine;
+
+        // rfdetrseg: dets [N,Q,4] + labels [N,Q,C] + masks [N,Q,mh,mw]
+        // (roboflow/rf-detr 의 export 가 정하는 이름이다 — src/rfdetr/export/main.py 의 output_names)
+        if (IsRfdetrSegLayout(outNames, outputs)) return ModelFormat.RfdetrSeg;
 
         // yoloseg: output0 [N,4+nc+32,A] + output1 [N,32,mh,mw]
         if (outputs.Count == 2 && outputs.Any(o => o.Name == "output1" && o.Rank == 4)) return ModelFormat.YoloSeg;
@@ -100,6 +105,26 @@ public static class OnnxModelInspector
             if (o.Rank == 4 && inNames.Count == 1) return ModelFormat.Anomaly;
         }
         return ModelFormat.Unknown;
+    }
+
+    /// <summary>
+    /// RF-DETR 세그멘테이션 내보내기의 모양.
+    ///
+    /// <para>
+    /// 이름으로 본다. <c>dets</c>·<c>labels</c> 만 있으면 검출 전용 RF-DETR 이라 세그가 아니고,
+    /// <c>masks</c> 가 4차원으로 함께 있어야 세그다. 차수까지 보는 이유는, 이름만 맞고 모양이 다른
+    /// 파일을 세그로 등록하면 라인에서 마스크를 읽다 터지기 때문이다.
+    /// </para>
+    /// </summary>
+    public static bool IsRfdetrSegLayout(IReadOnlyList<string> outNames, IReadOnlyList<OnnxTensorInfo> outputs)
+    {
+        if (outputs.Count < 3) return false;
+        if (!outNames.Contains("dets") || !outNames.Contains("labels") || !outNames.Contains("masks")) return false;
+
+        var dets = outputs.First(o => o.Name == "dets");
+        var labels = outputs.First(o => o.Name == "labels");
+        var masks = outputs.First(o => o.Name == "masks");
+        return dets.Rank == 3 && labels.Rank == 3 && masks.Rank == 4;
     }
 
     private static readonly Regex DictEntry = new(@"(\d+)\s*:\s*(?:'((?:[^'\\]|\\.)*)'|""((?:[^""\\]|\\.)*)"")", RegexOptions.Compiled);

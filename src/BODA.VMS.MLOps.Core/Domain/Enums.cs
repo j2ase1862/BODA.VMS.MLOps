@@ -4,7 +4,7 @@ namespace BODA.VMS.MLOps.Core.Domain;
 public enum TaskType { Detection, Classification, Anomaly, Segmentation, Ocr }
 
 /// <summary>ONNX 규약 (개발 문서 부록 B). Unknown 은 등록 허용하되 경고.</summary>
-public enum ModelFormat { Unknown, DFine, Yolo, YoloSeg, Classifier, Anomaly, PpOcr }
+public enum ModelFormat { Unknown, DFine, Yolo, YoloSeg, Classifier, Anomaly, PpOcr, RfdetrSeg }
 
 /// <summary>Candidate(등록 직후) → Staging(테스트 라인) → Production(운영) → Retired</summary>
 public enum ModelStage { Candidate, Staging, Production, Retired }
@@ -73,7 +73,7 @@ public static class TrainingScriptExtensions
         TrainingScript.TrainClassifier => ModelFormat.Classifier,
         TrainingScript.TrainAnomaly => ModelFormat.Anomaly,
         TrainingScript.TrainPpocr => ModelFormat.PpOcr,
-        TrainingScript.TrainRfdetrSeg => ModelFormat.Unknown,
+        TrainingScript.TrainRfdetrSeg => ModelFormat.RfdetrSeg,
         _ => ModelFormat.Unknown
     };
 }

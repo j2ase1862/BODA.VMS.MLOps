@@ -20,5 +20,14 @@ scipy>=1.11
 matplotlib>=3.8
 opencv-python-headless>=4.9
 anomalib>=1.1,<2
+# 세그멘테이션 (Apache-2.0). [train] 없이는 model.train() 이 "training dependencies are missing" 으로 막힌다.
+# 그 extra 가 끌고 오는 것: peft · pytorch-lightning · torchmetrics[detection] · faster-coco-eval ·
+# pycocotools · scipy · torch-hungarian · roboflow (전부 Apache-2.0 또는 BSD).
+# roboflow 는 데이터셋을 내려받는 경로에만 쓰여 우리는 부르지 않는다 — 의존성으로만 들어온다.
+rfdetr[train]>=1.10,<2
+peft>=0.11
+torch-hungarian>=0.1.0rc0
+roboflow>=1.1
+supervision>=0.20
 truststore>=0.9
 psutil>=5.9

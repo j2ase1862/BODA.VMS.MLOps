@@ -111,6 +111,24 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 확인하지 못한 후처리는 "그럴듯한" 라벨을 만들고, 사람이 검토로 승인하면 다음 학습 데이터가 오염됩니다.
 좌표는 레터박스 규약을 씁니다 — `LetterBox` 가 배율·여백과 되돌리기를 한 곳에서 정합니다.
 
+**세그멘테이션은 RF-DETR 규약(`rfdetrseg`)입니다.** 검출에서 D-FINE 을 고른 것과 같은 이유입니다 —
+Ultralytics(AGPL-3.0) 없이 상용 배포를 하기 위해서입니다. YOLO-Seg 도 규약으로 남아 있지만
+학습 스크립트는 RF-DETR 쪽만 있습니다.
+출력은 `dets[N,Q,4]` 정규화 cxcywh · `labels[N,Q,C]` 로짓(시그모이드) · `masks[N,Q,mh,mw]` 마스크 로짓입니다.
+**`labels` 의 마지막 열은 배경입니다** (rf-detr 의 `lwdetr.py`: "background slot (index detection_num_classes-1)").
+그 열을 빼지 않으면 배경이 최고 점수인 질의가 물체로 나옵니다.
+질의마다 최고 클래스 하나만 고르지 마세요 — 한 질의가 두 클래스에서 문턱을 넘을 때 하나가 조용히 사라집니다.
+전처리는 레터박스가 아니라 **늘려 맞추는 리사이즈 + ImageNet 정규화**입니다.
+RF-DETR 의 export 는 `metadata_props` 를 하나도 쓰지 않으므로 `train_rfdetr_seg.py` 가 새깁니다.
+그것이 없으면 클래스 이름과 배경 열 위치가 사라집니다.
+
+**클래스 순서는 RF-DETR 에게 물어봅니다.** 그쪽이 카테고리를 한 번 거르고(주석이 하나도 없는 상위 분류를
+버립니다) 0 부터 다시 번호를 매깁니다. 그 규칙을 흉내 내면 언젠가 어긋나고, 어긋나면 라벨이 통째로
+한 칸 밀린 채 학습이 끝납니다 — 아무 오류도 나지 않습니다. `RFDETR._load_classes(dataset_dir)` 를 쓰세요.
+
+**입력 변은 모델마다 다른 배수여야 합니다.** `patch_size × num_windows` 입니다 — nano 는 12, preview 는 56.
+값을 고정하지 말고 `model_config` 에서 읽으세요.
+
 **SAM 모델 파일은 저장소에 없습니다.** `src/BODA.VMS.MLOps.Server/models/sam` 에 4개 파일
 (`mobile_sam_{encoder,decoder}.onnx` 와 각각의 `.onnx.data`)이 한 세트로 있어야 켜집니다.
 없으면 기능만 꺼진 채 서버가 그대로 뜨므로, "SAM 버튼이 안 보인다" 는 대개 파일 문제입니다.
