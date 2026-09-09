@@ -317,6 +317,18 @@ MLOps 가 그 위에 얹히지 않게 했습니다.
 운영 웹은 `BODA.VMS.Web.Client` 를 검증하므로 `Monitoring:Audience` 가 그 값입니다.
 나가는 토큰의 역할은 `Viewer` 하나입니다.
 
+**키는 어디에 두는가.** `appsettings.Development.json` 에 있는 개발용 `Jwt:Key` 는 운영 웹의 키와
+**다릅니다**. 그대로 띄우면 서명이 맞지 않아 운영 웹이 401 로 답하고, 화면에는
+"운영 웹이 401 로 답했습니다" 가 나옵니다. 개발 PC 에서 붙여 보려면 운영 키를
+서버 프로젝트의 user-secrets 에 넣으세요 — 소스나 로그에 남지 않습니다.
+
+```bash
+cd src/BODA.VMS.MLOps.Server
+dotnet user-secrets set "Jwt:Key" "<운영 웹과 같은 키>"
+```
+
+운영 배포에서는 환경변수 `Jwt__Key` 로 같은 키를 줍니다. **키를 저장소에 넣지 마세요.**
+
 **이어지지 않은 검사.** 옛 형식 식별자나 DL 을 안 쓴 스텝은 버리지 않고 세어서 함께 냅니다.
 그 수가 크면 라인이 아직 옛 VMS 를 쓰고 있다는 뜻이라 그 자체가 알아야 할 정보입니다.
 

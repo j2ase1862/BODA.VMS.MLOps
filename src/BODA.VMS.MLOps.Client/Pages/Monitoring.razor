@@ -33,6 +33,10 @@ else if (_report is null || !_report.Available)
         <MudText Typo="Typo.caption" Class="mud-text-secondary mt-3">
             설정: Monitoring:ProductionWebUrl · 운영 웹과 같은 Jwt:Key · Jwt:Issuer
         </MudText>
+        @* 401 은 대개 키가 달라서다. 개발용 키는 운영 웹의 것과 다르다. *@
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            401 이면 키가 다른 것입니다 — 개발은 user-secrets, 운영은 환경변수 Jwt__Key 로 운영 웹과 같은 키를 줍니다.
+        </MudText>
     </MudPaper>
 }
 else
