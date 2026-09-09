@@ -56,7 +56,7 @@ YOLO 계열(AGPL)은 라이선스 필드 없이는 등록도 Production 승격�
 **업로드된 ONNX 는 신뢰할 수 없는 입력입니다.** 파싱은 `OnnxSafeReader` 만 씁니다.
 `VMS.Core.Contracts` 의 `OnnxMetadataReader`·`DetectionModelFormatProbe.Probe(path)` 는 길이 필드를
 남은 바이트와 대조하지 않아 조작된 varint 하나로 파싱이 무한 반복됩니다. 경로를 받는 그 API 들은 부르지 마세요.
-(같은 보강이 VMS 리포에도 필요합니다.)
+(VMS 리포는 PR #445 로 보강됐지만, 이 리포가 참조하는 `1.31.*` 패키지에는 아직 없습니다 — 패키지를 올리기 전까지는 그대로 부르지 마세요.)
 
 **작업·워커 행은 낙관적 동시성으로 보호됩니다.** `IConcurrencyStamped` 의 `Stamp` 를 `MlopsDbContext` 가 갱신합니다.
 워커 보고는 `SaveWorkerReportAsync` 로 저장해 충돌 시 409 를 내고, 감독자는 충돌하면 그 주기를 건너뜁니다.

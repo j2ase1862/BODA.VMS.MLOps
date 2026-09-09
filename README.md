@@ -253,8 +253,8 @@ ONNX 해시의 유일 범위를 전역이 아니라 모델 계열 안으로 좁�
 
 `VMS.Core.Contracts` 의 `OnnxMetadataReader` 는 protobuf 길이 필드를 남은 바이트와 대조하지 않습니다.
 조작된 varint 하나로 스트림이 뒤로 감겨 파싱이 무한히 반복되므로, 신뢰할 수 없는 파일에 쓰면 요청 하나가 스레드를 영구 점유합니다.
-이 리포는 자체 `OnnxSafeReader` 로 우회했지만, VisionSetup 이 현장에서 임의 경로의 ONNX 를 열 수 있으니
-VMS 리포에도 같은 하한 검사를 넣는 편이 좋습니다.
+이 리포는 자체 `OnnxSafeReader` 로 우회했고, VMS 리포도 같은 하한 검사를 넣었습니다 (VMS PR #445, 2026-09-09 —
+`VMS.Core.Contracts` 1.33 이후 패키지부터 반영. 그 전 패키지의 경로 API 는 여전히 부르지 마세요).
 
 ## 학습 워커 (Phase 3)
 
@@ -407,7 +407,8 @@ Production 승격은 어떤 경우에도 사람이 합니다.
 **라인 NG 이미지의 보내는 쪽.** 받는 쪽은 열렸습니다 — `POST /api/images/line-ng` 로
 라인 계정(`Line` 역할)이 NG 사진을 올리면 출처가 `lineNg` 로 고정되고 `inspectionId` 로
 생산 이력과 이어집니다. 라인 계정에 태그·삭제 권한은 주지 않습니다.
-남은 것은 VMS 쪽 송신부와 정상 샘플 비율 샘플링(1/200)입니다.
+VMS 쪽 송신부는 닫혔습니다 (VMS PR #446 — 이미지 저장 설정의 [NG 이미지 MLOps 전송] + 양품 1/N 샘플, 기본 1/200).
+라인 토큰으로 오는 요청은 `lineId` 를 토큰에서 읽으므로 VMS 는 라인 이름을 보내지 않습니다.
 
 **워커 설치 패키지.** MSI(WiX) 프로젝트가 없습니다. 워커는 오프라인 wheel 폴더를 쓸 수 있지만
 (`Worker:WheelBundleDir` → `pip --no-index --find-links`), 그 번들을 만드는 단계가 없습니다.

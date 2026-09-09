@@ -73,6 +73,9 @@ public static class ImageEndpoints
         // 라인 PC 가 NG 이미지를 올리는 전용 길 (개발 문서 §5.2 수집).
         // 일반 업로드와 갈라 둔 이유: 라인 계정에 큐레이션 권한(태그·삭제)까지 주지 않으려는 것이다.
         // source 는 강제로 lineNg 이고 lineId 가 반드시 있어야 한다 — 어느 라인에서 왔는지 모르면 쓸모가 없다.
+        // 라인 토큰(ln_)으로 왔으면 lineId 는 토큰이 말한다 — 토큰은 그 라인에 발급된 것이라 라인 PC 가
+        // 다른 라인 이름을 댈 수 없어야 하고, VMS 쪽도 라인 이름을 따로 설정할 필요가 없다.
+        // 사람 계정(Engineer·Admin)이 대신 올릴 때만 form 의 lineId 를 쓴다.
         g.MapPost("/line-ng", async (HttpRequest request, ImagePoolService pool, ClaimsPrincipal p, CancellationToken ct) =>
         {
             if (!request.HasFormContentType)
@@ -81,7 +84,9 @@ public static class ImageEndpoints
             if (form.Files.Count == 0)
                 throw ApiException.BadRequest(ErrorCodes.Validation, "이미지 파일이 없습니다.");
 
-            var lineId = Trim(form["lineId"])
+            var user = CurrentUser.From(p);
+            var lineId = user.LineId
+                ?? Trim(form["lineId"])
                 ?? throw ApiException.BadRequest(ErrorCodes.Validation, "lineId 가 필요합니다.");
             var inspectionId = Trim(form["inspectionId"]);
             var capturedAt = DateTime.TryParse(form["capturedAt"], System.Globalization.CultureInfo.InvariantCulture,
@@ -89,7 +94,6 @@ public static class ImageEndpoints
                 out var parsed) ? parsed : (DateTime?)null;
             var tags = (form["tags"].ToString() ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-            var user = CurrentUser.From(p);
             var results = new List<ImageUploadResultDto>();
             var errors = new List<string>();
             foreach (var file in form.Files)

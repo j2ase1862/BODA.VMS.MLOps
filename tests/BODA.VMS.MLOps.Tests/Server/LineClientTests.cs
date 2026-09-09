@@ -119,6 +119,39 @@ public class LineClientTests : IClassFixture<MlopsApiFactory>
             .Should().OnlyContain(r => r.Image.Source == ImageSource.LineNg);
     }
 
+    /// <summary>
+    /// VMS 라인 PC 는 lineId 를 보내지 않는다 — 토큰이 그 라인에 발급된 것이라 서버가 토큰에서 읽는다.
+    /// 라인 PC 가 다른 라인 이름을 대더라도 토큰의 라인이 이긴다.
+    /// </summary>
+    [Fact]
+    public async Task 라인_토큰이면_lineId_는_토큰에서_온다()
+    {
+        var (_, line) = await IssueAsync("LINE-7");
+
+        using var noLineId = new MultipartFormDataContent();
+        var part = new ByteArrayContent(DataManagementApiTests.MakePng(64, 64, SKColors.DarkGreen, 22));
+        part.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        noLineId.Add(part, "files", "ng.png");
+        noLineId.Add(new StringContent("INSP-7"), "inspectionId");
+
+        var res = await line.PostAsync("/api/images/line-ng", noLineId);
+        res.StatusCode.Should().Be(HttpStatusCode.OK, await res.Content.ReadAsStringAsync());
+        var image = (await res.Content.ReadFromJsonAsync<ImageUploadBatchDto>(Json))!.Results.Single().Image;
+        image.LineId.Should().Be("LINE-7");
+        image.InspectionId.Should().Be("INSP-7");
+
+        using var spoofed = new MultipartFormDataContent();
+        var part2 = new ByteArrayContent(DataManagementApiTests.MakePng(64, 64, SKColors.DarkBlue, 23));
+        part2.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        spoofed.Add(part2, "files", "ng2.png");
+        spoofed.Add(new StringContent("LINE-OTHER"), "lineId");
+
+        var res2 = await line.PostAsync("/api/images/line-ng", spoofed);
+        res2.StatusCode.Should().Be(HttpStatusCode.OK, await res2.Content.ReadAsStringAsync());
+        (await res2.Content.ReadFromJsonAsync<ImageUploadBatchDto>(Json))!.Results.Single().Image.LineId
+            .Should().Be("LINE-7", "토큰의 라인이 form 의 값을 이긴다");
+    }
+
     [Fact]
     public async Task 라인_토큰의_범위는_좁다()
     {
