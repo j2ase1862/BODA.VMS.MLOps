@@ -41,6 +41,56 @@ public class ModelReferenceTests
         var p = new ModelReference(Guid.NewGuid(), 12);
         ModelReference.Parse(p.ToString()).Should().Be(p);
     }
+
+    [Theory]
+    [InlineData("staging")]
+    [InlineData("candidate")]
+    [InlineData("STAGING")]
+    public void Follows_non_production_stages(string tag)
+    {
+        // VMS 의 선택 창이 테스트 라인용으로 staging 을, 새 학습 결과 확인용으로 candidate 를 내놓는다.
+        // 서버가 못 읽으면 그 참조는 저장은 되고 라인에서만 깨진다.
+        var id = Guid.NewGuid();
+
+        ModelReference.TryParse($"model://{id}@{tag}", out var reference).Should().BeTrue();
+
+        reference!.FollowsStage.Should().BeTrue();
+        reference.FollowsProduction.Should().BeFalse();
+        reference.EffectiveStage.Should().Be(tag.ToLowerInvariant());
+        ModelReference.Parse(reference.ToString()).Should().Be(reference);
+    }
+
+    [Fact]
+    public void Production_keeps_its_old_shape()
+    {
+        // production 은 예전부터 Stage 없이 표현했다. 그 모양이 바뀌면 기존 비교와 저장값이 흔들린다.
+        var id = Guid.NewGuid();
+        ModelReference.TryParse($"model://{id}@production", out var reference).Should().BeTrue();
+
+        reference!.Stage.Should().BeNull();
+        reference.EffectiveStage.Should().Be("production");
+        reference.ToString().Should().Be($"model://{id:D}@production");
+    }
+
+    [Theory]
+    [InlineData("retired")]
+    [InlineData("archived")]
+    public void Rejects_stages_a_recipe_must_not_follow(string tag)
+    {
+        // retired 는 "이제 쓰지 말라" 는 뜻이고, archived 는 아예 없는 단계다.
+        // VMS 쪽 ModelReference 도 같은 셋만 받는다 — 두 파서가 어긋나면 라인에서 드러난다.
+        ModelReference.TryParse($"model://{Guid.NewGuid()}@{tag}", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Followable_stages_match_the_resolve_endpoint()
+    {
+        // resolve 는 이 이름들을 그대로 stage= 로 받는다
+        ModelReference.FollowableStages.Should().BeEquivalentTo(["production", "staging", "candidate"]);
+        ModelReference.FollowableStages.Should().OnlyContain(s => s == s.ToLowerInvariant());
+        foreach (var stage in ModelReference.FollowableStages)
+            Enum.TryParse<ModelStage>(stage, ignoreCase: true, out _).Should().BeTrue($"{stage} 는 서버 단계여야 한다");
+    }
 }
 
 public class TrainingJobStateMachineTests
