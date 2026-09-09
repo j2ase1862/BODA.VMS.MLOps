@@ -73,6 +73,22 @@ public sealed record ReviewRequest(bool Approved);
 
 public sealed record NextImageDto(Guid? ImageId);
 
+// ───────────── Active Learning ─────────────
+
+/// <summary>후보 모델이 한 장에 대해 내놓은 것. 사람이 손댄 이미지에는 채우지 않는다.</summary>
+public sealed record PrefillImageDto(
+    Guid ImageId,
+    IReadOnlyList<AnnotationDto> Annotations,
+    /// <summary>
+    /// 이 이미지가 얼마나 애매한지 (클수록 애매하다). 라벨링 큐가 이 값이 큰 것부터 내보낸다.
+    /// 척도는 모델마다 다르므로 서버는 값을 해석하지 않고 순서에만 쓴다.
+    /// </summary>
+    double? Uncertainty = null);
+
+public sealed record PrefillRequest(IReadOnlyList<PrefillImageDto> Images);
+
+public sealed record PrefillResultDto(int Filled, int Received);
+
 // ───────────── 스냅샷 ─────────────
 
 public sealed record CreateSnapshotRequest(

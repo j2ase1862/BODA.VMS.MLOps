@@ -23,6 +23,9 @@ public sealed class MlopsOptions
     /// <summary>라벨링 잠금이 유지되는 시간. 브라우저가 그냥 닫혀도 이 시간이 지나면 다른 사람이 이어받는다.</summary>
     public int LabelLockMinutes { get; set; } = 10;
 
+    /// <summary>사전 라벨링(Active Learning)을 한 번에 받을 이미지 수 상한. 그보다 많으면 나눠 보낸다.</summary>
+    public int MaxPrefillImages { get; set; } = 2000;
+
     public int HeartbeatSec { get; set; } = 30;
     /// <summary>하트비트 3회 소실 → Offline + WorkerLost (Phase 3 §3)</summary>
     public int HeartbeatLostSec { get; set; } = 90;

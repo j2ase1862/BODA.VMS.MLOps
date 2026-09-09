@@ -4,6 +4,7 @@ using BODA.VMS.MLOps.Contracts.Datasets;
 using BODA.VMS.MLOps.Core.Domain;
 using BODA.VMS.MLOps.Server.Auth;
 using BODA.VMS.MLOps.Server.Services;
+using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 
 namespace BODA.VMS.MLOps.Server.Endpoints;
@@ -103,6 +104,29 @@ public static class DatasetEndpoints
             LabelingService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(new NextImageDto(await svc.NextToLabelAsync(id, after, CurrentUser.From(p), ct))))
             .RequireAuthorization(Policies.Labeler);
+
+        // 후보 모델의 추론 결과를 초기 라벨로 채운다 (개발 문서 §5.4 Active Learning).
+        // 부르는 쪽은 보통 워커의 사전 라벨링 작업이다. 사람이 이미 손댄 이미지는 건드리지 않는다.
+        g.MapPost("/{id:guid}/prefill", async (Guid id, PrefillRequest req,
+            LabelingService svc, IOptions<MlopsOptions> options, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            if (req.Images is null or { Count: 0 })
+                throw ApiException.BadRequest(ErrorCodes.Validation, "채울 이미지가 없습니다.");
+            if (req.Images.Count > options.Value.MaxPrefillImages)
+                throw ApiException.BadRequest(ErrorCodes.Validation,
+                    $"한 번에 {options.Value.MaxPrefillImages}장까지 보낼 수 있습니다. 나눠서 보내세요.");
+
+            var predictions = req.Images.ToDictionary(
+                i => i.ImageId,
+                i => (IReadOnlyList<Core.Labeling.LabelAnnotation>)
+                    (i.Annotations ?? []).Select(a => a.ToDomain()).ToList());
+            var uncertainty = req.Images
+                .Where(i => i.Uncertainty is not null)
+                .ToDictionary(i => i.ImageId, i => i.Uncertainty!.Value);
+
+            int filled = await svc.PrefillAsync(id, predictions, uncertainty, CurrentUser.From(p), ct);
+            return Results.Ok(new PrefillResultDto(filled, req.Images.Count));
+        }).RequireAuthorization(Policies.WorkerOrEngineer);
 
         // ── 스냅샷 ──
         g.MapPost("/{id:guid}/versions", async (Guid id, CreateSnapshotRequest? req,

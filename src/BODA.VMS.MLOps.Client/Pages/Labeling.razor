@@ -96,7 +96,7 @@
             <canvas id="@CanvasId" style="width:100%; height:calc(100vh - 300px); min-height:420px; border:1px solid var(--line); touch-action:none;"></canvas>
 
             <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1 d-block">
-                끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음 클래스 · Delete 삭제 · Esc 선택 해제
+                ←/→ 이전·다음 이미지 · 끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음 클래스 · Delete 삭제 · Esc 선택 해제
                 @if (_mode == "polygon")
                 {
                     <span> · 클릭으로 점 추가, 오른쪽 클릭이나 Enter 로 닫기</span>
@@ -440,6 +440,29 @@
         _samCandidates = count;
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// ←/→ 로 이미지를 넘긴다. 넘어가기 전에 고치던 라벨을 저장한다 —
+    /// 다만 '라벨 완료' 로 표시하지는 않는다. 완료 표시는 [저장하고 다음] 을 눌러야 붙는다.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnNavigateRequested(int direction)
+    {
+        if (_saving) return;
+
+        if (direction < 0)
+        {
+            if (_prevId is null) { Snackbar.Add("이전 이미지가 없습니다", Severity.Info); return; }
+            if (_dirty && !ReadOnly && !await SaveAsync(markLabeled: false)) return;
+            await GoToAsync(_prevId);
+            return;
+        }
+
+        if (_dirty && !ReadOnly && !await SaveAsync(markLabeled: false)) return;
+        var next = await Api.NextToLabelAsync(DatasetId, ImageId);
+        if (next.ImageId is { } id) await GoToAsync(id);
+        else Snackbar.Add("라벨링할 이미지가 더 없습니다", Severity.Info);
     }
 
     public sealed record JsSamPoint(double X, double Y, bool Foreground);

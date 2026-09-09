@@ -389,6 +389,15 @@ class LabelCanvas {
             if (this.draftPolygon) { this.draftPolygon = null; this.draw(); e.preventDefault(); return; }
             this.selected = -1; this.notifySelected(); this.draw(); return;
         }
+
+        // 이전·다음 이미지 (개발 문서 §5.4 단축키). 읽기 전용으로 보는 중에도 넘길 수 있어야 하므로
+        // 아래 readOnly 관문보다 앞에 둔다. Ctrl·Alt 와 겹치면 브라우저 뒤로 가기와 부딪혀 넘긴다.
+        if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            this.dotNet?.invokeMethodAsync('OnNavigateRequested', e.key === 'ArrowLeft' ? -1 : 1);
+            e.preventDefault();
+            return;
+        }
+
         if (this.readOnly) return;
 
         if (e.key === 'Delete' || e.key === 'Backspace') {

@@ -275,6 +275,8 @@ Queued → Assigned → Preparing → Running → Exporting → Uploading → Su
 | `GET /api/sam/status` | SAM 보조를 쓸 수 있는지 (화면이 버튼을 보일지 정함) |
 | `POST /api/sam/prepare` | 임베딩 미리 만들기 (사진을 열 때) |
 | `POST /api/sam/predict` | 클릭 점들 → 크기가 다른 폴리곤 후보들 |
+| `POST /api/images/line-ng` | 라인 PC 의 NG 이미지 수집 (출처·라인 고정) |
+| `POST /api/datasets/{id}/prefill` | 후보 모델의 예측·불확실도로 초기 라벨 채우기 |
 | SignalR `/hubs/models`, `/hubs/training` | 버전·바인딩 변경, 진행률·로그 중계 |
 
 오류는 항상 `{"code": "...", "message": "...", "details": [...]}` 형태입니다.
@@ -287,7 +289,7 @@ Queued → Assigned → Preparing → Running → Exporting → Uploading → Su
 dotnet test BODA.VMS.MLOps.slnx
 ```
 
-194개가 GPU 없이 몇 초 만에 끝납니다. 규약 판별은 VMS 리포와 같은 스텁 ONNX 를 씁니다.
+208개가 GPU 없이 몇 초 만에 끝납니다. 규약 판별은 VMS 리포와 같은 스텁 ONNX 를 씁니다.
 워커 경로는 `scripts/train_fake.py` 가 stdout 프로토콜만 흉내 내며 정상·오류·무응답·취소·OOM 상황을 만들어 줍니다.
 E2E 테스트는 인메모리 서버에 실제 `JobRunner` 를 붙여 작업 제출부터 Candidate 등록까지 한 번에 확인합니다.
 데이터 관리 쪽은 실제로 디코딩되는 PNG 를 만들어 업로드부터 내보내기 zip 까지 돌리고, zip 을 열어 구조를 확인합니다.
@@ -307,23 +309,24 @@ WPF 도구의 업로드·데이터셋 내려받기 버튼. VMS 리포에는 공�
 **Phase 5 — 모니터링·재학습 루프.** 생산 이력의 modelVersionId 연동, 모델별 NG 율·드리프트 경고,
 재학습 제안, 파이프라인 템플릿. 전부 없습니다.
 
-**Active Learning.** 뼈대만 있습니다. `ImageLabelState.Uncertainty` 열과 불확실도 순 정렬,
-`LabelingService.PrefillAsync` 까지 있지만 이것을 부르는 API 가 없어 지금은 닿지 않는 코드입니다.
-빠진 것은 미라벨 이미지를 후보 모델로 일괄 추론해 불확실도를 채우는 경로입니다.
+**Active Learning 의 추론 쪽.** 받는 쪽은 열렸습니다 — `POST /api/datasets/{id}/prefill` 로
+후보 모델의 예측과 불확실도를 넣으면 미라벨 이미지에 초기 라벨이 붙고 큐가 애매한 것부터 내보냅니다.
+사람이 손댄 이미지는 덮지 않습니다. 남은 것은 미라벨 풀을 일괄 추론해 이 API 를 호출하는 쪽으로,
+워커의 사전 라벨링 작업이 자연스러운 자리입니다.
 
-**라인 NG 이미지 연결.** `ImageSource.LineNg` 값은 있지만 실제로 넣는 길이 없습니다.
-이미지 업로드가 `Labeler` 권한이라 라인 PC(`Line` 역할)는 올릴 수 없고, VMS 쪽 송신부도 없습니다.
-정상 샘플 비율 샘플링(1/200)도 없습니다.
+**라인 NG 이미지의 보내는 쪽.** 받는 쪽은 열렸습니다 — `POST /api/images/line-ng` 로
+라인 계정(`Line` 역할)이 NG 사진을 올리면 출처가 `lineNg` 로 고정되고 `inspectionId` 로
+생산 이력과 이어집니다. 라인 계정에 태그·삭제 권한은 주지 않습니다.
+남은 것은 VMS 쪽 송신부와 정상 샘플 비율 샘플링(1/200)입니다.
 
 **세그멘테이션 학습 스크립트.** `TrainingScript.TrainRfdetrSeg` 가 `train_rfdetr_seg.py` 를 가리키는데
-그 파일이 `scripts/` 에 없습니다. 세그멘테이션 작업을 제출하면 워커가 스크립트를 찾지 못합니다.
-열거형이 없는 것을 약속하고 있는 상태라 스크립트를 넣거나 열거형에서 빼야 합니다.
+그 파일이 `scripts/` 에 없습니다. 작업을 제출하면 서버가 "서버에 스크립트가 없습니다" 로 막으므로
+조용히 실패하지는 않습니다. 세그멘테이션 학습을 하려면 스크립트를 넣어야 합니다.
 
 **워커 설치 패키지.** MSI(WiX) 프로젝트가 없습니다. 워커는 오프라인 wheel 폴더를 쓸 수 있지만
 (`Worker:WheelBundleDir` → `pip --no-index --find-links`), 그 번들을 만드는 단계가 없습니다.
 
 **작은 것들.**
-- 라벨링 화면의 ←/→ 이전·다음 이미지 단축키 (개발 문서 §5.4 에 명시, 버튼만 있음)
 - 이미지 품질 필터(블러·노출)와 보존 정책 통합 (중복 제거는 pHash 로 되어 있음)
 - 데이터셋 내보내기를 매니페스트 기반으로 바꿔 바뀐 파일만 받기
   (지금도 Range 요청과 ETag 를 지원해 이어받기는 됩니다. 수십 GB 에서 zip 을 통째로 다시 만드는 것이 문제입니다.)
