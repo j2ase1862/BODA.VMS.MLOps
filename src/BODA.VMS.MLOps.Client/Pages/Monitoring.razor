@@ -1,0 +1,171 @@
+@* 라인에 나간 모델이 실제로 어떻게 하고 있는지 (Phase 5 — 모니터링·재학습 루프).
+   판단 규칙은 서버의 ModelHealth 한 곳에 있고 이 화면은 그 결과를 읽어 주기만 한다. *@
+@page "/monitoring"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<PageTitle>라인 모니터링 · MLOps</PageTitle>
+
+<PageHeader Eyebrow="PHASE 5" Title="라인 모니터링">
+    <Lead>운영 웹의 검사 이력을 모델 버전별로 견줍니다. 여기서 모델을 자동으로 내리지는 않습니다.</Lead>
+    <Actions>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="@_loading" OnClick="LoadAsync">다시 보기</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+else if (_report is null || !_report.Available)
+{
+    @* 왜 못 보는지 말해 준다. 빈 화면은 "괜찮다" 로 읽힌다. *@
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.CloudOff" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">라인 모니터링을 볼 수 없습니다.</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">@(_report?.Message ?? "알 수 없는 이유")</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary mt-3">
+            설정: Monitoring:ProductionWebUrl · 운영 웹과 같은 Jwt:Key · Jwt:Issuer
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">
+        @_report.Message · @Display.When(_report.GeneratedAt) 기준
+        @if (_report.UnmatchedTotal > 0)
+        {
+            @* 이 수가 크면 라인이 아직 모델 식별자를 못 싣는 옛 VMS 를 쓰고 있다는 뜻이다. *@
+            <span> · 모델과 이어지지 않은 검사 @(_report.UnmatchedTotal)건</span>
+        }
+    </MudText>
+
+    @if (_report.Models.Count == 0)
+    {
+        <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+            <MudIcon Icon="@Icons.Material.Filled.MonitorHeart" Size="Size.Large" Class="mud-text-secondary" />
+            <MudText Typo="Typo.body1" Class="mt-2">아직 이어진 검사 결과가 없습니다.</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
+                라인이 model:// 참조를 쓰는 레시피로 돌면 여기에 나타납니다.
+            </MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true" Style="overflow-x:auto">
+            <thead>
+                <tr>
+                    <th>모델</th><th>단계</th><th>신호</th>
+                    @* 머리글이 줄바꿈되면 "우연일 확 률" 처럼 읽힌다 *@
+                    <th style="text-align:right; white-space:nowrap">기준 불량률</th>
+                    <th style="text-align:right; white-space:nowrap">최근 불량률</th>
+                    <th style="text-align:right; white-space:nowrap">우연일 확률</th>
+                    <th>판단</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var m in _report.Models)
+                {
+                    <tr>
+                        <td>
+                            <MudLink Href="@($"/models/{m.ModelId}")">@m.ModelName</MudLink>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary" Style="white-space:nowrap">
+                                v@(m.Number) · @Display.TaskTypeText(m.TaskType)
+                            </MudText>
+                        </td>
+                        <td><MudChip T="string" Size="Size.Small" Color="@Display.StageColor(m.Stage)">@Display.StageText(m.Stage)</MudChip></td>
+                        <td><MudChip T="string" Size="Size.Small" Color="@Display.SignalColor(m.Signal)">@Display.SignalText(m.Signal)</MudChip></td>
+                        <td style="text-align:right; white-space:nowrap" class="mono">
+                            @Rate(m.BaselineNgRate)
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@(m.BaselineTotal)건</MudText>
+                        </td>
+                        <td style="text-align:right; white-space:nowrap" class="mono">
+                            @Rate(m.RecentNgRate)
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">@(m.RecentTotal)건</MudText>
+                        </td>
+                        <td style="text-align:right; white-space:nowrap" class="mono">@PValue(m.PValue)</td>
+                        <td style="max-width:420px">
+                            <MudText Typo="Typo.body2">@m.Detail</MudText>
+                            @if (m.RecentConfidenceSamples > 0)
+                            {
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                    신뢰도 평균 @(m.RecentAvgConfidence?.ToString("F3") ?? "—") (@(m.RecentConfidenceSamples)건)
+                                </MudText>
+                            }
+                        </td>
+                        <td style="white-space:nowrap">
+                            @if (m.SuggestRetrain && m.SourceJobId is not null)
+                            {
+                                <AuthorizeView Roles="Admin,Engineer">
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                               StartIcon="@Icons.Material.Filled.ModelTraining"
+                                               OnClick="@(() => OpenRetrain(m))">재학습</MudButton>
+                                </AuthorizeView>
+                            }
+                            else if (m.SuggestRetrain)
+                            {
+                                @* 밖에서 올린 모델은 여기서 다시 학습할 설정이 없다. 버튼을 두면 눌러도 아무 일이 없다. *@
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                    밖에서 올린 모델이라 재학습 설정이 없습니다
+                                </MudText>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+
+        <MudText Typo="Typo.caption" Class="mud-text-secondary mt-4 d-block">
+            불량률이 올랐다고 곧 모델이 나빠진 것은 아닙니다 — 실제로 불량이 늘었을 수도 있습니다.
+            입력 변화로 나온 것은 재학습해도 낫지 않으니 조명·초점·렌즈를 먼저 보세요.
+        </MudText>
+    }
+}
+
+<TrainingJobDialog @bind-Visible="_retrainOpen" PrefillFromJobId="_retrainFrom" OnCreated="OnRetrainCreated" />
+
+@code {
+    private ModelMonitorReportDto? _report;
+    private bool _loading = true;
+    private string? _error;
+
+    private bool _retrainOpen;
+    private Guid? _retrainFrom;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try { _report = await Api.MonitorModelsAsync(); }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private void OpenRetrain(ModelHealthDto m)
+    {
+        _retrainFrom = m.SourceJobId;
+        _retrainOpen = true;
+    }
+
+    private void OnRetrainCreated(TrainingJobDto job)
+    {
+        Snackbar.Add($"재학습 작업을 제출했습니다 ({job.Script.FileName()})", Severity.Success);
+    }
+
+    private static string Rate(double rate) => rate.ToString("P1");
+
+    private static string PValue(double? p) => p switch
+    {
+        null => "—",
+        < 0.0001 => "<0.01%",
+        _ => p.Value.ToString("P2"),
+    };
+}

@@ -225,6 +225,19 @@ public sealed class MlopsApi(HttpClient http)
         catch (MlopsApiException ex) { return new SamStatusDto(false, false, ex.Message); }
     }
 
+    /// <summary>
+    /// 라인에 나간 모델의 상태. 못 볼 상황이면 available=false 와 이유가 온다 —
+    /// 조용히 빈 목록을 주면 사람이 "다 괜찮구나" 로 읽는다.
+    /// </summary>
+    public async Task<ModelMonitorReportDto> MonitorModelsAsync()
+    {
+        try { return await GetAsync<ModelMonitorReportDto>("/api/monitoring/models"); }
+        catch (MlopsApiException ex)
+        {
+            return new ModelMonitorReportDto(false, ex.Message, DateTime.UtcNow, [], 0);
+        }
+    }
+
     /// <summary>이미지를 열 때 임베딩을 미리 만들게 한다. 실패해도 클릭할 때 다시 만들면 되므로 조용히 넘긴다.</summary>
     public async Task SamPrepareAsync(Guid imageId)
     {

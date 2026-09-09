@@ -5,7 +5,7 @@
 ## 이 리포가 하는 일
 
 BODA VMS MLOps 플랫폼. 검사 모델의 등록·배포(Phase 1), 데이터 관리(Phase 2),
-웹에서 제출하는 학습(Phase 3), 브라우저 라벨링(Phase 4)을 구현합니다.
+웹에서 제출하는 학습(Phase 3), 브라우저 라벨링(Phase 4), 모니터링·재학습(Phase 5)을 구현합니다.
 설계 근거는 `docs/` 의 문서 3종이고, 코드 주석은 그 문서의 절 번호를 인용합니다.
 동작을 바꿀 때는 해당 절과 어긋나지 않는지 먼저 확인하세요.
 
@@ -40,6 +40,12 @@ dotnet run --project src/BODA.VMS.MLOps.Server   # http://localhost:5310/swagger
 YOLO 계열(AGPL)은 라이선스 필드 없이는 등록도 Production 승격도 되지 않습니다.
 패키지를 추가하면 `scripts/requirements-allowlist.txt` 와 `PackageAllowlist` 를 함께 고칩니다.
 
+**모니터링은 당겨 오기만 합니다.** 운영 웹(BODA.VMS.Web)에 MLOps 를 위한 쓰기 경로를 만들지 마세요.
+그쪽은 멈추면 안 되는 시스템이고, 쓰기를 만들면 검사 라인의 안정성에 MLOps 가 얹힙니다.
+못 당겨 와도 이 기능만 "볼 수 없음" 으로 남고 나머지는 그대로 돌아야 합니다.
+판단 규칙은 `Core/Monitoring/ModelHealth.cs` 한 곳입니다 — 화면이나 서비스에서 따로 판단하지 마세요.
+**이 값으로 모델을 자동으로 내리거나 학습을 자동으로 걸지 않습니다.** 사람이 봅니다.
+
 **작업 상태는 서버가 소유합니다.** 워커는 보고만 하고 전이는 `TrainingJobStateMachine` 이 검증합니다.
 새 상태나 전이를 넣을 때는 이 클래스와 그 테스트를 먼저 고치세요. 전이를 이 클래스 밖에서 직접 대입하지 마세요.
 
@@ -63,6 +69,16 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 서버는 최소 API 를 씁니다. 엔드포인트는 얇게 두고 규칙은 `Services/` 로 내립니다.
 
 ## 이 리포에서 밟았던 함정
+
+**운영 웹으로 나가는 토큰은 audience 가 다릅니다.** 두 서버가 같은 `Jwt:Key`·`Jwt:Issuer` 를 쓰지만
+BODA.VMS.Web 은 **`BODA.VMS.Web.Client`** 를 검증합니다. 우리 `Jwt:Audience` 로 발급하면 서명이 맞아도 401 입니다.
+`ServiceTokenIssuer.Issue(..., audience:)` 에 `Monitoring:Audience` 를 넘기세요.
+그 토큰의 역할은 `Viewer` 하나로 둡니다 — 새더라도 운영 데이터를 고칠 수 없어야 합니다.
+
+**모델 식별자 규약은 두 리포에 두 벌 있습니다.** VMS 의 `DlModelIdentity` 와 여기의 `ModelVersionTag` 가
+같은 `mv:{32자}` 를 만듭니다. 한쪽만 바꾸면 집계가 **조용히 빕니다** — 오류도 없이 모델 줄이 안 나타납니다.
+`ModelVersionTagTests` 가 형식을 글자 그대로 못 박고 있으니 그 시험을 함께 고치지 않으면 못 지나갑니다.
+VMS 쪽 `DlModelVersion` 열은 50자 제한이라, 여기서 형식을 늘리면 라인의 업로드가 400 으로 막힙니다.
 
 **열거형 라우트·쿼리 바인딩은 대소문자를 구분합니다.** 응답 JSON 은 camelCase 라 그 값을 URL 에
 되돌려 넣으면 기본 바인딩이 실패합니다. `EnumBinding.Parse` 를 쓰세요.

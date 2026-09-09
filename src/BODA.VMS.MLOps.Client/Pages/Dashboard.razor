@@ -48,6 +48,34 @@ else
         </MudAlert>
     }
 
+    @if (_monitor is { Available: true, Models.Count: > 0 })
+    {
+        var flagged = _monitor.Models.Where(m => m.Signal is not ("Steady" or "NotEnoughData")).ToList();
+        @if (flagged.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-6">
+                <MudText Typo="Typo.subtitle2">라인에서 달라진 모델이 있습니다</MudText>
+                @foreach (var m in flagged)
+                {
+                    <MudText Typo="Typo.body2">
+                        <strong>@m.ModelName v@(m.Number)</strong> — @m.Detail
+                    </MudText>
+                }
+                <MudLink Href="/monitoring" Class="mt-1 d-inline-block">라인 모니터링에서 보기</MudLink>
+            </MudAlert>
+        }
+    }
+    else if (_monitor is { Available: false })
+    {
+        @* 왜 못 보는지 말해 준다. 조용히 비워 두면 "괜찮다" 로 읽힌다. *@
+        <MudAlert Severity="Severity.Normal" Class="mt-6" Dense="true">
+            <MudText Typo="Typo.body2">
+                라인 모니터링을 볼 수 없습니다 — @_monitor.Message
+                <MudLink Href="/monitoring">자세히</MudLink>
+            </MudText>
+        </MudAlert>
+    }
+
     <MudGrid Class="mt-2">
         <MudItem xs="12" md="7">
             <MudPaper Class="pa-4" Elevation="1">
@@ -122,6 +150,7 @@ else
     private List<DatasetVersionDto> _datasets = [];
     private List<WorkerDto> _disabled = [];
     private List<TrainingJobDto> _active = [];
+    private ModelMonitorReportDto? _monitor;
     private bool _loading = true;
     private string? _error;
 
@@ -134,6 +163,8 @@ else
             _workers = await Safe(() => Api.WorkersAsync(), []);
             _jobs = await Safe(() => Api.JobsAsync(take: 20), []);
             _datasets = await Safe(() => Api.DatasetsAsync(), []);
+            // 모니터링은 운영 웹에 다녀와야 해서 느릴 수 있다. 실패해도 화면은 그대로 뜬다.
+            _monitor = await Api.MonitorModelsAsync();
 
             _disabled = _workers.Where(w => w.Status == WorkerStatus.Disabled).ToList();
             _active = _jobs.Where(j => j.State is not (TrainingJobState.Queued or TrainingJobState.Succeeded

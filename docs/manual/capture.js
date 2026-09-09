@@ -30,6 +30,8 @@ const PAGES = [
   { file: "08_models", path: "/models", settle: 2000 },
   { file: "09_bindings", path: "/bindings", settle: 2000 },
   { file: "10_line_clients", path: "/line-clients", settle: 2000 },
+  // 모니터링은 운영 웹까지 다녀오므로 넉넉히 기다린다. 설정이 없으면 "볼 수 없습니다" 가 찍힌다.
+  { file: "13_monitoring", path: "/monitoring", settle: 6000 },
 ];
 
 async function cdp() {
@@ -161,6 +163,25 @@ async function main() {
     await client.send("Page.navigate", { url: `${BASE}/datasets/${picked[key]}/label` });
     await sleep(4500);
     await shoot(client, file);
+  }
+
+  // 재학습 창은 눌러야 나온다. 학습에서 나온 버전이 라인에서 나빠져 있어야 버튼이 생기므로,
+  // 없으면 조용히 건너뛴다 — 그림이 없으면 문서 생성기가 자리만 비운다.
+  await client.send("Page.navigate", { url: BASE + "/monitoring" });
+  await sleep(6000);
+  const retrain = await evaluate(client, `
+    (() => {
+      const b = Array.from(document.querySelectorAll('button'))
+                     .find(e => e.innerText.trim() === '재학습');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`);
+  if (retrain) {
+    await sleep(4000);
+    await shoot(client, "14_retrain");
+  } else {
+    console.log("  재학습을 권할 모델이 없어 그 그림은 건너뜁니다");
   }
 
   client.close();

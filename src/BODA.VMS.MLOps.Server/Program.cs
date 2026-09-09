@@ -6,6 +6,7 @@ using BODA.VMS.MLOps.Server.Data;
 using BODA.VMS.MLOps.Server.Endpoints;
 using BODA.VMS.MLOps.Server.Hubs;
 using BODA.VMS.MLOps.Server.Services;
+using BODA.VMS.MLOps.Server.Services.Monitoring;
 using BODA.VMS.MLOps.Server.Services.Sam;
 using BODA.VMS.MLOps.Server.Storage;
 using Microsoft.AspNetCore.Authentication;
@@ -39,6 +40,7 @@ builder.Services.Configure<MlopsOptions>(builder.Configuration.GetSection(MlopsO
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Section));
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.Section));
 builder.Services.Configure<SamOptions>(builder.Configuration.GetSection(SamOptions.Section));
+builder.Services.Configure<MonitoringOptions>(builder.Configuration.GetSection(MonitoringOptions.Section));
 builder.Services.AddSingleton(TimeProvider.System);
 
 // 바인딩·본문 파싱 실패를 예외로 올려 ApiExceptionMiddleware 가 ApiError JSON 으로 변환하게 한다.
@@ -79,6 +81,11 @@ builder.Services.AddScoped<DatasetQueryService>();
 builder.Services.AddScoped<LabelingService>();
 builder.Services.AddScoped<DatasetSnapshotService>();
 builder.Services.AddScoped<PrelabelService>();
+// 모니터링 (Phase 5). 운영 웹 주소가 없으면 스스로 꺼진 상태로 남는다.
+builder.Services.AddSingleton<ServiceTokenIssuer>();
+builder.Services.AddHttpClient<ProductionOutcomeClient>(http => http.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddScoped<ModelMonitorService>();
+
 // SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
 builder.Services.AddSingleton<SamAssistService>();
 builder.Services.AddHostedService<SamWarmupService>();
@@ -200,6 +207,7 @@ api.MapDatasetEndpoints();
 api.MapImageEndpoints();
 api.MapLineEndpoints();
 api.MapSamEndpoints();
+api.MapMonitoringEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");
 app.MapHub<TrainingHub>("/hubs/training");

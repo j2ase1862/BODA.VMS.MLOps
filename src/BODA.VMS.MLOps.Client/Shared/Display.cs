@@ -148,6 +148,29 @@ public static class Display
         _ => "시험",
     };
 
+    /// <summary>
+    /// 모니터링 신호(Phase 5). 문자열로 오는 이유는 판단 규칙이 Core 에 있고 화면은 그 이름만 받기 때문이다.
+    /// </summary>
+    public static string SignalText(string signal) => signal switch
+    {
+        "Steady" => "이상 없음",
+        "NotEnoughData" => "판단 보류",
+        "NgRateRose" => "불량률 상승",
+        "ConfidenceDropped" => "신뢰도 하락",
+        "InputDrifted" => "입력 변화",
+        _ => signal,
+    };
+
+    /// <summary>
+    /// "판단 보류" 를 초록으로 칠하지 않는다 — 괜찮다는 뜻이 아니라 아직 모른다는 뜻이다.
+    /// </summary>
+    public static Color SignalColor(string signal) => signal switch
+    {
+        "Steady" => Color.Success,
+        "NotEnoughData" => Color.Default,
+        _ => Color.Warning,
+    };
+
     public static string ImageSourceText(ImageSource source) => source switch
     {
         ImageSource.Manual => "직접 업로드",

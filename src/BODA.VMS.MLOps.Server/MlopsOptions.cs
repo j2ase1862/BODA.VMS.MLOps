@@ -45,6 +45,45 @@ public sealed class MlopsOptions
         string.IsNullOrWhiteSpace(ScriptsRoot) ? Path.Combine(AppContext.BaseDirectory, "scripts") : ScriptsRoot;
 }
 
+/// <summary>
+/// appsettings "Monitoring" — 라인에 나간 모델을 지켜보는 설정 (Phase 5).
+///
+/// <para>
+/// <see cref="ProductionWebUrl"/> 이 비어 있으면 이 기능은 꺼진 채로 남는다. 서버는 그대로 뜬다 —
+/// 모니터링은 있으면 좋은 것이지 없으면 못 도는 것이 아니다.
+/// </para>
+/// </summary>
+public sealed class MonitoringOptions
+{
+    public const string Section = "Monitoring";
+
+    /// <summary>
+    /// 운영 웹(BODA.VMS.Web) 주소. 비어 있으면 모니터링을 하지 않는다.
+    /// 그쪽에 <c>/api/history/model-outcomes</c> 가 있어야 한다 (v1.9.0 이상).
+    /// </summary>
+    public string ProductionWebUrl { get; set; } = "";
+
+    /// <summary>지금 상태를 보는 구간. 짧으면 흔들리고 길면 늦게 안다.</summary>
+    public int RecentWindowDays { get; set; } = 7;
+
+    /// <summary>견줄 기준 구간. 최근 구간 바로 앞의 이 기간을 쓴다.</summary>
+    public int BaselineWindowDays { get; set; } = 21;
+
+    /// <summary>한 라인만 볼 때. null 이면 전체.</summary>
+    public int? ClientId { get; set; }
+
+    /// <summary>
+    /// 운영 웹이 검증하는 JWT audience.
+    ///
+    /// <para>
+    /// 우리 것과 다르다. BODA.VMS.Web 은 발급은 <c>BODA.VMS.Web</c> 이름으로 하고
+    /// 검증은 <c>BODA.VMS.Web.Client</c> 로 한다. 이 값을 우리 것으로 두면 요청이 401 로 돌아온다 —
+    /// 서명 키가 같아도 그렇다.
+    /// </para>
+    /// </summary>
+    public string Audience { get; set; } = "BODA.VMS.Web.Client";
+}
+
 /// <summary>appsettings "Jwt" — BODA.VMS.Web 와 같은 키·발급자를 쓰면 기존 로그인 토큰을 그대로 받는다</summary>
 public sealed class JwtOptions
 {

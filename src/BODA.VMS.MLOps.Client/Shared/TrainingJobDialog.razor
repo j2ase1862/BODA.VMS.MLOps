@@ -3,7 +3,7 @@
 
 <MudDialog Visible="Visible" VisibleChanged="VisibleChanged"
            Options="new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true }">
-    <TitleContent><MudText Typo="Typo.h6">학습 작업 제출</MudText></TitleContent>
+    <TitleContent><MudText Typo="Typo.h6">@(PrefillFromJobId is null ? "학습 작업 제출" : "재학습 제출")</MudText></TitleContent>
     <DialogContent>
         @if (_loading)
         {
@@ -11,6 +11,15 @@
         }
         else
         {
+            @if (_prefilled)
+            {
+                @* 데이터셋 버전만 비워 둔다. 같은 버전으로 다시 돌리면 같은 모델이 나오므로
+                   재학습의 뜻이 없다 — 새 데이터가 담긴 버전을 사람이 골라야 한다. *@
+                <MudAlert Severity="Severity.Info" Class="mb-3" Dense="true">
+                    지난 학습과 같은 설정을 채웠습니다. <strong>데이터셋 버전만 고르세요</strong> —
+                    같은 버전으로 다시 돌리면 같은 모델이 나옵니다.
+                </MudAlert>
+            }
             <MudGrid>
                 <MudItem xs="12" md="6">
                     <MudSelect T="Guid?" @bind-Value="_datasetId" Label="데이터셋 버전" Required="true"
@@ -115,6 +124,11 @@
     [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
     [Parameter] public EventCallback<TrainingJobDto> OnCreated { get; set; }
 
+    /// <summary>
+    /// 이 작업의 설정으로 채운 채 연다 (모니터링의 재학습 제안). 데이터셋 버전은 일부러 비워 둔다.
+    /// </summary>
+    [Parameter] public Guid? PrefillFromJobId { get; set; }
+
     private List<DatasetVersionDto> _datasets = [];
     private List<ModelDto> _models = [];
     private List<PretrainedAssetDto> _pretrained = [];
@@ -126,13 +140,18 @@
     private string? _pretrainedRef;
     private string _backbone = "", _license = "";
     private int _seed, _priority;
-    private bool _loading = true, _submitting, _loaded;
+    private bool _loading = true, _submitting, _loaded, _prefilled;
+    private Guid? _loadedFor;
     private string? _error;
 
     protected override async Task OnParametersSetAsync()
     {
+        // 다른 작업으로 다시 열리면 그 설정으로 새로 채운다 — 앞서 연 것의 값이 남으면
+        // 사람이 고르지 않은 설정으로 학습이 걸린다.
+        if (Visible && _loaded && PrefillFromJobId != _loadedFor) _loaded = false;
         if (!Visible || _loaded) return;
         _loaded = true;
+        _loadedFor = PrefillFromJobId;
         _loading = true;
         try
         {
@@ -140,8 +159,39 @@
             _models = await Safe(() => Api.ModelsAsync());
             _pretrained = await Safe(() => Api.PretrainedAsync());
             await LoadSpecsAsync();
+            await PrefillAsync();
         }
         finally { _loading = false; }
+    }
+
+    /// <summary>
+    /// 지난 작업의 설정을 그대로 옮긴다. 하이퍼파라미터는 지금 스크립트의 화이트리스트에 있는 키만
+    /// 옮긴다 — 없는 키를 실으면 서버가 통째로 거부한다.
+    /// </summary>
+    private async Task PrefillAsync()
+    {
+        _prefilled = false;
+        if (PrefillFromJobId is not { } jobId) return;
+
+        TrainingJobDto job;
+        try { job = await Api.JobAsync(jobId); }
+        catch (MlopsApiException ex) { _error = "지난 학습 설정을 읽지 못했습니다 — " + ex.Describe(); return; }
+
+        // 데이터셋 버전은 비운다 — 앞서 열었을 때 고른 것이 남으면 사람이 고르지 않은 데이터로 학습이 걸린다
+        _datasetId = null;
+        _modelId = job.ModelId;
+        _script = job.Script;
+        _backbone = job.Backbone ?? "";
+        _pretrainedRef = job.PretrainedRef;
+        _seed = job.Seed;
+        _priority = job.Priority;
+        await LoadSpecsAsync();
+
+        _values.Clear();
+        foreach (var (key, value) in job.Hyperparams)
+            if (_specs.Any(s => s.Key == key)) _values[key] = value;
+
+        _prefilled = true;
     }
 
     private static async Task<List<T>> Safe<T>(Func<Task<List<T>>> call)
