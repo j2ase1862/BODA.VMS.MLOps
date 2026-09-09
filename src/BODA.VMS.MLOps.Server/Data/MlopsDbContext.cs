@@ -10,6 +10,7 @@ public class MlopsDbContext(DbContextOptions<MlopsDbContext> options) : DbContex
     public DbSet<ModelStageHistory> ModelStageHistories => Set<ModelStageHistory>();
     public DbSet<ModelBinding> ModelBindings => Set<ModelBinding>();
     public DbSet<Worker> Workers => Set<Worker>();
+    public DbSet<LineClient> LineClients => Set<LineClient>();
     public DbSet<TrainingJob> TrainingJobs => Set<TrainingJob>();
     public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
     public DbSet<JobArtifact> JobArtifacts => Set<JobArtifact>();
@@ -87,6 +88,16 @@ public class MlopsDbContext(DbContextOptions<MlopsDbContext> options) : DbContex
             e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
             e.Property(x => x.Status).HasConversion<string>();
             e.HasIndex(x => x.TokenHash).IsUnique();
+        });
+
+        b.Entity<LineClient>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.LineId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.HasIndex(x => x.LineId);
         });
 
         b.Entity<TrainingJob>(e =>

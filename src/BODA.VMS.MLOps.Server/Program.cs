@@ -67,6 +67,7 @@ builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<ModelRegistryService>();
 builder.Services.AddScoped<BindingService>();
 builder.Services.AddScoped<WorkerRegistryService>();
+builder.Services.AddScoped<LineClientService>();
 builder.Services.AddScoped<TrainingJobService>();
 builder.Services.AddScoped<PretrainedMirrorService>();
 builder.Services.AddScoped<DatasetVersionService>();
@@ -131,7 +132,8 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
             }
         };
     })
-    .AddScheme<AuthenticationSchemeOptions, WorkerTokenAuthenticationHandler>(WorkerTokenAuthenticationHandler.SchemeName, null);
+    .AddScheme<AuthenticationSchemeOptions, WorkerTokenAuthenticationHandler>(WorkerTokenAuthenticationHandler.SchemeName, null)
+    .AddScheme<AuthenticationSchemeOptions, LineTokenAuthenticationHandler>(LineTokenAuthenticationHandler.SchemeName, null);
 builder.Services.AddAuthorization(o => o.AddMlopsPolicies());
 
 builder.Services.AddEndpointsApiExplorer();
@@ -195,6 +197,7 @@ api.MapTrainingJobEndpoints();
 api.MapPretrainedEndpoints();
 api.MapDatasetEndpoints();
 api.MapImageEndpoints();
+api.MapLineEndpoints();
 api.MapSamEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");

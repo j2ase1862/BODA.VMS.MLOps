@@ -52,13 +52,21 @@ public sealed class WorkerTokenAuthenticationHandler(
     }
 }
 
-/// <summary>Authorization 헤더 접두사로 JWT / 워커 토큰 스킴을 고르는 정책 스킴</summary>
+/// <summary>
+/// Authorization 헤더 접두사로 스킴을 고르는 정책 스킴.
+/// <c>wk_</c> 는 워커, <c>ln_</c> 는 라인 PC, 나머지는 사용자 JWT 다.
+/// </summary>
 public static class SmartAuthScheme
 {
     public const string Name = "Smart";
 
-    public static string Select(HttpContext ctx) =>
-        WorkerTokenAuthenticationHandler.LooksLikeWorkerToken(ctx.Request.Headers.Authorization.ToString())
-            ? WorkerTokenAuthenticationHandler.SchemeName
-            : JwtBearerDefaults.AuthenticationScheme;
+    public static string Select(HttpContext ctx)
+    {
+        var header = ctx.Request.Headers.Authorization.ToString();
+        if (WorkerTokenAuthenticationHandler.LooksLikeWorkerToken(header))
+            return WorkerTokenAuthenticationHandler.SchemeName;
+        if (LineTokenAuthenticationHandler.LooksLikeLineToken(header))
+            return LineTokenAuthenticationHandler.SchemeName;
+        return JwtBearerDefaults.AuthenticationScheme;
+    }
 }

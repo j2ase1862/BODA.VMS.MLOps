@@ -51,10 +51,11 @@ public static class Policies
     }
 }
 
-/// <summary>요청 주체 — 사용자 이름·역할·(워커면) 워커 ID</summary>
-public sealed record CurrentUser(string Name, IReadOnlySet<string> RolesSet, Guid? WorkerId)
+/// <summary>요청 주체 — 사용자 이름·역할·(워커면) 워커 ID·(라인 PC 면) 라인 ID</summary>
+public sealed record CurrentUser(string Name, IReadOnlySet<string> RolesSet, Guid? WorkerId, string? LineId = null)
 {
     public const string WorkerIdClaim = "mlops:workerId";
+    public const string LineIdClaim = "mlops:lineId";
 
     public bool IsAdmin => RolesSet.Contains(Roles.Admin);
     public bool IsEngineer => IsAdmin || RolesSet.Contains(Roles.Engineer);
@@ -72,6 +73,7 @@ public sealed record CurrentUser(string Name, IReadOnlySet<string> RolesSet, Gui
             .Concat(principal.FindAll("role").Select(c => c.Value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         Guid? workerId = Guid.TryParse(principal.FindFirstValue(WorkerIdClaim), out var g) ? g : null;
-        return new CurrentUser(name, roles, workerId);
+        var lineId = principal.FindFirstValue(LineIdClaim);
+        return new CurrentUser(name, roles, workerId, string.IsNullOrWhiteSpace(lineId) ? null : lineId);
     }
 }
