@@ -89,6 +89,27 @@ public sealed record PrefillRequest(IReadOnlyList<PrefillImageDto> Images);
 
 public sealed record PrefillResultDto(int Filled, int Received);
 
+/// <summary>후보 모델로 미라벨 이미지를 훑어 초기 라벨과 불확실도를 채운다.</summary>
+public sealed record PrelabelRequest(
+    Guid ModelVersionId,
+    /// <summary>이보다 낮은 확신도는 버린다. 낮추면 더 많이 붙지만 사람이 지울 것도 늘어난다.</summary>
+    double Confidence = 0.25,
+    /// <summary>한 번에 훑을 이미지 수. 남으면 다시 부르면 된다.</summary>
+    int MaxImages = 200);
+
+public sealed record PrelabelResultDto(
+    /// <summary>대상으로 고른 미라벨 이미지 수</summary>
+    int Considered,
+    /// <summary>실제로 추론을 마친 수</summary>
+    int Inferred,
+    /// <summary>라벨을 채운 이미지 수 (사람이 손댄 것은 제외된다)</summary>
+    int Filled,
+    /// <summary>읽지 못해 건너뛴 수</summary>
+    int Skipped,
+    /// <summary>붙인 라벨 개수 합계</summary>
+    int Annotations,
+    string? Message = null);
+
 // ───────────── 스냅샷 ─────────────
 
 public sealed record CreateSnapshotRequest(

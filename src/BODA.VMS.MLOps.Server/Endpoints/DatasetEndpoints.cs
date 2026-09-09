@@ -128,6 +128,18 @@ public static class DatasetEndpoints
             return Results.Ok(new PrefillResultDto(filled, req.Images.Count));
         }).RequireAuthorization(Policies.WorkerOrEngineer);
 
+        // 후보 모델을 돌려 초기 라벨과 불확실도를 채운다 (§5.4 Active Learning).
+        // 추론이 도는 동안 응답을 붙잡고 있으므로 MaxImages 로 나눠 부른다.
+        g.MapPost("/{id:guid}/prelabel", async (Guid id, PrelabelRequest req,
+            PrelabelService svc, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            var result = await svc.RunAsync(id, req.ModelVersionId,
+                Math.Clamp(req.Confidence, 0.01, 0.99),
+                req.MaxImages, CurrentUser.From(p), ct);
+            return Results.Ok(new PrelabelResultDto(result.Considered, result.Inferred, result.Filled,
+                result.Skipped, result.Annotations, result.Message));
+        }).RequireAuthorization(Policies.Engineer);
+
         // ── 스냅샷 ──
         g.MapPost("/{id:guid}/versions", async (Guid id, CreateSnapshotRequest? req,
             DatasetSnapshotService svc, ClaimsPrincipal p, CancellationToken ct) =>

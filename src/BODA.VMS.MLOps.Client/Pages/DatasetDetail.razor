@@ -34,6 +34,8 @@ else
             <AuthorizeView Roles="Engineer,Admin" Context="eng">
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PhotoCamera"
                            OnClick="@(() => _uploadOpen = true)">이미지 올리기</MudButton>
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                           OnClick="OpenPrelabelAsync">모델로 미리 채우기</MudButton>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Archive"
                            OnClick="@(() => _snapshotOpen = true)">버전 만들기</MudButton>
             </AuthorizeView>
@@ -231,6 +233,79 @@ else
     </DialogActions>
 </MudDialog>
 
+@* ── 사전 라벨링 (Active Learning) ── *@
+<MudDialog @bind-Visible="_prelabelOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">모델로 미리 채우기</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+            고른 모델을 미라벨 이미지에 돌려 초기 라벨을 붙이고, 얼마나 애매한지 기록합니다.
+            애매한 이미지가 라벨링 큐에 먼저 나옵니다. 사람이 이미 손댄 이미지는 건드리지 않습니다.
+        </MudText>
+
+        @if (_prelabelResult is null)
+        {
+            @if (_versionOptions.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info">
+                    이 데이터셋과 같은 작업 유형·클래스를 가진 검출 모델 버전이 없습니다.
+                    먼저 모델을 등록하거나 학습을 돌려 후보를 만드세요.
+                </MudAlert>
+            }
+            else
+            {
+                <MudSelect T="Guid" Value="_prelabelVersionId" ValueChanged="@(v => _prelabelVersionId = v)"
+                           Label="모델 버전" Dense="true">
+                    @foreach (var option in _versionOptions)
+                    {
+                        <MudSelectItem T="Guid" Value="@option.Id">@option.Label</MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudSlider T="double" Value="_prelabelConfidence" ValueChanged="@(v => _prelabelConfidence = v)"
+                           Min="0.05" Max="0.9" Step="0.05" Class="mt-4">
+                    확신도 문턱: @_prelabelConfidence.ToString("0.00")
+                </MudSlider>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    낮추면 더 많이 붙지만 사람이 지울 것도 늘어납니다.
+                </MudText>
+
+                <MudNumericField T="int" @bind-Value="_prelabelMax" Label="한 번에 볼 장 수" Min="1" Max="500"
+                                 Class="mt-3" HelperText="남으면 다시 눌러 이어서 하면 됩니다" />
+            }
+        }
+        else
+        {
+            <MudAlert Severity="@(_prelabelResult.Annotations > 0 ? Severity.Success : Severity.Info)">
+                <MudText Typo="Typo.body2">
+                    @_prelabelResult.Inferred 장을 보고 @_prelabelResult.Annotations 개를 붙였습니다
+                    (@_prelabelResult.Filled 장 갱신@(_prelabelResult.Skipped > 0 ? $", {_prelabelResult.Skipped}장 건너뜀" : "")).
+                </MudText>
+            </MudAlert>
+            @if (_prelabelResult.Message is { Length: > 0 } note)
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-2">@note</MudAlert>
+            }
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-3 d-block">
+                붙은 라벨은 '작업 중' 상태입니다. 라벨링 화면에서 확인하고 고친 뒤 완료로 표시하세요.
+            </MudText>
+        }
+
+        @if (_prelabelError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_prelabelError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _prelabelOpen = false)">닫기</MudButton>
+        @if (_prelabelResult is null && _versionOptions.Count > 0)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@_prelabeling" OnClick="RunPrelabelAsync">
+                @(_prelabeling ? "돌리는 중…" : "실행")
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
 @* ── 스냅샷 ── *@
 <MudDialog @bind-Visible="_snapshotOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">데이터셋 버전 만들기</MudText></TitleContent>
@@ -416,6 +491,66 @@ else
             await LoadImagesAsync();
         }
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    // ───────────── 사전 라벨링 ─────────────
+
+    private sealed record VersionOption(Guid Id, string Label);
+
+    private bool _prelabelOpen, _prelabeling;
+    private string? _prelabelError;
+    private Guid _prelabelVersionId;
+    private double _prelabelConfidence = 0.25;
+    private int _prelabelMax = 200;
+    private PrelabelResultDto? _prelabelResult;
+    private List<VersionOption> _versionOptions = [];
+
+    /// <summary>
+    /// 이 데이터셋에 쓸 만한 모델 버전만 모아 보여 준다.
+    /// 작업 유형이 같고 클래스 이름이 하나라도 겹쳐야 한다 — 서버도 같은 규칙으로 거절하므로,
+    /// 고를 수 없는 것을 목록에 두면 사람만 헷갈린다.
+    /// </summary>
+    private async Task OpenPrelabelAsync()
+    {
+        _prelabelOpen = true;
+        _prelabelResult = null;
+        _prelabelError = null;
+        _versionOptions = [];
+        if (_dataset is null) return;
+
+        try
+        {
+            var classes = _dataset.Classes.ToHashSet(StringComparer.Ordinal);
+            foreach (var model in await Api.ModelsAsync(_dataset.TaskType))
+            {
+                foreach (var version in await Api.VersionsAsync(model.Id))
+                {
+                    if (version.Format is not (ModelFormat.Yolo or ModelFormat.DFine)) continue;
+                    if (!version.Classes.Any(classes.Contains)) continue;
+                    _versionOptions.Add(new VersionOption(version.Id,
+                        $"{model.Name} v{version.Number} · {Display.StageText(version.Stage)}"));
+                }
+            }
+            _prelabelVersionId = _versionOptions.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+        catch (MlopsApiException ex) { _prelabelError = ex.Describe(); }
+    }
+
+    private async Task RunPrelabelAsync()
+    {
+        if (_prelabelVersionId == Guid.Empty) return;
+        _prelabeling = true;
+        _prelabelError = null;
+        try
+        {
+            _prelabelResult = await Api.PrelabelAsync(Id,
+                new PrelabelRequest(_prelabelVersionId, _prelabelConfidence, _prelabelMax));
+            // 격자의 라벨 겹쳐 그리기와 진행률이 바로 반영되도록 다시 읽는다
+            _dataset = await Api.DatasetAsync(Id);
+            await LoadImagesAsync();
+        }
+        catch (MlopsApiException ex) { _prelabelError = ex.Describe(); }
+        finally { _prelabeling = false; }
     }
 
     private async Task CreateSnapshotAsync()

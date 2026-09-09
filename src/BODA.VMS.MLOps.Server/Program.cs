@@ -78,6 +78,7 @@ builder.Services.AddScoped<DatasetService>();
 builder.Services.AddScoped<DatasetQueryService>();
 builder.Services.AddScoped<LabelingService>();
 builder.Services.AddScoped<DatasetSnapshotService>();
+builder.Services.AddScoped<PrelabelService>();
 // SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
 builder.Services.AddSingleton<SamAssistService>();
 builder.Services.AddHostedService<SamWarmupService>();
