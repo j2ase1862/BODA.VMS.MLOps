@@ -37,20 +37,73 @@ public sealed class LocalDiskArtifactStorage : IArtifactStorage
     public string CreateTempPath(string? extension = null) =>
         Path.Combine(_root, "tmp", Guid.NewGuid().ToString("N") + (extension ?? ".tmp"));
 
+    /// <summary>
+    /// 임시 파일을 제자리로 옮긴다.
+    ///
+    /// <para><b>같은 키가 동시에 들어올 수 있습니다.</b>
+    /// 경로가 내용 해시라, 같은 사진을 두 라인이 같은 순간에 올리면 두 요청이 같은 자리를 노린다.
+    /// 있는지 보고 옮기는 사이에 남이 끼어들면 한쪽은 <see cref="IOException"/> 으로 터지고
+    /// 그 요청은 500 이 된다 — 사람에게는 "가끔 업로드가 실패한다" 로만 보인다.
+    /// 같은 키면 내용이 같으므로 진 쪽은 이긴 파일을 그대로 쓰면 된다.
+    /// </para>
+    /// <para>
+    /// 방금 닫은 파일을 백신이 잠깐 쥐고 있어 옮기지 못하는 경우도 같은 예외로 온다.
+    /// 그래서 몇 번 짧게 다시 해 본다. 그래도 안 되면 진짜 문제이므로 그대로 올린다.
+    /// </para>
+    /// </summary>
     public async Task<long> CommitTempAsync(string tempPath, string key, CancellationToken ct = default)
     {
         var dest = Resolve(key);
         Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
         var size = new FileInfo(tempPath).Length;
-        if (File.Exists(dest))
+
+        for (var attempt = 0; ; attempt++)
         {
-            // 내용 주소 지정(sha 경로)이라 같은 키면 같은 내용이다 — 기존 파일을 그대로 둔다
-            File.Delete(tempPath);
-            return new FileInfo(dest).Length;
+            if (File.Exists(dest))
+            {
+                // 내용 주소 지정(sha 경로)이라 같은 키면 같은 내용이다 — 기존 파일을 그대로 둔다
+                TryDelete(tempPath);
+                return new FileInfo(dest).Length;
+            }
+
+            try
+            {
+                File.Move(tempPath, dest, overwrite: false);
+                return size;
+            }
+            catch (IOException) when (attempt < MoveAttempts)
+            {
+                // 남이 먼저 옮겼거나(다음 회전의 Exists 가 잡는다) 잠깐 잡혀 있다
+                await Task.Delay(BackoffMs * (attempt + 1), ct);
+            }
+            catch (IOException) when (attempt == MoveAttempts)
+            {
+                // 계속 막힌다. 잡고 있는 쪽(대개 백신 실시간 검사)은 읽기는 내주므로 복사로 넘어간다.
+                // 임시 파일은 못 지워도 상관없다 — 이름이 Guid 라 다음 업로드와 부딪히지 않는다.
+                await CopyIntoPlaceAsync(tempPath, dest, ct);
+                TryDelete(tempPath);
+                return size;
+            }
         }
-        File.Move(tempPath, dest, overwrite: false);
-        await Task.CompletedTask;
-        return size;
+    }
+
+    private static async Task CopyIntoPlaceAsync(string source, string dest, CancellationToken ct)
+    {
+        var staging = dest + ".copying-" + Guid.NewGuid().ToString("N")[..8];
+        await using (var from = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 16, useAsync: true))
+        await using (var to = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
+            await from.CopyToAsync(to, ct);
+
+        try
+        {
+            File.Move(staging, dest, overwrite: false);
+        }
+        catch (IOException)
+        {
+            // 그 사이 남이 먼저 자리를 잡았다 — 같은 내용이므로 그것을 쓴다
+            TryDelete(staging);
+            if (!File.Exists(dest)) throw;
+        }
     }
 
     public async Task<long> SaveAsync(string key, Stream content, CancellationToken ct = default)
@@ -60,8 +113,31 @@ public sealed class LocalDiskArtifactStorage : IArtifactStorage
             await content.CopyToAsync(fs, ct);
         var dest = Resolve(key);
         Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-        File.Move(temp, dest, overwrite: true);
-        return new FileInfo(dest).Length;
+
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(temp, dest, overwrite: true);
+                return new FileInfo(dest).Length;
+            }
+            catch (IOException) when (attempt < MoveAttempts)
+            {
+                await Task.Delay(20 * (attempt + 1), ct);
+            }
+        }
+    }
+
+    /// <summary>옮기기를 몇 번까지 다시 해 보는가. 그 뒤에는 복사로 넘어간다.</summary>
+    private const int MoveAttempts = 5;
+
+    /// <summary>재시도 간격의 기준. 30·60·90·120·150ms 로 벌어진다.</summary>
+    private const int BackoffMs = 30;
+
+    /// <summary>진 쪽의 임시 파일을 치운다. 못 치워도 업로드를 실패시키지는 않는다.</summary>
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     public bool Exists(string key) => File.Exists(Resolve(key));

@@ -40,11 +40,30 @@ public sealed class ImageProcessor(ILogger<ImageProcessor> logger)
     public sealed class UnsupportedImageException(string message) : Exception(message);
 
     /// <summary>
+    /// 사진 파일을 연다. <b>손잡이를 우리가 쥐는 것이 요점입니다.</b>
+    ///
+    /// <para>
+    /// 경로를 그대로 넘기면(<c>SKCodec.Create(path)</c>·<c>SKBitmap.Decode(path)</c>) SkiaSharp 이
+    /// 안에서 스트림을 만들고, 그것이 언제 닫히는지 우리가 정할 수 없습니다. 한가할 때는 곧 닫히지만
+    /// 부하가 있으면 늦어지고, 그 사이에 <b>업로드가 임시 파일을 제자리로 옮기려다</b>
+    /// "다른 프로세스가 사용 중" 으로 터집니다 — 그 요청은 500 이 되고, 재현이 어려워
+    /// "가끔 업로드가 실패한다" 로만 보입니다. 실제로 이 리포의 시험 묶음이 이 이유로 흔들렸습니다.
+    /// </para>
+    /// <para>
+    /// 읽기 공유로 여는 것은 같은 사진을 동시에 읽는 다른 요청을 막지 않기 위해서입니다.
+    /// </para>
+    /// </summary>
+    private static FileStream OpenImage(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+
+    /// <summary>
     /// 원본 파일을 읽어 크기·해시·축소본을 만든다. 디코딩할 수 없으면 <see cref="UnsupportedImageException"/>.
     /// </summary>
     public ProcessedImage Process(string sourcePath)
     {
-        using var codec = SKCodec.Create(sourcePath)
+        // 파일 손잡이는 우리가 쥔다 — 아래 OpenImage 의 설명을 보세요.
+        using var file = OpenImage(sourcePath);
+        using var codec = SKCodec.Create(file)
             ?? throw new UnsupportedImageException("이미지로 읽을 수 없는 파일입니다 (지원 형식: JPEG·PNG·BMP·WEBP·GIF).");
 
         var info = codec.Info;
@@ -77,7 +96,8 @@ public sealed class ImageProcessor(ILogger<ImageProcessor> logger)
     {
         try
         {
-            using var bitmap = SKBitmap.Decode(sourcePath);
+            using var file = OpenImage(sourcePath);
+            using var bitmap = SKBitmap.Decode(file);
             if (bitmap is null) return null;
 
             var rect = SKRectI.Create(

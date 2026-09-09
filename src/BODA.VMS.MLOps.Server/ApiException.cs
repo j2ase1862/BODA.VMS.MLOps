@@ -17,7 +17,17 @@ public sealed class ApiException(int status, string code, string message, IReadO
     public static ApiException TooLarge(string message) => new(413, ErrorCodes.TooLarge, message);
 }
 
-public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExceptionMiddleware> logger)
+/// <summary>
+/// 서비스가 던진 오류를 <see cref="ApiError"/> JSON 으로 바꾼다.
+///
+/// <para><b>운영이 아니면 500 에 예외를 실어 보냅니다.</b>
+/// 가려 두면 개발·시험에서 500 이 났을 때 원인을 볼 길이 없다 — 로그는 콘솔로만 나가고
+/// 시험 실행기는 그것을 잡지 않아, "가끔 실패한다" 를 쫓는 데 며칠이 든다.
+/// 운영에서는 스택을 밖으로 내보내지 않는다.
+/// </para>
+/// </summary>
+public sealed class ApiExceptionMiddleware(
+    RequestDelegate next, ILogger<ApiExceptionMiddleware> logger, IHostEnvironment environment)
 {
     public async Task Invoke(HttpContext ctx)
     {
@@ -47,7 +57,10 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExce
             logger.LogError(ex, "처리되지 않은 예외 {Path}", ctx.Request.Path);
             ctx.Response.StatusCode = 500;
             ctx.Response.ContentType = "application/json; charset=utf-8";
-            await ctx.Response.WriteAsync(JsonSerializer.Serialize(new ApiError("InternalError", "서버 내부 오류"), MlopsJson.Options));
+            // 운영에서는 스택을 내보내지 않는다. 그 밖에서는 이것이 없으면 원인을 볼 길이 없다.
+            var details = environment.IsProduction() ? null : new[] { ex.ToString() };
+            await ctx.Response.WriteAsync(JsonSerializer.Serialize(
+                new ApiError("InternalError", "서버 내부 오류", details), MlopsJson.Options));
         }
     }
 }
