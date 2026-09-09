@@ -55,6 +55,10 @@ public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
         builder.UseSetting("Mlops:MaxModelBytes", (64L * 1024 * 1024).ToString());
         // SAM 은 기본으로 꺼 둔다. 서버 프로젝트 폴더에 모델을 둔 개발 PC 에서만 켜지면
         // 같은 시험이 사람마다 다르게 도는 셈이 된다. 켜는 쪽은 SamEnabledFactory 가 따로 맡는다.
+        // 모니터링은 기본으로 꺼 둔다. appsettings 의 운영 웹 주소를 그대로 물려받으면
+        // 시험이 그 서버에 실제로 붙으러 나간다 — 그 PC 에 웹이 떠 있느냐에 따라 결과가 달라진다.
+        // 켜는 쪽은 MonitoringReportTests 의 StubbedWebFactory 가 따로 맡는다.
+        builder.UseSetting("Monitoring:ProductionWebUrl", "");
         builder.UseSetting("Sam:EncoderPath", "");
         builder.UseSetting("Sam:DecoderPath", "");
         builder.UseSetting("Urls", "");

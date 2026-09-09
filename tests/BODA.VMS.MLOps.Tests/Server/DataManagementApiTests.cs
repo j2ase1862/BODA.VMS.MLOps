@@ -366,6 +366,50 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
             .StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
+    /// <summary>
+    /// 재학습이 기대는 것 — <c>ReviewedOnly</c> 판에는 검토를 마친 사진만 들어간다.
+    ///
+    /// <para>
+    /// 재학습 창의 "지금 상태로 새 판" 은 이 값을 켠 채로 판을 뜬다. 이것이 새면 사람이 아직
+    /// 보지 않은 사전 라벨이 다음 학습 데이터가 되고, 그 오염은 모델이 나온 뒤에야 드러난다.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_reviewed_only_snapshot_leaves_out_labels_nobody_checked()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("검토 경계", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+
+        var upload = await UploadAsync(eng,
+            ("checked.png", MakePng(200, 200, SKColors.Teal, 81)),
+            ("unchecked.png", MakePng(200, 200, SKColors.Olive, 82)));
+        var checkedId = upload.Results[0].Image.Id;
+        var uncheckedId = upload.Results[1].Image.Id;
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images",
+            new AddImagesRequest([checkedId, uncheckedId]), Json);
+
+        // 둘 다 라벨은 붙어 있다. 다른 것은 사람이 봤는지 여부뿐이다.
+        foreach (var id in new[] { checkedId, uncheckedId })
+            await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{id}/labels",
+                new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.3, 0.3)], true), Json);
+
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/{checkedId}/review",
+            new ReviewRequest(true), Json);
+
+        var reviewedOnly = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(ReviewedOnly: true), Json))
+            .Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        reviewedOnly.ImageCount.Should().Be(1, "검토를 마친 한 장만 들어가야 한다");
+
+        // 끄면 둘 다 들어간다 — 사람이 그렇게 고른 경우다
+        var all = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(ReviewedOnly: false), Json))
+            .Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        all.ImageCount.Should().Be(2);
+    }
+
     [Fact]
     public async Task Same_content_gives_the_same_manifest_hash()
     {
