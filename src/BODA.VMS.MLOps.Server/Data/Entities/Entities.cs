@@ -201,8 +201,17 @@ public class DatasetVersion
     public string Name { get; set; } = "";
     public TaskType TaskType { get; set; }
     public string ExportFormat { get; set; } = "yolo";
-    /// <summary>이미지 목록·라벨·분할을 합쳐 만든 해시. 재현성 레코드가 이 값을 남긴다.</summary>
+    /// <summary>
+    /// 이미지 목록·라벨·분할을 합쳐 만든 해시 — <b>내용의 신원</b>이다. 재현성 레코드가 이 값을 남긴다.
+    /// 같은 이미지·라벨·분할이면 언제 떠도 같은 값이고, 그래서 zip 바이트와는 무관하다.
+    /// 받은 파일을 검증하는 데 쓰지 마세요 — 그 용도는 <see cref="ExportSha256"/> 입니다.
+    /// </summary>
     public string ManifestHash { get; set; } = "";
+    /// <summary>
+    /// 내보내기 zip <b>파일</b>의 SHA-256. 받는 쪽이 끝까지 제대로 받았는지 대조하는 값이다.
+    /// zip 을 굽기 전에는 없다 (Snapshot 은 처음 내보낼 때 채워진다).
+    /// </summary>
+    public string? ExportSha256 { get; set; }
     /// <summary>내보내기 zip 의 위치. Snapshot 은 처음 내보낼 때 채워진다.</summary>
     public string? StorageKey { get; set; }
     public long SizeBytes { get; set; }

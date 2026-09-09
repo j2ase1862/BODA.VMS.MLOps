@@ -131,7 +131,10 @@ public sealed class DatasetSnapshotService(
                 $"이 버전은 {version.ExportFormat} 형식으로만 내보낼 수 있습니다 (요청: {format}).");
 
         if (version.StorageKey is { } key && storage.Exists(key))
+        {
+            await EnsureExportShaAsync(version, key, ct);
             return (storage.OpenRead(key), version);
+        }
 
         if (version.Source == DatasetVersionSource.Upload)
             throw ApiException.NotFound("데이터셋 파일");
@@ -149,6 +152,20 @@ public sealed class DatasetSnapshotService(
             return (storage.OpenRead(version.StorageKey!), version);
         }
         finally { BuildLock.Release(); }
+    }
+
+    /// <summary>
+    /// 이 고침(zip 바이트 해시를 따로 두기) 전에 구워 둔 판에는 <see cref="DatasetVersion.ExportSha256"/> 이 없다.
+    /// 그때는 지금 한 번 계산해 채운다 — 그러지 않으면 그 판을 받는 쪽이 영영 대조할 값을 못 받는다.
+    /// </summary>
+    private async Task EnsureExportShaAsync(DatasetVersion version, string key, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(version.ExportSha256)) return;
+
+        await using (var stream = storage.OpenRead(key))
+            version.ExportSha256 = await Sha256Util.HashStreamAsync(stream, ct);
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("데이터셋 버전 {Id} 의 zip 해시를 뒤늦게 채웠습니다", version.Id);
     }
 
     private async Task BuildExportAsync(DatasetVersion version, CancellationToken ct)
@@ -188,6 +205,10 @@ public sealed class DatasetSnapshotService(
                     new ExportManifest(manifest.DatasetName, manifest.TaskType, manifest.Classes, exportImages),
                     manifest.ExportFormat, sink);
             }
+
+            // 받는 쪽이 대조할 값은 zip 바이트의 해시다. ManifestHash 는 내용의 신원이라
+            // 여기 쓸 수 없다 — 같은 내용이라도 zip 은 구울 때마다 바이트가 달라진다.
+            version.ExportSha256 = await Sha256Util.HashFileAsync(temp, ct);
 
             var key = StorageKeys.Dataset(version.Id);
             await storage.DeleteAsync(key, ct);

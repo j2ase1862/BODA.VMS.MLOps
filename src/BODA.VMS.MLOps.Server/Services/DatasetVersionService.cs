@@ -40,7 +40,10 @@ public sealed class DatasetVersionService(
             var dv = new DatasetVersion
             {
                 Id = id, Name = meta.Name.Trim(), TaskType = meta.TaskType, ExportFormat = format,
-                ManifestHash = temp.Sha256, StorageKey = key, SizeBytes = temp.SizeBytes, ImageCount = meta.ImageCount,
+                // 밖에서 만들어 온 zip 은 내용 목록을 알 수 없다. 그래서 신원도 바이트 해시로 둔다 —
+                // 이때만 두 값이 같고, 스냅샷에서는 서로 다른 것을 가리킨다.
+                ManifestHash = temp.Sha256, ExportSha256 = temp.Sha256,
+                StorageKey = key, SizeBytes = temp.SizeBytes, ImageCount = meta.ImageCount,
                 ClassesJson = Mapping.ToJson(meta.Classes ?? []), CreatedBy = user.Name,
                 CreatedAt = clock.GetUtcNow().UtcDateTime, Source = DatasetVersionSource.Upload,
             };

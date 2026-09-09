@@ -113,6 +113,12 @@ public sealed class ServerClient
     /// <summary>
     /// 파일 다운로드 — 임시 파일 → SHA-256 검증(expectedSha 또는 서버 X-Content-Sha256) → 원자적 이동.
     /// 반환: 실제 SHA-256.
+    ///
+    /// <para>
+    /// 헤더로 대조하는 것은 <b>파일 바이트</b>의 해시다. 서버가 데이터셋 내보내기에 그 값을 싣는다
+    /// (<c>DatasetVersion.ExportSha256</c>). 내용의 신원인 <c>ManifestHash</c> 와 헷갈리지 마세요 —
+    /// 한동안 서버가 그쪽을 실어서, 스냅샷으로 만든 판은 여기서 늘 "해시 불일치" 로 막혔습니다.
+    /// </para>
     /// </summary>
     public async Task<string> DownloadAsync(string relativeUrl, string destPath, string? expectedSha, CancellationToken ct)
     {

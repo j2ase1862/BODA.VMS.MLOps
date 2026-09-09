@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Datasets;
 using BODA.VMS.MLOps.Core.Domain;
+using BODA.VMS.MLOps.Core.Hashing;
 using FluentAssertions;
 using SkiaSharp;
 using static BODA.VMS.MLOps.Tests.Server.MlopsApiFactory;
@@ -159,6 +160,53 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         // 두 번째 요청은 만들어 둔 zip 을 그대로 준다
         (await eng.GetFromJsonAsync<DatasetVersionDto>($"/api/dataset-versions/{version.Id}", Json))!
             .ExportReady.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// 내보내기 헤더는 <b>zip 바이트</b>의 해시여야 한다.
+    ///
+    /// <para>
+    /// 한동안 여기에 ManifestHash 를 실었다. 그것은 이미지·라벨·분할 목록의 해시,
+    /// 즉 <b>내용의 신원</b>이라 zip 바이트와 무관하다. 그래서 이 헤더를 파일 검증에 쓰는 워커는
+    /// 스냅샷으로 만든 판을 받을 때마다 "해시 불일치" 로 실패했다 — 웹에서 라벨링한 데이터로는
+    /// 학습이 아예 시작되지 않았다. 업로드로 만든 판은 두 값이 우연히 같아 통과해서 오래 숨어 있었다.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Export_header_hashes_the_zip_not_the_manifest()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("해시 확인용", TaskType.Detection, ["defect"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+
+        var upload = await UploadAsync(eng, ("h1.png", MakePng(320, 240, SKColors.White, 77)));
+        var imageId = upload.Results[0].Image.Id;
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest([imageId]), Json);
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "defect", 0.2, 0.2, 0.3, 0.3)],
+                MarkLabeled: true), Json);
+
+        var version = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest("해시 판"), Json)).Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        version.ExportSha256.Should().BeNull("zip 을 굽기 전에는 바이트 해시가 없다");
+
+        var export = await eng.GetAsync($"/api/dataset-versions/{version.Id}/export");
+        export.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var bytes = await export.Content.ReadAsByteArrayAsync();
+        var actual = Sha256Util.HashBytes(bytes);
+
+        export.Headers.TryGetValues("X-Content-Sha256", out var served).Should().BeTrue();
+        served!.Single().Should().Be(actual, "받는 쪽은 이 값으로 받은 파일을 대조한다");
+
+        // 두 값은 서로 다른 것을 가리킨다. 같아지면 누군가 다시 섞은 것이다.
+        actual.Should().NotBe(version.ManifestHash);
+
+        // 굽고 난 뒤에는 DTO 로도 볼 수 있어야 한다
+        var after = (await eng.GetFromJsonAsync<DatasetVersionDto>($"/api/dataset-versions/{version.Id}", Json))!;
+        after.ExportSha256.Should().Be(actual);
+        after.ManifestHash.Should().Be(version.ManifestHash, "내용이 그대로면 신원도 그대로다");
     }
 
     [Fact]

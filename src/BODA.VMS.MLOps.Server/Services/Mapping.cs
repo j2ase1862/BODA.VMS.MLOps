@@ -64,7 +64,8 @@ public static class Mapping
             d.Source, d.DatasetId, d.AnnotationCount,
             Json(d.SplitCountsJson, new Dictionary<string, int>()),
             // 스냅샷은 처음 내보낼 때 zip 이 만들어지므로, 아직 없으면 "만들어야 함" 으로 알린다
-            d.StorageKey is not null);
+            d.StorageKey is not null,
+            d.ExportSha256);
 
     public static JobLogLineDto ToDto(this JobLogChunk c) => new(c.Seq, c.Level, c.Text, c.At);
 

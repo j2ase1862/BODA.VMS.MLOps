@@ -181,7 +181,10 @@ public static class DatasetEndpoints
             DatasetSnapshotService snapshots, CancellationToken ct) =>
         {
             var (stream, dv) = await snapshots.OpenExportAsync(id, format, ct);
-            response.Headers["X-Content-Sha256"] = dv.ManifestHash;
+            // 받는 쪽이 대조하는 값은 zip 바이트의 해시다. ManifestHash 는 내용의 신원이라
+            // 여기 실으면 스냅샷에서 항상 어긋난다 — 같은 내용이라도 zip 은 구울 때마다 바이트가 다르다.
+            // ETag 는 그대로 ManifestHash 다: 같은 내용이면 다시 받을 필요가 없다는 뜻이라 그게 맞다.
+            if (!string.IsNullOrEmpty(dv.ExportSha256)) response.Headers["X-Content-Sha256"] = dv.ExportSha256;
             return Results.File(stream, "application/zip",
                 $"{Core.Export.DatasetExportWriter.SafeSegment(dv.Name)}-{dv.ManifestHash[..12]}.zip",
                 enableRangeProcessing: true, entityTag: new EntityTagHeaderValue($"\"{dv.ManifestHash}\""));
