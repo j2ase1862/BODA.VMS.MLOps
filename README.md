@@ -284,7 +284,7 @@ Queued → Assigned → Preparing → Running → Exporting → Uploading → Su
 | `POST /api/sam/predict` | 클릭 점들 → 크기가 다른 폴리곤 후보들 |
 | `POST /api/images/line-ng` | 라인 PC 의 NG 이미지 수집 (출처·라인 고정) |
 | `POST /api/datasets/{id}/prefill` | 후보 모델의 예측·불확실도로 초기 라벨 채우기 |
-| `POST /api/line-clients` | 라인 PC 서비스 계정 발급 (Admin) |
+| `POST /api/line-clients` | 라인 PC 서비스 계정 발급 (Admin) · 화면은 /line-clients |
 | SignalR `/hubs/models`, `/hubs/training` | 버전·바인딩 변경, 진행률·로그 중계 |
 
 오류는 항상 `{"code": "...", "message": "...", "details": [...]}` 형태입니다.
@@ -310,14 +310,12 @@ SAM 은 마스크에서 폴리곤을 뽑는 순수 부분(좌표 규약·윤곽 
 
 굵은 것부터 적었습니다. 각 항목 뒤는 지금 어디까지 있는지입니다.
 
-**VMS 리포 연동 — 남은 것은 WPF 도구 버튼뿐입니다.** 모델이 라인으로 내려가는 길은 이어졌습니다.
+**VMS 리포 연동 — 남은 것은 WPF 학습 도구 버튼뿐입니다.** 모델이 라인으로 내려가는 길은 이어졌습니다.
 VMS 리포의 `feature/mlops-model-reference` 브랜치에 있습니다 (아직 푸시하지 않았습니다).
 레시피가 `model://{modelId}@{version|stage}` 로 모델을 가리키고, 라인 PC 가 라인 토큰으로 참조를 풀어
 아티팩트를 해시 이름의 로컬 캐시에 받습니다. 검사 경로는 네트워크를 쓰지 않고 캐시만 봅니다.
 VisionSetup 의 도구 설정에는 [레지스트리…] 버튼이 붙었습니다.
 남은 것은 WPF 학습 도구의 "레지스트리에 업로드"·"웹 데이터셋 내려받기" 버튼입니다.
-
-**라인 계정 관리 화면.** 발급·재발급·비활성 API 는 있지만 화면이 없어 지금은 Swagger 로 발급해야 합니다.
 
 **Phase 5 — 모니터링·재학습 루프.** 생산 이력의 modelVersionId 연동, 모델별 NG 율·드리프트 경고,
 재학습 제안, 파이프라인 템플릿. 전부 없습니다.

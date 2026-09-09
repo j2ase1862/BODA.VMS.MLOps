@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Datasets;
+using BODA.VMS.MLOps.Contracts.Lines;
 using BODA.VMS.MLOps.Contracts.Models;
 using BODA.VMS.MLOps.Contracts.Pretrained;
 using BODA.VMS.MLOps.Contracts.Training;
@@ -189,6 +190,27 @@ public sealed class MlopsApi(HttpClient http)
 
     public Task<NextImageDto> NextToLabelAsync(Guid datasetId, Guid? after) =>
         GetAsync<NextImageDto>($"/api/datasets/{datasetId}/next-to-label{(after is null ? "" : $"?after={after}")}");
+
+    // ───────────── 라인 PC 서비스 계정 ─────────────
+
+    public Task<List<LineClientDto>> LineClientsAsync() => GetAsync<List<LineClientDto>>("/api/line-clients");
+
+    public Task<CreateLineClientResponse> CreateLineClientAsync(string name, string lineId) =>
+        PostAsync<CreateLineClientRequest, CreateLineClientResponse>("/api/line-clients",
+            new CreateLineClientRequest(name, lineId));
+
+    public Task<CreateLineClientResponse> RotateLineTokenAsync(Guid id) =>
+        PostAsync<object?, CreateLineClientResponse>($"/api/line-clients/{id}/rotate-token", null);
+
+    public Task<LineClientDto> DisableLineClientAsync(Guid id, string? reason) =>
+        PostAsync<DisableLineClientRequest, LineClientDto>($"/api/line-clients/{id}/disable",
+            new DisableLineClientRequest(reason));
+
+    public Task<LineClientDto> EnableLineClientAsync(Guid id) =>
+        PostAsync<object?, LineClientDto>($"/api/line-clients/{id}/enable", null);
+
+    public Task DeleteLineClientAsync(Guid id) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/line-clients/{id}"));
 
     // ───────────── SAM 보조 라벨링 ─────────────
 

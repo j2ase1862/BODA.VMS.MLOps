@@ -1,0 +1,306 @@
+@page "/line-clients"
+@attribute [Authorize(Roles = "Engineer,Admin")]
+@using BODA.VMS.MLOps.Contracts.Lines
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>라인 PC · MLOps</PageTitle>
+
+<PageHeader Eyebrow="DEPLOYMENT" Title="라인 PC">
+    <Lead>
+        라인 PC 는 사람이 아니라 로그인 화면을 거칠 수 없어 토큰으로 붙습니다.
+        이 토큰으로 하는 일은 셋뿐입니다 — 모델 참조 해석, 아티팩트 내려받기, NG 사진 올리기.
+    </Lead>
+    <Actions>
+        <AuthorizeView Roles="Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenCreate">라인 PC 등록</MudButton>
+        </AuthorizeView>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_clients.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.PrecisionManufacturing" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">등록된 라인 PC 가 없습니다.</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
+            라인마다 하나씩 등록해 토큰을 받은 뒤, 그 PC 의 설정 마법사에 넣으세요.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Elevation="1">
+        <MudTable Items="@_clients" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>이름</MudTh>
+                <MudTh>라인</MudTh>
+                <MudTh>상태</MudTh>
+                <MudTh>마지막 접속</MudTh>
+                <MudTh>발급</MudTh>
+                <MudTh Style="width:1%"></MudTh>
+            </HeaderContent>
+            <RowTemplate Context="line">
+                <MudTd DataLabel="이름">@line.Name</MudTd>
+                <MudTd DataLabel="라인"><span class="mono">@line.LineId</span></MudTd>
+                <MudTd DataLabel="상태">
+                    @if (line.Disabled)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error">
+                            @(line.DisabledReason is { Length: > 0 } r ? $"중지 · {r}" : "중지")
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">사용 중</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="마지막 접속">
+                    @if (line.LastSeenAt is { } seen)
+                    {
+                        <span title="@seen.ToLocalTime().ToString("yyyy-MM-dd HH:mm")">@Display.Ago(seen)</span>
+                    }
+                    else
+                    {
+                        <span class="mud-text-secondary">한 번도 붙지 않음</span>
+                    }
+                </MudTd>
+                <MudTd DataLabel="발급">
+                    <span class="mud-text-secondary">@line.CreatedBy · @line.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</span>
+                </MudTd>
+                <MudTd>
+                    <AuthorizeView Roles="Admin">
+                        <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small" aria-label="작업">
+                            <MudMenuItem OnClick="@(() => OpenRotate(line))">토큰 재발급</MudMenuItem>
+                            @if (line.Disabled)
+                            {
+                                <MudMenuItem OnClick="@(() => EnableAsync(line))">다시 사용</MudMenuItem>
+                            }
+                            else
+                            {
+                                <MudMenuItem OnClick="@(() => OpenDisable(line))">중지</MudMenuItem>
+                            }
+                            <MudMenuItem OnClick="@(() => OpenDelete(line))">삭제</MudMenuItem>
+                        </MudMenu>
+                    </AuthorizeView>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+}
+
+@* ───────────── 등록 · 재발급 ───────────── *@
+<MudDialog @bind-Visible="_issueOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">@(_rotating is null ? "라인 PC 등록" : $"{_rotating.Name} 토큰 재발급")</MudText></TitleContent>
+    <DialogContent>
+        @if (_issued is null)
+        {
+            @if (_rotating is null)
+            {
+                <MudTextField @bind-Value="_newName" Label="이름" Immediate="true" HelperText="예: 라인A 1호기" />
+                <MudTextField @bind-Value="_newLineId" Label="라인 ID" Immediate="true" Class="mt-3"
+                              HelperText="올라오는 NG 사진과 감사 기록에 이 값이 붙습니다. 예: LINE-A" />
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Warning">
+                    재발급하면 지금 그 PC 가 쓰는 토큰은 즉시 못 쓰게 됩니다. 새 토큰을 그 PC 에 넣어야 다시 붙습니다.
+                </MudAlert>
+            }
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Success">
+                <MudText Typo="Typo.subtitle2">토큰은 지금 한 번만 보입니다</MudText>
+                <MudText Typo="Typo.body2" Class="mono mt-2" style="word-break:break-all">@_issued.Token</MudText>
+            </MudAlert>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-3 d-block">
+                라인 PC 의 설정 마법사 2단계 고급 설정에 아래 두 값을 넣습니다.
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mono mt-1" style="word-break:break-all">
+                MLOps 서버 주소: @_origin<br />
+                MLOps 라인 토큰: @_issued.Token
+            </MudText>
+        }
+        @if (_dialogError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_dialogError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseIssue">닫기</MudButton>
+        @if (_issued is null)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_busy || !CanIssue)"
+                       OnClick="IssueAsync">@(_rotating is null ? "발급" : "재발급")</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@* ───────────── 중지 ───────────── *@
+<MudDialog @bind-Visible="_disableOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">라인 PC 중지</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+            중지하면 그 PC 는 인증 단계에서 막힙니다. 모델을 받지도, 사진을 올리지도 못합니다.
+            이미 캐시에 있는 모델로 검사는 계속 돕니다.
+        </MudText>
+        <MudTextField @bind-Value="_disableReason" Label="이유" Immediate="true" HelperText="목록에 함께 보입니다" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _disableOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" Disabled="@_busy" OnClick="DisableAsync">중지</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@* ───────────── 삭제 ───────────── *@
+<MudDialog @bind-Visible="_deleteOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">라인 PC 삭제</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2">
+            @(_target?.Name) 계정을 지웁니다. 토큰은 즉시 못 쓰게 되고 되돌릴 수 없습니다.
+            잠시 끊을 것이라면 삭제 대신 중지를 쓰세요.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _deleteOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" Disabled="@_busy" OnClick="DeleteAsync">삭제</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<LineClientDto> _clients = [];
+    private bool _loading = true, _busy;
+    private string? _error, _dialogError;
+    private string _origin = "";
+
+    private bool _issueOpen, _disableOpen, _deleteOpen;
+    private string _newName = "", _newLineId = "", _disableReason = "";
+    private LineClientDto? _rotating, _target;
+    private CreateLineClientResponse? _issued;
+
+    private bool CanIssue => _rotating is not null
+        || (!string.IsNullOrWhiteSpace(_newName) && !string.IsNullOrWhiteSpace(_newLineId));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _origin = Nav.BaseUri.TrimEnd('/');
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _clients = await Api.LineClientsAsync();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private void OpenCreate()
+    {
+        _rotating = null;
+        _issued = null;
+        _dialogError = null;
+        _newName = _newLineId = "";
+        _issueOpen = true;
+    }
+
+    private void OpenRotate(LineClientDto client)
+    {
+        _rotating = client;
+        _issued = null;
+        _dialogError = null;
+        _issueOpen = true;
+    }
+
+    private async Task IssueAsync()
+    {
+        _busy = true;
+        try
+        {
+            _issued = _rotating is null
+                ? await Api.CreateLineClientAsync(_newName.Trim(), _newLineId.Trim())
+                : await Api.RotateLineTokenAsync(_rotating.Id);
+            _dialogError = null;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { _dialogError = ex.Describe(); }
+        finally { _busy = false; }
+    }
+
+    private void CloseIssue()
+    {
+        _issueOpen = false;
+        _issued = null;
+        _rotating = null;
+    }
+
+    private void OpenDisable(LineClientDto client)
+    {
+        _target = client;
+        _disableReason = "";
+        _disableOpen = true;
+    }
+
+    private async Task DisableAsync()
+    {
+        if (_target is null) return;
+        _busy = true;
+        try
+        {
+            await Api.DisableLineClientAsync(_target.Id, string.IsNullOrWhiteSpace(_disableReason) ? null : _disableReason.Trim());
+            _disableOpen = false;
+            Snackbar.Add($"{_target.Name} 중지했습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task EnableAsync(LineClientDto client)
+    {
+        try
+        {
+            await Api.EnableLineClientAsync(client.Id);
+            Snackbar.Add($"{client.Name} 다시 사용합니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private void OpenDelete(LineClientDto client)
+    {
+        _target = client;
+        _deleteOpen = true;
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_target is null) return;
+        _busy = true;
+        try
+        {
+            await Api.DeleteLineClientAsync(_target.Id);
+            _deleteOpen = false;
+            Snackbar.Add($"{_target.Name} 삭제했습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+}
