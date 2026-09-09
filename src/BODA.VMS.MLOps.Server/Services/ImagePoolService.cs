@@ -84,6 +84,10 @@ public sealed class ImagePoolService(
                 InspectionId = inspectionId,
                 TagsJson = Mapping.ToJson(NormalizeTags(tags)),
                 PerceptualHash = processed.PerceptualHash,
+                Sharpness = processed.Quality.Sharpness,
+                MeanLuma = processed.Quality.MeanLuma,
+                ClippedDarkRatio = processed.Quality.ClippedDarkRatio,
+                ClippedBrightRatio = processed.Quality.ClippedBrightRatio,
                 CapturedAt = capturedAt,
                 CreatedBy = user.Name,
                 CreatedAt = Now,
@@ -154,7 +158,13 @@ public sealed class ImagePoolService(
 
     public sealed record ImageQuery(
         Guid? DatasetId, bool? InDataset, ImageSource? Source, string? LineId, string? Tag,
-        string? Search, LabelStatus? LabelStatus, int Skip, int Take);
+        string? Search, LabelStatus? LabelStatus, int Skip, int Take,
+        /// <summary>이 값보다 흐린 것만. 지표가 없는 옛 이미지는 빠진다 (흐린지 알 수 없어서다).</summary>
+        double? MaxSharpness = null,
+        /// <summary>날아간 화소가 이 비율을 넘는 것만. 0~1.</summary>
+        double? MinClippedRatio = null,
+        /// <summary>흐린 것부터 본다. 사람이 눈으로 확인할 후보를 앞으로 끌어오는 용도.</summary>
+        bool BlurriestFirst = false);
 
     public async Task<(List<Image> Items, int Total)> ListAsync(ImageQuery q, CancellationToken ct)
     {
@@ -183,8 +193,22 @@ public sealed class ImagePoolService(
             }
         }
 
+        // 품질로 좁힌다. 지표가 없는 이미지(이 값이 생기기 전에 올라온 것)는 빼는데,
+        // 넣으면 "흐린 것 보기" 에 멀쩡한 옛 사진이 섞여 사람이 그것부터 지우게 된다.
+        if (q.MaxSharpness is { } maxSharp)
+            query = query.Where(i => i.Sharpness != null && i.Sharpness <= maxSharp);
+        if (q.MinClippedRatio is { } minClipped)
+            query = query.Where(i => i.ClippedDarkRatio != null && i.ClippedBrightRatio != null
+                                     && i.ClippedDarkRatio + i.ClippedBrightRatio >= minClipped);
+
         var total = await query.CountAsync(ct);
-        var items = await query.OrderByDescending(i => i.CreatedAt)
+
+        // 흐린 것부터 볼 때도 지표가 없는 것은 뒤로 보낸다 — null 이 0 으로 정렬되면 맨 앞을 차지한다.
+        var ordered = q.BlurriestFirst
+            ? query.OrderBy(i => i.Sharpness == null).ThenBy(i => i.Sharpness).ThenByDescending(i => i.CreatedAt)
+            : query.OrderByDescending(i => i.CreatedAt);
+
+        var items = await ordered
             .Skip(Math.Max(0, q.Skip)).Take(Math.Clamp(q.Take, 1, 500)).ToListAsync(ct);
 
         if (!string.IsNullOrWhiteSpace(q.Tag))

@@ -17,14 +17,19 @@ public static class ImageEndpoints
 
         g.MapGet("/", async (Guid? datasetId, bool? inDataset, string? source, string? lineId, string? tag,
             string? search, string? labelStatus, int? skip, int? take,
+            double? maxSharpness, double? minClippedRatio, bool? blurriestFirst,
             ImagePoolService pool, DatasetQueryService query, CancellationToken ct) =>
         {
+            if (minClippedRatio is { } clipped && (clipped < 0 || clipped > 1))
+                throw ApiException.BadRequest(ErrorCodes.Validation, "minClippedRatio 는 0~1 이어야 합니다.");
+
             var q = new ImagePoolService.ImageQuery(
                 datasetId, inDataset,
                 EnumBinding.ParseOptional<ImageSource>(source, "source"),
                 lineId, tag, search,
                 EnumBinding.ParseOptional<LabelStatus>(labelStatus, "labelStatus"),
-                skip ?? 0, take ?? 60);
+                skip ?? 0, take ?? 60,
+                maxSharpness, minClippedRatio, blurriestFirst ?? false);
             var (items, total) = await pool.ListAsync(q, ct);
             var dtos = await query.DecorateAsync(items, datasetId, ct);
             return Results.Ok(new ImagePageDto(dtos, total, q.Skip, q.Take));

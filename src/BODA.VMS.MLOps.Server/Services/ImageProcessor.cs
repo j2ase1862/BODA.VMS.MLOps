@@ -1,4 +1,5 @@
 using BODA.VMS.MLOps.Core.Hashing;
+using BODA.VMS.MLOps.Core.Imaging;
 using SkiaSharp;
 
 namespace BODA.VMS.MLOps.Server.Services;
@@ -10,7 +11,9 @@ public sealed record ProcessedImage(
     string PerceptualHash,
     byte[] Thumbnail,
     /// <summary>캔버스용 축소본. 원본이 이미 작으면 null 이고, 그때는 원본을 그대로 쓴다.</summary>
-    byte[]? View);
+    byte[]? View,
+    /// <summary>흐림·노출 지표. 사람이 걸러 볼 후보를 좁히는 데 쓴다 (자동으로 버리지 않는다).</summary>
+    ImageQualityMetrics Quality);
 
 /// <summary>
 /// 이미지 디코딩·축소본·지각 해시 (개발 문서 §5.2·§5.4).
@@ -62,7 +65,8 @@ public sealed class ImageProcessor(ILogger<ImageProcessor> logger)
             : null;
 
         var phash = PerceptualHash.ToHex(ComputeDHash(bitmap));
-        return new ProcessedImage(info.Width, info.Height, phash, thumbnail, view);
+        var quality = MeasureQuality(bitmap);
+        return new ProcessedImage(info.Width, info.Height, phash, thumbnail, view, quality);
     }
 
     /// <summary>
@@ -110,6 +114,30 @@ public sealed class ImageProcessor(ILogger<ImageProcessor> logger)
         using var image = SKImage.FromBitmap(resized);
         using var data = image.Encode(SKEncodedImageFormat.Jpeg, quality);
         return data?.ToArray();
+    }
+
+    /// <summary>
+    /// 흐림·노출을 잰다. 이미 디코딩해 둔 축소본(<see cref="ViewMaxEdge"/> 이하)에서 재고,
+    /// 그 위에서 다시 줄이지 않는다 — 줄이면 흐림이 사라져 흐린 사진도 또렷하게 나온다.
+    ///
+    /// <para>
+    /// 그래서 <see cref="ImageQualityMetrics.Sharpness"/> 는 <b>이 축소본 기준</b> 값이다.
+    /// 원본 해상도가 서로 다른 사진끼리 이 값을 견주면 안 된다.
+    /// </para>
+    /// </summary>
+    private static ImageQualityMetrics MeasureQuality(SKBitmap bitmap)
+    {
+        int w = bitmap.Width, h = bitmap.Height;
+        if (w <= 0 || h <= 0) return default;
+
+        var gray = new byte[w * h];
+        for (int y = 0, i = 0; y < h; y++)
+            for (int x = 0; x < w; x++, i++)
+            {
+                var c = bitmap.GetPixel(x, y);
+                gray[i] = (byte)((c.Red * 299 + c.Green * 587 + c.Blue * 114) / 1000);
+            }
+        return ImageQuality.Measure(gray, w, h);
     }
 
     /// <summary>9×8 회색조로 줄여 dHash 를 만든다. 계산 자체는 Core 가 한다.</summary>

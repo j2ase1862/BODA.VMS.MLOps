@@ -44,6 +44,22 @@ public class Image
     public string TagsJson { get; set; } = "[]";
     /// <summary>거의 같은 사진을 찾기 위한 dHash (16진 16자리)</summary>
     public string? PerceptualHash { get; set; }
+
+    /// <summary>
+    /// 라플라시안 분산 — 클수록 또렷하다. 축소본(긴 변 2048 이하) 기준이라
+    /// <b>절대값에 뜻이 없다</b>. 같은 라인·같은 배율의 사진들 사이에서 상대적으로 낮은 것을 찾는 용도다.
+    /// 옛 이미지는 null (이 값이 생기기 전에 올라온 것).
+    /// </summary>
+    public double? Sharpness { get; set; }
+
+    /// <summary>평균 밝기 0~255.</summary>
+    public double? MeanLuma { get; set; }
+
+    /// <summary>거의 검은 화소의 비율 0~1. 노출 부족이면 커진다.</summary>
+    public double? ClippedDarkRatio { get; set; }
+
+    /// <summary>거의 흰 화소의 비율 0~1. 노출 과다면 커진다.</summary>
+    public double? ClippedBrightRatio { get; set; }
     public DateTime? CapturedAt { get; set; }
     public string CreatedBy { get; set; } = "";
     public DateTime CreatedAt { get; set; }

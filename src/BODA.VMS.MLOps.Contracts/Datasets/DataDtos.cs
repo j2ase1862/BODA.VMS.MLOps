@@ -29,7 +29,31 @@ public sealed record ImageDto(
     /// 격자에서 썸네일 위에 라벨을 겹쳐 그리기 위한 것. 데이터셋 범위 조회에서만 채워진다.
     /// 좌표가 정규화라 썸네일 크기에 그대로 얹을 수 있다.
     /// </summary>
-    IReadOnlyList<AnnotationDto>? Annotations = null);
+    IReadOnlyList<AnnotationDto>? Annotations = null,
+    /// <summary>
+    /// 흐림·노출 지표. 사람이 걸러 볼 후보를 좁히는 데 쓴다 — 이 값으로 자동으로 버리지 않는다.
+    /// 이 값이 생기기 전에 올라온 이미지는 null 이다.
+    /// </summary>
+    ImageQualityDto? Quality = null);
+
+/// <summary>
+/// 이미지 한 장의 품질 지표.
+///
+/// <para>
+/// <see cref="Sharpness"/> 는 축소본(긴 변 2048 이하) 기준 라플라시안 분산이라 <b>절대값에 뜻이 없다</b>.
+/// 무늬가 촘촘한 부품은 흐려도 크고, 매끈한 도장면은 또렷해도 작다. 같은 라인·같은 배율의
+/// 사진들 사이에서 상대적으로 낮은 것을 찾는 데만 쓴다.
+/// </para>
+/// </summary>
+public sealed record ImageQualityDto(
+    double Sharpness,
+    double MeanLuma,
+    double ClippedDarkRatio,
+    double ClippedBrightRatio)
+{
+    /// <summary>날아간 화소 비율 (어두운 쪽 + 밝은 쪽)</summary>
+    public double ClippedRatio => ClippedDarkRatio + ClippedBrightRatio;
+}
 
 public sealed record ImagePageDto(IReadOnlyList<ImageDto> Items, int Total, int Skip, int Take);
 

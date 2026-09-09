@@ -21,7 +21,13 @@ public static class DataMapping
             i.Source, i.LineId, i.InspectionId, Mapping.Json(i.TagsJson, Array.Empty<string>()), i.PerceptualHash,
             i.CapturedAt, i.CreatedBy, i.CreatedAt,
             ImageUrl(i.Id, "thumb"), ImageUrl(i.Id, "view"), ImageUrl(i.Id, "original"),
-            labelStatus, split, annotationCount, lockedBy, annotations);
+            labelStatus, split, annotationCount, lockedBy, annotations,
+            // 넷 중 하나라도 없으면 이 값이 생기기 전에 올라온 이미지다. 0 으로 채우면
+            // "가장 흐린 사진" 으로 보여 멀쩡한 옛 사진이 맨 앞에 온다.
+            i.Sharpness is { } sharp && i.MeanLuma is { } luma
+                && i.ClippedDarkRatio is { } dark && i.ClippedBrightRatio is { } bright
+                ? new ImageQualityDto(sharp, luma, dark, bright)
+                : null);
 
     public static string ImageUrl(Guid imageId, string variant) => $"/api/images/{imageId}/{variant}";
 

@@ -3,6 +3,7 @@ using System;
 using BODA.VMS.MLOps.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace BODA.VMS.MLOps.Server.Data.Migrations
 {
     [DbContext(typeof(MlopsDbContext))]
-    partial class MlopsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909044019_AddImageQualityMetrics")]
+    partial class AddImageQualityMetrics
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.31");
