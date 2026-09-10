@@ -146,6 +146,17 @@ else
                 }
             </MudPaper>
 
+            @if (_curvePng is not null)
+            {
+                <MudPaper Class="pa-4 mb-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">학습 곡선</MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        에폭마다 스크립트가 다시 그립니다. 손실은 왼쪽 축, mAP50 은 오른쪽 축, 점선은 best 에폭입니다.
+                    </MudText>
+                    <img src="@_curvePng" alt="학습 곡선" style="max-width:100%;height:auto;display:block;margin-top:8px" />
+                </MudPaper>
+            }
+
             @if (_artifacts.Count > 0)
             {
                 <MudPaper Class="pa-4 mb-4" Elevation="1">
@@ -206,6 +217,7 @@ else
     private TrainingJobDto? _job;
     private List<JobLogLineDto> _logs = [];
     private List<JobArtifactDto> _artifacts = [];
+    private string? _curvePng;   // data: URL — <img> 는 Authorization 헤더를 못 붙이므로 Bearer 로 받아 인라인으로 넣는다
     private string? _error;
     private bool _busy, _follow = true, _hubConnected;
     private long _lastSeq;
@@ -237,9 +249,22 @@ else
                 _lastSeq = page.NextSeq;
             }
             _artifacts = await Api.JobArtifactsAsync(Id);
+            await LoadCurveAsync();
             _error = null;
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    /// <summary>curve 아티팩트가 있으면 받아서 data: URL 로 둔다. 실패해도 화면은 그대로 (곡선 칸만 빠진다).</summary>
+    private async Task LoadCurveAsync()
+    {
+        if (_artifacts.All(a => a.Kind != JobArtifactKind.Curve)) { _curvePng = null; return; }
+        try
+        {
+            var bytes = await Api.JobArtifactBytesAsync(Id, JobArtifactKind.Curve);
+            _curvePng = bytes is null ? null : "data:image/png;base64," + Convert.ToBase64String(bytes);
+        }
+        catch (MlopsApiException) { _curvePng = null; }
     }
 
     private async Task StartWatchAsync()
@@ -262,6 +287,7 @@ else
                 {
                     _job = job;
                     _artifacts = await SafeArtifactsAsync();
+                    await LoadCurveAsync();
                     StateHasChanged();
                 }));
             _hubConnected = true;
