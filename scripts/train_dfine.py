@@ -293,6 +293,71 @@ def _patch_double_trig(model):
     return patched
 
 
+def write_history_artifacts(output, history, epochs, best_epoch):
+    """에폭별 기록을 metrics.json(요약 숫자 + history) 과 curves.png(학습 곡선) 으로 남긴다.
+
+    MLOps 워커가 output 폴더에서 이 두 파일을 찾아 아티팩트로 올린다(metrics·curve). 서버는 metrics.json 의
+    최상위 숫자만 ModelVersion.Metrics 로 읽으므로 요약은 평평하게 두고, 에폭별 기록은 history 아래에 둔다.
+    매 에폭마다 다시 쓴다 — 취소되거나 죽어도 그때까지의 곡선이 남는다. 그림은 matplotlib 이 없으면 건너뛴다.
+    """
+    if not history:
+        return
+    last = history[-1]
+    best = next((h for h in history if h["epoch"] == best_epoch), last)
+    summary = {
+        "epochs": epochs,
+        "epochs_done": last["epoch"],
+        "best_epoch": best_epoch,
+        "train_loss": last["train_loss"],
+        "val_loss": last["val_loss"],
+        "best_val_loss": best["val_loss"],
+        "elapsed_sec": last["elapsed_sec"],
+    }
+    if last.get("map50") is not None:
+        summary["map50"] = last["map50"]
+        summary["best_map50"] = max(h["map50"] for h in history if h.get("map50") is not None)
+    summary["history"] = history
+    tmp = os.path.join(output, "metrics.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, os.path.join(output, "metrics.json"))
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as ex:  # noqa: BLE001
+        emit("WARN", f"matplotlib 없음 — curves.png 생략 ({ex})")
+        return
+    ep = [h["epoch"] for h in history]
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=110)
+    ax.plot(ep, [h["train_loss"] for h in history], marker="o", ms=3, label="train loss")
+    ax.plot(ep, [h["val_loss"] for h in history], marker="o", ms=3, label="val loss")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss")
+    ax.grid(True, alpha=0.3)
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    handles, labels = ax.get_legend_handles_labels()
+    if any(h.get("map50") is not None for h in history):
+        ax2 = ax.twinx()
+        ax2.plot(ep, [h.get("map50") if h.get("map50") is not None else float("nan") for h in history],
+                 color="tab:green", marker="s", ms=3, label="val mAP50")
+        ax2.set_ylabel("mAP50")
+        ax2.set_ylim(0, 1)
+        h2, l2 = ax2.get_legend_handles_labels()
+        handles += h2
+        labels += l2
+    ax.axvline(best_epoch, color="gray", ls="--", lw=0.8)
+    ax.legend(handles, labels, loc="best", fontsize=8)
+    ax.set_title(f"D-FINE training — best epoch {best_epoch}/{epochs}")
+    fig.tight_layout()
+    tmp_png = os.path.join(output, "curves.png.tmp")
+    fig.savefig(tmp_png, format="png")
+    plt.close(fig)
+    os.replace(tmp_png, os.path.join(output, "curves.png"))
+
+
 def export_onnx(model, names, imgsz, out_path, pretrained, device):
     import torch
     import torch.nn as nn
@@ -515,6 +580,8 @@ def main():
 
     best_dir = os.path.join(args.output, "best_model")
     best_score = None
+    best_epoch = 0
+    history = []
     step = 0
     emit("PROGRESS", "0")
     t0 = time.time()
@@ -558,11 +625,19 @@ def main():
         score = map50 if map50 is not None else -val_loss
         if best_score is None or score > best_score:
             best_score = score
+            best_epoch = epoch
             ema.module.save_pretrained(best_dir)
             with open(os.path.join(best_dir, "vms_train_info.json"), "w", encoding="utf-8") as f:
                 json.dump({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "map50": map50,
                            "names": names, "imgsz": args.imgsz, "pretrained": pretrained}, f,
                           ensure_ascii=False, indent=2)
+
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "map50": map50,
+                        "lr": float(optimizer.param_groups[0]["lr"]), "elapsed_sec": round(time.time() - t0, 1)})
+        try:
+            write_history_artifacts(args.output, history, args.epochs, best_epoch)
+        except Exception as ex:  # noqa: BLE001
+            emit("WARN", f"학습 곡선 기록 실패 (계속 진행): {ex}")
 
     if args.export_onnx and os.path.isdir(best_dir):
         emit("PROGRESS", "95")

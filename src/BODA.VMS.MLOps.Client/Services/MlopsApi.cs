@@ -94,6 +94,17 @@ public sealed class MlopsApi(HttpClient http)
     public Task<JobLogPage> JobLogsAsync(Guid id, long from = 0, int take = 500) => GetAsync<JobLogPage>($"/api/training-jobs/{id}/logs?from={from}&take={take}");
     public Task<List<JobArtifactDto>> JobArtifactsAsync(Guid id) => GetAsync<List<JobArtifactDto>>($"/api/training-jobs/{id}/artifacts");
 
+    /// <summary>아티팩트 본문 (Bearer 로 받아 화면에 인라인으로 보일 때 — &lt;img src&gt; 는 Authorization 헤더를 못 붙인다). 없으면 null.</summary>
+    public async Task<byte[]?> JobArtifactBytesAsync(Guid id, JobArtifactKind kind)
+    {
+        // 라우트의 열거형은 응답 JSON 과 같은 camelCase 다 (EnumBinding.Parse)
+        var name = char.ToLowerInvariant(kind.ToString()[0]) + kind.ToString()[1..];
+        using var res = await http.GetAsync($"/api/training-jobs/{id}/artifacts/{name}");
+        if (res.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!res.IsSuccessStatusCode) throw await ToExceptionAsync(res);
+        return await res.Content.ReadAsByteArrayAsync();
+    }
+
     public sealed record HyperparamSpecDto(string Key, string Type, double? Min, double? Max, string[]? Choices, string? Default);
     public Task<List<HyperparamSpecDto>> HyperparamsAsync(TrainingScript script) => GetAsync<List<HyperparamSpecDto>>($"/api/training/hyperparams/{Camel(script)}");
 
