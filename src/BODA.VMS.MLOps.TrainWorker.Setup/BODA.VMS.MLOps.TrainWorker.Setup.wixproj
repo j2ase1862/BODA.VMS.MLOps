@@ -1,0 +1,66 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+
+  <!--
+    학습 워커 설치 패키지 (Phase 3 §10, §12-5).
+      dotnet build src\BODA.VMS.MLOps.TrainWorker.Setup -c Release
+      → src\BODA.VMS.MLOps.TrainWorker.Setup\bin\Release\BODA-VMS-TrainWorker-<버전>.msi
+
+    빌드 순서: 워커를 self-contained win-x64 로 publish (GPU PC 에 .NET 런타임을 요구하지 않는다)
+    → publish 폴더를 통째로 수확 → 서비스 등록 + (선택) 설치 마법사에서 받은 서버 주소·토큰으로 configure.
+    publish 폴더는 매번 지우고 다시 만든다. 지난 빌드의 잔재가 MSI 에 섞이는 사고를 막기 위해서다.
+
+    오프라인 wheel 번들: scripts\make-wheel-bundle.ps1 이 WheelBundle\ 에 *.whl 을 채워 두면
+    [설치 폴더]\wheels 로 함께 설치되고 configure 가 그 폴더를 pip 의 find-links 옵션으로 쓴다.
+    산출물 이름에 -offline 이 붙는다. 없으면 온라인 pip 설치(경고만).
+
+    솔루션(slnx)에는 넣지 않는다. 매 빌드마다 publish 가 도는 것을 피하기 위해서다.
+  -->
+  <PropertyGroup>
+    <Cultures>ko-KR</Cultures>
+    <!-- ProgramFiles64Folder 아래 컴포넌트는 64비트여야 한다 (ICE80) -->
+    <InstallerPlatform>x64</InstallerPlatform>
+    <BuildVersionFull Condition=" '$(Version)' != '' AND !$(Version.Contains('.')) ">$(Version).0.0.0</BuildVersionFull>
+    <BuildVersionFull Condition=" '$(Version)' != '' AND $(Version.Split('.').Length) == 2 ">$(Version).0.0</BuildVersionFull>
+    <BuildVersionFull Condition=" '$(Version)' != '' AND $(Version.Split('.').Length) == 3 ">$(Version).0</BuildVersionFull>
+    <BuildVersionFull Condition=" '$(BuildVersionFull)' == '' ">$(Version)</BuildVersionFull>
+    <DefineConstants>$(DefineConstants);BuildVersion=$(BuildVersionFull)</DefineConstants>
+
+    <WorkerProject>$(MSBuildProjectDirectory)\..\BODA.VMS.MLOps.TrainWorker\BODA.VMS.MLOps.TrainWorker.csproj</WorkerProject>
+    <!-- Root 는 끝 백슬래시 없이 (Exec 인자에서 백슬래시+따옴표가 이스케이프로 읽혀 경로가 깨진다), Dir 은 WiX 변수용으로 끝 백슬래시 포함 -->
+    <WorkerPublishRoot>$(MSBuildProjectDirectory)\obj\publish</WorkerPublishRoot>
+    <WorkerPublishDir>$(WorkerPublishRoot)\</WorkerPublishDir>
+    <DefineConstants>$(DefineConstants);PublishDir=$(WorkerPublishDir)</DefineConstants>
+
+    <WheelBundleDir>$(MSBuildProjectDirectory)\WheelBundle\</WheelBundleDir>
+    <HasWheelBundle Condition="Exists('$(WheelBundleDir)') AND '$([System.IO.Directory]::GetFiles($(WheelBundleDir), &quot;*.whl&quot;).Length)' != '0'">true</HasWheelBundle>
+    <DefineConstants Condition="'$(HasWheelBundle)' == 'true'">$(DefineConstants);WheelBundleDir=$(WheelBundleDir)</DefineConstants>
+
+    <OutputName>BODA-VMS-TrainWorker-$(Version)</OutputName>
+    <OutputName Condition="'$(HasWheelBundle)' == 'true'">BODA-VMS-TrainWorker-$(Version)-offline</OutputName>
+  </PropertyGroup>
+
+  <!-- 워커 publish. 이 프로젝트를 빌드하면 항상 다시 publish 한다 (증분 없음, 잔재 방지가 우선). -->
+  <Target Name="PublishWorker" BeforeTargets="CoreCompile">
+    <RemoveDir Directories="$(WorkerPublishRoot)" />
+    <Exec Command="dotnet publish &quot;$(WorkerProject)&quot; -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=none -o &quot;$(WorkerPublishRoot)&quot; --nologo" />
+    <Error Condition="!Exists('$(WorkerPublishDir)BODA.VMS.MLOps.TrainWorker.exe')" Text="워커 publish 산출물이 없습니다: $(WorkerPublishDir)" />
+  </Target>
+
+  <Target Name="WarnNoWheelBundle" BeforeTargets="CoreCompile" Condition="'$(HasWheelBundle)' != 'true'">
+    <Warning Text="WheelBundle 없음: 온라인 pip 설치 MSI. 폐쇄망 배포는 scripts\make-wheel-bundle.ps1 로 번들을 먼저 만드세요." />
+  </Target>
+
+  <!-- Cultures 지정 시 산출물이 bin\Release\ko-KR\ 로 내려간다 → 루트로 올린다 (VMS.MasterSetup 과 같은 계약). -->
+  <Target Name="FlattenCultureOutput" AfterTargets="Build">
+    <ItemGroup>
+      <CultureOutput Include="$(OutputPath)ko-KR\*.msi" />
+    </ItemGroup>
+    <Move SourceFiles="@(CultureOutput)" DestinationFolder="$(OutputPath)" Condition="'@(CultureOutput)' != ''" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+  </ItemGroup>
+
+</Project>

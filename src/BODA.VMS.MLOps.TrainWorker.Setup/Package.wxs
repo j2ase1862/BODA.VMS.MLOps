@@ -1,0 +1,154 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!--
+    BODA VMS Train Worker 설치 패키지 (Phase 3 §10).
+
+    설치하는 것: [Program Files]\BODA Vision AI\BODA VMS TrainWorker\ (self-contained 워커 + scripts\ + 선택 wheels\)
+                 Windows 서비스 BodaVmsTrainWorker (자동·지연 시작, LocalSystem — GPU 접근에 계정 제약이 없는 쪽을 기본으로 둔다)
+    설치하지 않는 것: 방화벽 예외 (워커는 서버로만 아웃바운드), Python (사전 요건 — 진단 결과만 보여 준다)
+    남기는 것: %ProgramData%\BODA VMS TrainWorker\ (worker.json·venv·캐시·로그) — 제거해도 지우지 않는다. 재설치가 곧 복구다.
+
+    연결 설정 경로 2가지 (같은 속성 공유):
+      · 설치 마법사 "워커 연결 설정" 화면 → SERVERURL·WORKERTOKEN·WORKERNAME·WORKERCPU
+      · 무인 설치: msiexec /i BODA-VMS-TrainWorker-x.y.z.msi /qn SERVERURL=http://server:5310 WORKERTOKEN=wk_…
+    둘 다 비우면 파일만 놓고 서비스는 시작하지 않는다 — 나중에 `BODA.VMS.MLOps.TrainWorker.exe configure` 뒤 서비스 시작.
+    업그레이드는 기존 worker.json 이 있으면 그대로 쓰고 서비스를 다시 시작한다.
+  -->
+  <Package Name="BODA VMS Train Worker"
+           Manufacturer="BODA Vision AI"
+           Version="$(var.BuildVersion)"
+           UpgradeCode="44357B90-CC53-43AC-A74A-61BFEEE7D415"
+           Codepage="949"
+           Language="1042"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="최신 버전이 이미 설치되어 있습니다." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Feature Id="Main" Title="BODA VMS Train Worker" Level="1">
+      <ComponentGroupRef Id="WorkerFiles" />
+      <ComponentRef Id="WorkerServiceComp" />
+      <ComponentRef Id="WorkerStartComp" />
+<?ifdef WheelBundleDir ?>
+      <ComponentGroupRef Id="WheelFiles" />
+<?endif?>
+    </Feature>
+
+    <!-- ── 연결 설정 속성 ── -->
+    <Property Id="SERVERURL" Value="http://localhost:5310" Secure="yes" />
+    <!-- Hidden: 상세 로그(/l*v)에 속성값이 찍히지 않게 한다. 그래도 로그를 밖에 내보냈다면 토큰을 재발급하라. -->
+    <Property Id="WORKERTOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="WORKERNAME" Secure="yes" />
+    <Property Id="WORKERCPU" Secure="yes" />
+    <Property Id="WORKERCPUARG" Secure="yes" />
+    <SetProperty Id="WORKERNAME" Value="[ComputerName]" After="AppSearch" Sequence="both" Condition="NOT WORKERNAME" />
+    <SetProperty Id="WORKERCPUARG" Value="--cpu" After="AppSearch" Sequence="both" Condition="WORKERCPU=1" />
+
+    <!-- 이미 설정된 PC 인가 (업그레이드·재설치): worker.json 이 있으면 속성 없이도 서비스를 시작한다 -->
+    <Property Id="WORKERCONFIGURED" Secure="yes">
+      <DirectorySearch Id="WorkerCfgDir" Path="[CommonAppDataFolder]BODA VMS TrainWorker" Depth="0">
+        <FileSearch Id="WorkerCfgFile" Name="worker.json" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Python 3.12 탐지 (PEP 514 레지스트리) — 막지는 않고 마법사 화면에 보여 주기만 한다.
+         워커는 서비스(LocalSystem)로 돌므로 사용자 PATH 를 보지 못한다. 워커 자체도 같은 레지스트리를 본다. -->
+    <Property Id="PYTHON312" Value="찾지 못함 - 워커를 시작하기 전에 Python 3.12 (64-bit) 를 설치하세요" Secure="yes">
+      <RegistrySearch Id="Py312Hklm" Root="HKLM" Key="Software\Python\PythonCore\3.12\InstallPath" Name="ExecutablePath" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="PYTHON312USER" Secure="yes">
+      <RegistrySearch Id="Py312Hkcu" Root="HKCU" Key="Software\Python\PythonCore\3.12\InstallPath" Name="ExecutablePath" Type="raw" />
+    </Property>
+    <SetProperty Id="PYTHON312" Value="[PYTHON312USER] (현재 사용자 전용 설치 - 서비스 계정에서도 읽을 수 있어야 합니다)" After="AppSearch" Sequence="both" Condition="PYTHON312USER AND NOT PYTHON312EXISTS" />
+    <Property Id="PYTHON312EXISTS" Secure="yes">
+      <RegistrySearch Id="Py312HklmExists" Root="HKLM" Key="Software\Python\PythonCore\3.12\InstallPath" Name="ExecutablePath" Type="raw" Bitness="always64" />
+    </Property>
+
+    <!-- ── configure: 마법사/무인 설치에서 받은 값으로 worker.json 을 쓴다 (토큰은 DPAPI LocalMachine 으로 보호) ──
+         deferred + Impersonate=no: ProgramData 쓰기와 DPAPI 범위가 서비스 계정(LocalSystem)과 같아야 한다. -->
+<?ifdef WheelBundleDir ?>
+    <Property Id="WHEELARG" Value="--wheels &quot;[INSTALLFOLDER]wheels&quot;" Secure="yes" />
+<?else?>
+    <Property Id="WHEELARG" Secure="yes" />
+<?endif?>
+    <CustomAction Id="ConfigureWorker"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]BODA.VMS.MLOps.TrainWorker.exe&quot; configure --server &quot;[SERVERURL]&quot; --token &quot;[WORKERTOKEN]&quot; --name &quot;[WORKERNAME]&quot; [WORKERCPUARG] [WHEELARG]"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="ConfigureWorker" After="InstallFiles" Condition="SERVERURL AND WORKERTOKEN AND NOT (REMOVE~=&quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+
+    <!-- ── UI ── -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="설치가 끝났습니다. 서버 주소와 토큰을 입력했다면 서비스 BodaVmsTrainWorker 가 시작되어 첫 실행 시 파이썬 환경(venv)을 준비합니다 - 온라인 설치는 수 GB 를 받으므로 수십 분이 걸릴 수 있습니다. 관리 화면 > 워커 에서 상태를 확인하세요. 로그: %ProgramData%\BODA VMS TrainWorker\logs" />
+    <UIRef Id="WixUI_WorkerInstall" />
+    <WixVariable Id="WixUIBannerBmp" Value="Resources\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="Resources\dialog.bmp" />
+
+    <Property Id="ARPNOREPAIR" Value="1" />
+  </Package>
+
+  <!-- ── 디렉터리 ── -->
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="CompanyFolder" Name="BODA Vision AI">
+        <Directory Id="INSTALLFOLDER" Name="BODA VMS TrainWorker">
+          <Directory Id="WheelsFolder" Name="wheels" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- ── 워커 파일 (publish 폴더 통째로, exe 는 서비스 컴포넌트가 가진다) ── -->
+  <Fragment>
+    <ComponentGroup Id="WorkerFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)BODA.VMS.MLOps.TrainWorker.exe" />
+        <Exclude Files="$(var.PublishDir)appsettings.Development.json" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="WorkerServiceComp" Directory="INSTALLFOLDER" Guid="7F9E7BAA-8EF7-44E5-916F-09AE7AE46728">
+      <File Id="WorkerExe" Source="$(var.PublishDir)BODA.VMS.MLOps.TrainWorker.exe" KeyPath="yes" />
+      <!-- 계정을 지정하지 않으면 LocalSystem. 세션 0 에서 CUDA 가 막히는 드라이버/정책이면 서비스 속성에서 지정 계정으로 바꾼다 (설치 가이드 §문제 해결). -->
+      <ServiceInstall Id="WorkerSvcInstall"
+                      Name="BodaVmsTrainWorker"
+                      DisplayName="BODA VMS Train Worker"
+                      Description="BODA VMS MLOps 학습 워커 - 관리 서버에서 학습 작업을 받아 이 PC 의 GPU 로 학습하고 결과 모델을 올립니다."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Vital="yes">
+        <ServiceConfig DelayedAutoStart="yes" OnInstall="yes" OnReinstall="yes" />
+        <util:ServiceConfig FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="restart"
+                            RestartServiceDelayInSeconds="30"
+                            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="WorkerSvcControl" Name="BodaVmsTrainWorker" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <!-- 서비스 시작은 설정이 있을 때만. 토큰 없이 시작하면 워커가 곧바로 종료해 설치가 "서비스 시작 실패" 로 끝난다.
+         Wait=no: venv 부트스트랩이 길어도 설치는 기다리지 않는다 (SCM 에는 즉시 Running 으로 보고된다). -->
+    <Component Id="WorkerStartComp" Directory="INSTALLFOLDER" Guid="8C4BA004-DE8B-4DC0-A474-9D60BBF49E1A" Condition="WORKERTOKEN OR WORKERCONFIGURED">
+      <RegistryValue Root="HKLM" Key="Software\BODA Vision AI\BODA VMS TrainWorker" Name="AutoStart" Type="integer" Value="1" KeyPath="yes" />
+      <ServiceControl Id="WorkerSvcStart" Name="BodaVmsTrainWorker" Start="install" Wait="no" />
+    </Component>
+  </Fragment>
+
+<?ifdef WheelBundleDir ?>
+  <!-- 오프라인 wheel 번들 (폐쇄망): configure 가 wheels 옵션으로 이 폴더를 넘기고 워커는 pip 의 no-index / find-links 옵션으로 설치한다 -->
+  <Fragment>
+    <ComponentGroup Id="WheelFiles" Directory="WheelsFolder">
+      <Files Include="$(var.WheelBundleDir)*.whl" />
+      <Files Include="$(var.WheelBundleDir)*.tar.gz" />
+    </ComponentGroup>
+  </Fragment>
+<?endif?>
+
+</Wix>

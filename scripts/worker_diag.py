@@ -30,6 +30,10 @@ try:
         result["gpu_name"] = torch.cuda.get_device_name(0)
         result["gpu_mem_mb"] = int(torch.cuda.get_device_properties(0).total_memory // (1024 * 1024))
         result["cuda_version"] = torch.version.cuda
+    elif torch.version.cuda is None:
+        # CPU 빌드(예: 2.7.1+cpu)가 깔린 것 — 드라이버 문제가 아니라 pip 가 PyPI 의 CPU wheel 을 고른 것이다.
+        # requirements-allowlist.txt 의 cu124 인덱스·torch 버전 범위를 확인하라 (2026-09-10 실증: <2.8 이면 CPU 빌드가 이긴다).
+        result["failures"].append(f"torch 가 CUDA 빌드가 아닙니다 ({torch.__version__}) — wheel 인덱스/버전 범위 확인")
 except Exception as e:  # noqa
     result["failures"].append(f"torch import 실패: {e}")
 
