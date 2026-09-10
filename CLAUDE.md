@@ -78,9 +78,11 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 
 ## 이 리포에서 밟았던 함정
 
-**운영 웹으로 나가는 토큰은 audience 가 다릅니다.** 두 서버가 같은 `Jwt:Key`·`Jwt:Issuer` 를 쓰지만
-BODA.VMS.Web 은 **`BODA.VMS.Web.Client`** 를 검증합니다. 우리 `Jwt:Audience` 로 발급하면 서명이 맞아도 401 입니다.
-`ServiceTokenIssuer.Issue(..., audience:)` 에 `Monitoring:Audience` 를 넘기세요.
+**JWT 는 키·발급자·audience 세 값이 BODA.VMS.Web 과 같아야 합니다.** Web 은 **`BODA.VMS.Web.Client`** 를 audience 로 발급·검증합니다.
+우리 `Jwt:Audience` 가 `BODA.VMS.Web` 이던 동안은 Web 로그인 토큰이 서명이 맞아도 401 이었습니다 (2026-09-10 dev PC 서비스 설치에서 발견,
+기본값을 `BODA.VMS.Web.Client` 로 맞춤). 키는 **토큰을 발급하는 그 Web 인스턴스**의 키입니다 — 운영 웹과 dev 웹은 키가 다르므로
+어느 Web 에 로그인해 들어올지에 따라 `Jwt__Key` 를 정합니다. 운영 웹으로 나가는 모니터링 토큰은 `ServiceTokenIssuer.Issue(..., audience:)` 에
+`Monitoring:Audience` 를 명시합니다 — `Jwt:Audience` 를 누가 바꿔도 그 호출이 깨지지 않게.
 그 토큰의 역할은 `Viewer` 하나로 둡니다 — 새더라도 운영 데이터를 고칠 수 없어야 합니다.
 
 **모델 식별자 규약은 두 리포에 두 벌 있습니다.** VMS 의 `DlModelIdentity` 와 여기의 `ModelVersionTag` 가
