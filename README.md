@@ -46,6 +46,10 @@ BODA.VMS.MLOps.TrainWorker.exe configure --server http://<서버>:5310 --token w
 BODA.VMS.MLOps.TrainWorker.exe            # 서비스가 아니면 콘솔에서 그대로 돈다
 BODA.VMS.MLOps.TrainWorker.exe diag       # venv 부트스트랩 + 자기진단만 (GPU 가 잡히는지 확인)
 
+# 서버를 Windows 서비스로 상시 가동 (관리자 PowerShell; publish → 설치 폴더 → 서비스 BodaVmsMlops → 방화벽)
+.\scripts\install-server-service.ps1 -DataDir D:\BODA-MLOps -ProductionWebUrl http://<운영 웹>:5292
+#  Jwt 키는 운영 웹과 같은 값을 -JwtKey / MLOPS_JWT_KEY / user-secrets 로. 절차는 docs/서버 설치 가이드.md
+
 # 워커 설치 패키지 (self-contained publish + 서비스 등록 + 마법사/무인 configure)
 dotnet build src/BODA.VMS.MLOps.TrainWorker.Setup -c Release
 #  → src/BODA.VMS.MLOps.TrainWorker.Setup/bin/Release/BODA-VMS-TrainWorker-<버전>.msi
