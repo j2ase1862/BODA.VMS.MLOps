@@ -622,7 +622,10 @@ def main():
              + f" elapsed={time.time() - t0:.0f}s")
         emit("PROGRESS", f"{epoch / args.epochs * 90:.1f}")
 
-        score = map50 if map50 is not None else -val_loss
+        # best 선택: mAP50 우선, 같으면 val loss 가 낮은 쪽. mAP50 만 보면 작은 데이터셋에서 1.0 에 일찍 닿은 뒤
+        # 동점이라 갱신되지 않아 손실이 훨씬 높은 초반 가중치가 내보내진다 (2026-09-10 실증: 4장 150 에폭에서
+        # 40 에폭(val loss 54)이 best 로 남고 마지막(val loss 10)은 버려져 라인에서 검출이 안 됐다).
+        score = (map50, -val_loss) if map50 is not None else (-val_loss,)
         if best_score is None or score > best_score:
             best_score = score
             best_epoch = epoch
