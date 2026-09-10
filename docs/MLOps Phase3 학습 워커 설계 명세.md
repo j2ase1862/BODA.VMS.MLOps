@@ -142,10 +142,13 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 ---
 
 ## 10. 설치·운영
-- 설치: `VMS-TrainWorker-x.y.z.msi` → 서비스 `BodaVmsTrainWorker`(계정: LocalService 또는 지정 계정, GPU 접근 가능해야 함 — 세션 0 에서 CUDA 동작 확인 필요), 설정 파일 `%ProgramData%\BODA VMS TrainWorker\worker.json`(서버 URL·토큰(DPAPI)·캐시 경로·GPU 인덱스·상한값).
-- 로그: `%ProgramData%\BODA VMS TrainWorker\logs\worker-*.log` + 작업별 `jobs\{id}\train.log`.
+- 설치: `BODA-VMS-TrainWorker-x.y.z.msi`(프로젝트 `src/BODA.VMS.MLOps.TrainWorker.Setup`, WiX 6, self-contained win-x64 publish 수확) → 서비스 `BodaVmsTrainWorker`(자동·지연 시작, **계정 기본 LocalSystem** — 세션 0 CUDA 가 막히는 환경만 지정 계정으로 바꾼다), 설정 파일 `%ProgramData%\BODA VMS TrainWorker\worker.json`(서버 URL·토큰(DPAPI)·캐시 경로·GPU 인덱스·상한값). 설정 경로 2가지: 마법사 "워커 연결 설정" 화면 또는 무인 `msiexec … SERVERURL= WORKERTOKEN=` → 둘 다 deferred CA 로 `configure` 를 부른다. 설정 없이 설치하면 서비스는 등록만 되고 시작하지 않는다(토큰 없이 뜨면 곧 종료하므로). 업그레이드는 기존 `worker.json` 존재(AppSearch)로 시작 조건을 만족한다.
+- 오프라인: `scripts/make-wheel-bundle.ps1`(pip wheel + 번들만으로 설치 검증 + torch CUDA 빌드 검사) → `WheelBundle\` → `*-offline.msi`(`[설치 폴더]\wheels`, configure `--wheels`).
+- 로그: `%ProgramData%\BODA VMS TrainWorker\logs\worker-yyyyMMdd.log`(워커 자체 파일 로거, 14일 보존) + 작업별 `jobs\{id}\train.log`.
+- CLI: `configure`(--server --token [--name --python --wheels --cache --gpu --cpu]) · `diag`(venv 부트스트랩 + 자기진단 출력).
 - 업데이트: 워커 MSI 독립 배포. 프로토콜 버전(`X-Worker-Protocol: 1`)으로 서버가 호환 검사, 불일치 시 `Disabled(업데이트 필요)`.
-- 올인원 형태(관리 서버 = 워커 PC): 같은 MSI 를 설치하고 서버 URL 을 `http://localhost:5292` 로.
+- 올인원 형태(관리 서버 = 워커 PC): 같은 MSI 를 설치하고 서버 URL 을 `http://localhost:5310` 로.
+- 절차 문서: `docs/워커 설치 가이드.md`.
 - 백업 대상 아님(캐시·작업 폴더는 재생성 가능). 아티팩트는 서버 스토리지에 있다.
 
 ---
@@ -188,3 +191,4 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 | 버전 | 날짜 | 내용 |
 |---|---|---|
 | v0.1 | 2026-09-08 | 초안 |
+| v0.2 | 2026-09-10 | §10 설치 패키지 실물 반영(MSI 프로젝트·LocalSystem·설정 경로·오프라인 번들·파일 로그·CLI). 실증: 허용 목록 결함 2건 수정(`transformers<5` 가 rfdetr≥1.9 와 충돌 → `>=5.1,<6`; `torch<2.8` 이 PyPI CPU 빌드를 끌어옴 → `<2.7`, cu124 Windows wheel 은 2.6.0 까지), 진단에 CPU 빌드 검출 추가. 실 GPU(RTX 4060) 한 바퀴 통과: 제출 → 워커 → D-FINE 2 에폭 → ONNX 검증 → Candidate(약 50초). 남은 것: 실제 서비스 설치(세션 0 CUDA) 현장 확인, `train_dfine.py` 학습 곡선 아티팩트, `pretrainedRef` 없는 작업의 제출 시점 거부 |

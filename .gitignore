@@ -23,3 +23,6 @@ __pycache__/
 # 만드는 방법은 docs/manual/README.md 에 있고, 서버를 띄우면 누구나 다시 만들 수 있다.
 docs/manual/screenshots/
 docs/manual/*.docx
+
+# 워커 설치 패키지: 오프라인 wheel 번들(수 GB, scripts/make-wheel-bundle.ps1 로 생성)과 publish 중간 산출물
+src/BODA.VMS.MLOps.TrainWorker.Setup/WheelBundle/

@@ -199,6 +199,17 @@ Blazor 쪽 `_samIndex` 를 스스로 계산하지 마세요.
 돌려줍니다. 이 인자를 빠뜨리면 가장 큰 덩어리로 돌아가고, 배경 점으로 끊긴 물체에서
 사용자가 집은 조각이 버려집니다.
 
+**허용 목록의 버전 범위는 wheel 인덱스가 정합니다.** `requirements-allowlist.txt` 의 torch 는 cu124 인덱스에서 받는데,
+그 인덱스의 Windows cp312 wheel 은 2.6.0 까지뿐입니다. 상한을 `<2.8` 로 두면 pip 가 PyPI 의 2.7.1(CPU 빌드)을 고르고
+진단은 `cuda_available=false` 로 워커를 Disabled 로 만듭니다. 반대로 transformers 는 `<5` 로 막으면 rfdetr≥1.9(`transformers>=5.1`)와
+ResolutionImpossible 입니다. 범위를 바꾸면 `py -3.12 -m venv` 로 빈 환경에 실제로 설치해 `worker_diag.py` 가 `+cu124` 를 보고하는지
+확인하세요 (2026-09-10 실증). `worker_diag.py` 는 CPU 빌드(`torch.version.cuda is None`)를 실패 항목으로 냅니다.
+
+**워커 설치 패키지는 솔루션 밖입니다.** `src/BODA.VMS.MLOps.TrainWorker.Setup`(WiX 6)은 빌드마다 워커를 self-contained 로
+publish 하므로 slnx 에 넣지 않았습니다. `dotnet build src/BODA.VMS.MLOps.TrainWorker.Setup -c Release` 로 따로 만듭니다.
+MSI 문자열은 코드페이지 949 라 `—`·`▸`·`…` 같은 문자를 속성값·대화상자 텍스트에 넣으면 WIX0311 로 막힙니다(주석은 괜찮습니다).
+대화상자 텍스트의 `[…]` 는 속성 참조로 읽히므로 "[토큰 발급]" 같은 표기는 ICE03 입니다.
+
 ## 손대면 안 되는 것
 
 `scripts/train_*.py` 와 `scripts/export_mobile_sam.py` 는 VMS 리포(`VMS.DeepLearning/scripts`)의 복사본입니다.

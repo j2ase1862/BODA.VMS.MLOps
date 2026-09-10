@@ -120,6 +120,25 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
 
     private async Task<string?> FindBasePythonAsync(CancellationToken ct)
     {
+        // 1) PEP 514 레지스트리 — 서비스(LocalSystem)는 사용자 PATH 를 보지 못하므로 py 런처보다 먼저 본다.
+        //    HKLM = "모든 사용자" 설치, HKCU = 설치한 사용자 전용(서비스 계정에서는 대개 비어 있다).
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var ver in new[] { _o.BasePythonVersion, "3.11" })
+            foreach (var root in new[] { Microsoft.Win32.Registry.LocalMachine, Microsoft.Win32.Registry.CurrentUser })
+            {
+                try
+                {
+                    using var key = root.OpenSubKey($@"Software\Python\PythonCore\{ver}\InstallPath");
+                    var exe = key?.GetValue("ExecutablePath") as string;
+                    if (string.IsNullOrWhiteSpace(exe) && key?.GetValue(null) is string dir) exe = Path.Combine(dir, "python.exe");
+                    if (!string.IsNullOrWhiteSpace(exe) && File.Exists(exe)) { logger.LogInformation("기반 파이썬(레지스트리 {Ver}): {Exe}", ver, exe); return exe; }
+                }
+                catch (Exception ex) { logger.LogDebug(ex, "레지스트리 파이썬 탐색 실패 {Ver}", ver); }
+            }
+        }
+
+        // 2) py 런처 / PATH 의 python
         foreach (var (exe, args) in new (string, string[])[]
                  {
                      ("py", [$"-{_o.BasePythonVersion}", "-c", "import sys;print(sys.executable)"]),

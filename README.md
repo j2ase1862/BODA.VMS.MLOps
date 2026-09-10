@@ -19,9 +19,10 @@ BODA.VMS.MLOps.slnx
 ├── src/BODA.VMS.MLOps.Server      관리 서버 (ASP.NET Core 8, SQLite WAL, SignalR) — 화면도 함께 호스팅
 ├── src/BODA.VMS.MLOps.Client      관리 화면 (Blazor WebAssembly + MudBlazor)
 ├── src/BODA.VMS.MLOps.TrainWorker 학습 워커 (Windows 서비스, GPU PC)
+├── src/BODA.VMS.MLOps.TrainWorker.Setup  워커 설치 패키지 (WiX 6 MSI, 솔루션 밖 — 따로 빌드)
 ├── tests/BODA.VMS.MLOps.Tests     xUnit 305개 — 규약·상태 머신·API·워커 프로토콜·E2E
-├── scripts/                       학습 스크립트(VMS 리포와 동일 규약) + 진단·허용 목록·가짜 스크립트
-└── docs/                          상위 설계 문서 3종
+├── scripts/                       학습 스크립트(VMS 리포와 동일 규약) + 진단·허용 목록·가짜 스크립트 + wheel 번들 생성
+└── docs/                          상위 설계 문서 3종 + 워커 설치 가이드
 ```
 
 외부 의존은 `VMS.Core.Contracts` NuGet 패키지 하나입니다. VMS 런타임과 공유하는 규약 계층으로,
@@ -40,9 +41,16 @@ dotnet test  BODA.VMS.MLOps.slnx
 # 서버 + 관리 화면 (화면 http://localhost:5310 · API 문서 /swagger)
 dotnet run --project src/BODA.VMS.MLOps.Server
 
-# 워커 (GPU PC)
+# 워커 (GPU PC) — 설치 패키지로 놓는 것이 기본. 개발 중 콘솔로 띄울 때:
 BODA.VMS.MLOps.TrainWorker.exe configure --server http://<서버>:5310 --token wk_...
-BODA.VMS.MLOps.TrainWorker.exe
+BODA.VMS.MLOps.TrainWorker.exe            # 서비스가 아니면 콘솔에서 그대로 돈다
+BODA.VMS.MLOps.TrainWorker.exe diag       # venv 부트스트랩 + 자기진단만 (GPU 가 잡히는지 확인)
+
+# 워커 설치 패키지 (self-contained publish + 서비스 등록 + 마법사/무인 configure)
+dotnet build src/BODA.VMS.MLOps.TrainWorker.Setup -c Release
+#  → src/BODA.VMS.MLOps.TrainWorker.Setup/bin/Release/BODA-VMS-TrainWorker-<버전>.msi
+#  폐쇄망용: scripts/make-wheel-bundle.ps1 로 WheelBundle/ 을 채운 뒤 빌드 → *-offline.msi
+#  설치·운영 절차는 docs/워커 설치 가이드.md
 ```
 
 서버는 시작할 때 `Jwt:Key` 가 32자 이상인지 확인하고, 없으면 부팅을 멈춥니다.
@@ -450,8 +458,17 @@ SAM 은 마스크에서 폴리곤을 뽑는 순수 부분(좌표 규약·윤곽 
 VMS 쪽 송신부는 닫혔습니다 (VMS PR #446 — 이미지 저장 설정의 [NG 이미지 MLOps 전송] + 양품 1/N 샘플, 기본 1/200).
 라인 토큰으로 오는 요청은 `lineId` 를 토큰에서 읽으므로 VMS 는 라인 이름을 보내지 않습니다.
 
-**워커 설치 패키지.** MSI(WiX) 프로젝트가 없습니다. 워커는 오프라인 wheel 폴더를 쓸 수 있지만
-(`Worker:WheelBundleDir` → `pip --no-index --find-links`), 그 번들을 만드는 단계가 없습니다.
+**학습 곡선 아티팩트.** 워커는 `metrics.json`·`curves.png` 가 있으면 올리지만, 실제 `train_dfine.py` 는 둘을 쓰지 않습니다
+(`vms_train_info.json` 과 진행 보고만). 그래서 실제 작업의 아티팩트는 `onnx`·`trainInfo`·`log` 셋이고 학습 곡선 그림이 없습니다.
+스크립트는 VMS 리포 것이므로 그쪽에서 에폭별 지표 파일과 곡선 출력을 넣은 뒤 가져와야 합니다.
+
+**사전학습 자산 없는 작업.** 워커는 `HF_HUB_OFFLINE=1` 로 돌아 인터넷에서 가중치를 받지 않습니다. 작업에 `pretrainedRef` 가 없으면
+스크립트가 백본 이름으로 허깅페이스에 가려다 "couldn't connect to huggingface.co" 로 실패합니다. 서버가 제출 시점에 거부하거나
+작업 생성 화면이 미러 자산을 필수로 고르게 해야 하는데, 아직 워커에서 실패로만 드러납니다.
+
+**워커 MSI 는 실제 설치를 관리자 세션에서 확인해야 합니다.** 패키지 빌드와 테이블(서비스 등록·configure 커스텀 액션·시작 조건)은
+확인했고, publish 된 exe 로 실 GPU 학습 한 바퀴도 돌렸습니다. 서비스로 설치된 상태(세션 0)에서 CUDA 가 잡히는지는 GPU PC 에
+실제 설치해서 보아야 합니다 (Phase 3 명세 §13 미결).
 
 **보존 정책.** 오래된 이미지를 자동으로 지우는 규칙이 없습니다. 품질 지표는 재어 두었으니
 "흐린 것부터 골라 보고 사람이 지우는" 길은 열렸지만, 자동 삭제는 되돌릴 수 없어 넣지 않았습니다.

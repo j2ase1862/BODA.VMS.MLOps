@@ -3,9 +3,11 @@
 # 오프라인: pip install --no-index --find-links <wheel 번들> -r requirements-allowlist.txt
 # torch 는 CUDA 12.4 wheel 인덱스에서 받는다 (온라인): --extra-index-url https://download.pytorch.org/whl/cu124
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch>=2.5,<2.8
-torchvision>=0.20,<0.23
-transformers>=4.52,<5
+# torch 상한 2.7: cu124 인덱스의 Windows cp312 wheel 은 2.6.0+cu124 까지다 (2.7.x 는 cu126/cu128 만). <2.8 이면 PyPI 의 2.7.1(CPU 빌드)이 이겨 CUDA 없는 venv 가 된다 — 2026-09-10 실증
+torch>=2.5,<2.7
+torchvision>=0.20,<0.22
+# transformers 상한: rfdetr>=1.9 가 transformers>=5.1 을 요구하고, D-FINE 학습(train_dfine.py)도 5.x 에서 검증됨 (2026-09-10 venv 부트스트랩 실증에서 <5 상한이 ResolutionImpossible 로 막힘)
+transformers>=5.1,<6
 safetensors>=0.4
 onnx>=1.16
 onnxruntime>=1.19
