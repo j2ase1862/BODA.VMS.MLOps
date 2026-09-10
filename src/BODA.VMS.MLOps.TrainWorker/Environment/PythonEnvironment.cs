@@ -30,10 +30,20 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
             if (!File.Exists(_o.PythonExe)) throw new FileNotFoundException("Worker:PythonExe 가 없습니다.", _o.PythonExe);
             return _o.PythonExe;
         }
-        if (File.Exists(PythonExe)) return PythonExe;
+        // 완료 마커가 있어야 "만들어진 venv" 다. pip 도중 실패한 venv 를 완성품으로 믿으면 다음 재시도가 진단(torch import 실패)으로
+        // 넘어가 Disabled 에 갇힌다 (2026-09-10 MSI 실증: 3.14 로 만든 venv 에 torch 설치 실패 → 반쪽 venv 잔류).
+        var marker = Path.Combine(_o.VenvDir, ".complete");
+        if (File.Exists(PythonExe) && File.Exists(marker)) return PythonExe;
+        if (Directory.Exists(_o.VenvDir))
+        {
+            logger.LogWarning("완료되지 않은 venv 를 지우고 다시 만듭니다: {Dir}", _o.VenvDir);
+            Directory.Delete(_o.VenvDir, recursive: true);
+        }
 
         logger.LogInformation("venv 부트스트랩 시작: {Dir}", _o.VenvDir);
-        var basePython = await FindBasePythonAsync(ct) ?? throw new InvalidOperationException($"기반 파이썬(py -{_o.BasePythonVersion})을 찾을 수 없습니다.");
+        var basePython = await FindBasePythonAsync(ct) ?? throw new InvalidOperationException(
+            $"기반 파이썬 {_o.BasePythonVersion}(또는 3.11)을 찾을 수 없습니다. 서비스 계정은 사용자 전용 설치(HKCU)와 사용자 PATH 를 보지 못합니다 — " +
+            "Python 3.12 를 \"모든 사용자용\" 으로 설치하거나 configure --python <python.exe> 로 지정하세요.");
         await RunAsync(basePython, ["-m", "venv", _o.VenvDir], null, ct, throwOnError: true);
 
         if (File.Exists(RequirementsFile))
@@ -52,6 +62,7 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
         {
             logger.LogWarning("requirements-allowlist.txt 가 없어 패키지 설치를 건너뜁니다: {Path}", RequirementsFile);
         }
+        await File.WriteAllTextAsync(marker, $"{basePython}\n{DateTime.UtcNow:O}\n", ct);
         return PythonExe;
     }
 
@@ -138,22 +149,30 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
             }
         }
 
-        // 2) py 런처 / PATH 의 python
+        // 2) py 런처 / PATH 의 python — 버전을 확인한다. PATH 의 python 이 3.14 같은 다른 버전이면 venv 는 만들어지지만
+        //    torch wheel 이 없어 pip 에서 "No matching distribution for torch" 로 실패한다 (2026-09-10 MSI 실증). 그 오류보다 여기서 막는 편이 읽기 쉽다.
+        const string probe = "import sys;print(sys.executable);print('%d.%d' % sys.version_info[:2])";
+        var accepted = new[] { _o.BasePythonVersion, "3.11" };
+        var rejected = new List<string>();
         foreach (var (exe, args) in new (string, string[])[]
                  {
-                     ("py", [$"-{_o.BasePythonVersion}", "-c", "import sys;print(sys.executable)"]),
-                     ("py", ["-3.11", "-c", "import sys;print(sys.executable)"]),
-                     ("python", ["-c", "import sys;print(sys.executable)"]),
+                     ("py", [$"-{_o.BasePythonVersion}", "-c", probe]),
+                     ("py", ["-3.11", "-c", probe]),
+                     ("python", ["-c", probe]),
                  })
         {
             try
             {
                 var (code, stdout, _) = await RunAsync(exe, args, null, ct, throwOnError: false, timeout: TimeSpan.FromSeconds(20));
-                var path = stdout.Trim();
-                if (code == 0 && File.Exists(path)) return path;
+                var lines = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (code != 0 || lines.Length < 2 || !File.Exists(lines[0])) continue;
+                if (accepted.Contains(lines[1])) return lines[0];
+                rejected.Add($"{lines[0]} ({lines[1]})");
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogDebug(ex, "{Exe} 탐색 실패", exe); }
         }
+        if (rejected.Count > 0)
+            logger.LogWarning("버전이 맞지 않는 파이썬은 건너뜁니다 (필요: {Want}): {Found}", string.Join("/", accepted), string.Join(", ", rejected));
         return null;
     }
 

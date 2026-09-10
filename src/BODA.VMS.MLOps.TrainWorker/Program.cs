@@ -114,9 +114,11 @@ static int Configure(string[] a)
 
 static async Task<int> DiagAsync()
 {
+    // 서비스 호스트와 같은 순서: appsettings → worker.json → 환경변수(Worker__*). 시험할 때 환경변수로 덮어쓸 수 있게 한다.
     var cfg = new ConfigurationBuilder()
         .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true)
         .AddJsonFile(WorkerOptions.ConfigFilePath, optional: true)
+        .AddEnvironmentVariables()
         .Build();
     var o = new WorkerOptions();
     cfg.GetSection(WorkerOptions.Section).Bind(o);
