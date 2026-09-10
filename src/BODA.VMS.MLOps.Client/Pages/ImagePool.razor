@@ -1,0 +1,205 @@
+@page "/images"
+@attribute [Authorize]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>수집 사진 · MLOps</PageTitle>
+
+<PageHeader Eyebrow="DATA" Title="수집 사진">
+    <Lead>
+        라인 PC 가 올린 NG 사진과 양품 샘플, 사람이 올린 사진이 모두 모이는 곳입니다.
+        아직 어느 데이터셋에도 담기지 않은 사진을 골라 데이터셋에 담으면 라벨링을 시작할 수 있습니다.
+    </Lead>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_error</MudAlert>
+}
+
+<MudPaper Class="pa-3 mb-3" Outlined="true">
+    <div class="d-flex flex-wrap gap-3 align-center">
+        <MudSelect T="ImageSource?" Value="_source" ValueChanged="OnSourceChanged" Label="출처" Clearable="true"
+                   Margin="Margin.Dense" Style="min-width:160px">
+            <MudSelectItem T="ImageSource?" Value="ImageSource.LineNg">라인 NG · 양품 샘플</MudSelectItem>
+            <MudSelectItem T="ImageSource?" Value="ImageSource.Manual">직접 올림</MudSelectItem>
+        </MudSelect>
+        <MudCheckBox T="bool" Value="_onlyUnassigned" ValueChanged="OnUnassignedChanged" Label="데이터셋에 안 담긴 것만" Dense="true" />
+        <MudTextField @bind-Value="_tag" Label="태그 (예: verdict:ng, recipe:PUT-10)" Margin="Margin.Dense" Immediate="true"
+                      OnKeyUp="OnSearchKeyAsync" Style="min-width:220px" />
+        <MudTextField @bind-Value="_search" Label="파일명 검색" Margin="Margin.Dense" Immediate="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      OnKeyUp="OnSearchKeyAsync" Style="min-width:180px" />
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => LoadAsync())">조회</MudButton>
+        <MudSpacer />
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">@_total 장</MudText>
+        @if (_selectedIds.Count > 0)
+        {
+            <MudText Typo="Typo.body2">@(_selectedIds.Count)장 선택</MudText>
+            <AuthorizeView Roles="Labeler,Engineer,Admin">
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.PlaylistAdd" OnClick="OpenAddDialog">데이터셋에 담기</MudButton>
+            </AuthorizeView>
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _selectedIds.Clear())">선택 해제</MudButton>
+        }
+        else if (_images.Count > 0)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="SelectAllLoaded">보이는 것 전부 선택</MudButton>
+        }
+    </div>
+</MudPaper>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_images.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.PhotoLibrary" Size="Size.Large" class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">조건에 맞는 사진이 없습니다.</MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1">
+            라인 사진은 라인 PC 의 이미지 저장 설정에서 [NG 이미지 MLOps 전송] 을 켜야 올라옵니다. 라인 PC 화면에서 등록·토큰을 확인하세요.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px">
+        @foreach (var image in _images)
+        {
+            var selected = _selectedIds.Contains(image.Id);
+            var verdict = image.Tags.FirstOrDefault(t => t.StartsWith("verdict:", StringComparison.OrdinalIgnoreCase))?["verdict:".Length..];
+            <MudPaper Elevation="@(selected ? 6 : 1)" Class="pa-1"
+                      Style="@($"position:relative; cursor:pointer; outline:{(selected ? "3px solid var(--mud-palette-primary)" : "none")}")"
+                      @onclick="@(() => Toggle(image.Id))">
+                <img src="@image.ThumbnailUrl" alt="@image.FileName" loading="lazy"
+                     style="width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:3px; display:block" />
+                <div style="position:absolute; top:6px; left:6px; display:flex; gap:4px">
+                    @if (verdict is not null)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="@(verdict.Equals("ng", StringComparison.OrdinalIgnoreCase) ? Color.Error : Color.Success)">
+                            @verdict.ToUpperInvariant()
+                        </MudChip>
+                    }
+                    @if (image.Source == ImageSource.LineNg && !string.IsNullOrEmpty(image.LineId))
+                    {
+                        <MudChip T="string" Size="Size.Small">@image.LineId</MudChip>
+                    }
+                </div>
+                <div class="pa-1">
+                    <MudText Typo="Typo.caption" Style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                        @image.FileName
+                    </MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary" Style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                        @((image.CapturedAt ?? image.CreatedAt).ToLocalTime().ToString("MM-dd HH:mm")) · @image.Width×@image.Height
+                        @if (image.Tags.FirstOrDefault(t => t.StartsWith("recipe:")) is { } r) { <text> · @r["recipe:".Length..]</text> }
+                    </MudText>
+                </div>
+            </MudPaper>
+        }
+    </div>
+    @if (_images.Count < _total)
+    {
+        <div class="d-flex justify-center mt-3">
+            <MudButton Variant="Variant.Outlined" OnClick="LoadMoreAsync">더 보기 (@_images.Count / @_total)</MudButton>
+        </div>
+    }
+}
+
+<MudDialog @bind-Visible="_addOpen" Options="@(new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent><MudText Typo="Typo.h6">데이터셋에 담기</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">선택한 @(_selectedIds.Count)장을 담을 데이터셋과 분할을 고르세요. 사진은 복제되지 않고 참조로 담깁니다.</MudText>
+        <MudSelect T="Guid?" @bind-Value="_targetDatasetId" Label="데이터셋" Margin="Margin.Dense">
+            @foreach (var d in _datasets)
+            {
+                <MudSelectItem T="Guid?" Value="@d.Id">@d.Name (@d.TaskType, @d.Classes.Length 클래스)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="DatasetSplit" @bind-Value="_targetSplit" Label="분할" Margin="Margin.Dense" Class="mt-2">
+            @foreach (var s in Enum.GetValues<DatasetSplit>())
+            {
+                <MudSelectItem T="DatasetSplit" Value="@s">@Display.SplitText(s)</MudSelectItem>
+            }
+        </MudSelect>
+        @if (_datasets.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-2">데이터셋이 없습니다. 먼저 "데이터셋 · 라벨링" 에서 하나 만드세요.</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _addOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_targetDatasetId is null || _busy)" OnClick="AddSelectedAsync">담기</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<ImageDto> _images = [];
+    private readonly HashSet<Guid> _selectedIds = [];
+    private List<DatasetDto> _datasets = [];
+    private ImageSource? _source = ImageSource.LineNg;
+    private bool _onlyUnassigned = true;
+    private string _tag = "", _search = "";
+    private int _total;
+    private bool _loading, _busy, _addOpen;
+    private Guid? _targetDatasetId;
+    private DatasetSplit _targetSplit = DatasetSplit.Train;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _loading = !append;
+        try
+        {
+            var page = await Api.ImagesAsync(null,
+                inDataset: _onlyUnassigned ? false : null,
+                source: _source,
+                tag: string.IsNullOrWhiteSpace(_tag) ? null : _tag.Trim(),
+                search: string.IsNullOrWhiteSpace(_search) ? null : _search.Trim(),
+                skip: append ? _images.Count : 0, take: 60);
+            _images = append ? [.. _images, .. page.Items] : page.Items.ToList();
+            _total = page.Total;
+            if (!append) _selectedIds.Clear();
+            _error = null;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+    private Task OnSourceChanged(ImageSource? v) { _source = v; return LoadAsync(); }
+    private Task OnUnassignedChanged(bool v) { _onlyUnassigned = v; return LoadAsync(); }
+    private async Task OnSearchKeyAsync(KeyboardEventArgs e) { if (e.Key == "Enter") await LoadAsync(); }
+
+    private void Toggle(Guid id) { if (!_selectedIds.Remove(id)) _selectedIds.Add(id); }
+    private void SelectAllLoaded() { foreach (var i in _images) _selectedIds.Add(i.Id); }
+
+    private async Task OpenAddDialog()
+    {
+        try { _datasets = await Api.DatasetListAsync(); }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); return; }
+        _targetDatasetId ??= _datasets.FirstOrDefault()?.Id;
+        _addOpen = true;
+    }
+
+    private async Task AddSelectedAsync()
+    {
+        if (_targetDatasetId is not { } datasetId) return;
+        _busy = true;
+        try
+        {
+            var ids = _selectedIds.ToArray();
+            await Api.AddImagesAsync(datasetId, ids, _targetSplit);
+            var name = _datasets.FirstOrDefault(d => d.Id == datasetId)?.Name ?? "데이터셋";
+            Snackbar.Add($"{ids.Length}장을 '{name}' 에 담았습니다.", Severity.Success);
+            _addOpen = false;
+            await LoadAsync();   // "안 담긴 것만" 필터면 목록에서 빠진다
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+}
