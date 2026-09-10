@@ -192,3 +192,4 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 |---|---|---|
 | v0.1 | 2026-09-08 | 초안 |
 | v0.2 | 2026-09-10 | §10 설치 패키지 실물 반영(MSI 프로젝트·LocalSystem·설정 경로·오프라인 번들·파일 로그·CLI). 실증: 허용 목록 결함 2건 수정(`transformers<5` 가 rfdetr≥1.9 와 충돌 → `>=5.1,<6`; `torch<2.8` 이 PyPI CPU 빌드를 끌어옴 → `<2.7`, cu124 Windows wheel 은 2.6.0 까지), 진단에 CPU 빌드 검출 추가. 실 GPU(RTX 4060) 한 바퀴 통과: 제출 → 워커 → D-FINE 2 에폭 → ONNX 검증 → Candidate(약 50초). 남은 것: 실제 서비스 설치(세션 0 CUDA) 현장 확인, `train_dfine.py` 학습 곡선 아티팩트, `pretrainedRef` 없는 작업의 제출 시점 거부 |
+| v0.3 | 2026-09-10 | MSI 0.1.0 실제 설치 확인(dev PC): 서비스 LocalSystem 에서 **CUDA 잡힘 → §13 첫 항목은 이 환경에서 해소**, 서비스 경유 실 학습 Candidate 등록. 발견·수정: ① PATH 의 다른 버전(3.14)으로 venv 를 만들다 torch 설치 실패 → 기반 파이썬 버전 검증(3.12/3.11 만) + 명확한 오류 문구 ② pip 도중 실패한 반쪽 venv 가 완성품으로 오인돼 Disabled 에 갇힘 → `venv\.complete` 마커, 없으면 지우고 재생성 ③ `diag` 가 환경변수(Worker__*)를 읽도록. 버전 0.1.1. 업그레이드 설치(기존 worker.json 유지·서비스 재시작)는 아직 실물 미확인 |
