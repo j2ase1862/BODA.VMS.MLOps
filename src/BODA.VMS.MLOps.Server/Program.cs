@@ -1,5 +1,7 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
+using BODA.VMS.MLOps.Core.Auth;
 using BODA.VMS.MLOps.Server;
 using BODA.VMS.MLOps.Server.Auth;
 using BODA.VMS.MLOps.Server.Data;
@@ -137,7 +139,19 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
                     && ctx.Request.Cookies.TryGetValue(ImageCookie.Name, out var cookie))
                     ctx.Token = cookie;
                 return Task.CompletedTask;
-            }
+            },
+            // 운영 웹 역할(Admin·User·Guest)을 MLOps 역할로 옮긴다 — User→Engineer, Guest→Viewer.
+            // 화면(TokenStore.Parse)도 같은 규칙을 쓴다. 규칙과 이유는 Core/Auth/WebRoleMapping.cs.
+            OnTokenValidated = ctx =>
+            {
+                if (ctx.Principal?.Identity is ClaimsIdentity identity)
+                {
+                    var have = identity.FindAll(identity.RoleClaimType).Select(c => c.Value).ToList();
+                    foreach (var role in WebRoleMapping.Expand(have).Except(have, StringComparer.Ordinal))
+                        identity.AddClaim(new Claim(identity.RoleClaimType, role));
+                }
+                return Task.CompletedTask;
+            },
         };
     })
     .AddScheme<AuthenticationSchemeOptions, WorkerTokenAuthenticationHandler>(WorkerTokenAuthenticationHandler.SchemeName, null)

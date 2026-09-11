@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using BODA.VMS.MLOps.Core.Auth;
 using System.Text.Json;
 using Blazored.LocalStorage;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -85,7 +86,8 @@ public sealed class JwtAuthenticationStateProvider(TokenStore tokens) : Authenti
 
             var identity = new ClaimsIdentity("jwt", ClaimTypes.Name, ClaimTypes.Role);
             identity.AddClaim(new Claim(ClaimTypes.Name, ReadName(payload)));
-            foreach (var role in ReadRoles(payload)) identity.AddClaim(new Claim(ClaimTypes.Role, role));
+            // 운영 웹 역할을 서버와 같은 규칙으로 옮긴다. 안 옮기면 권한은 있는데 버튼이 안 보인다.
+            foreach (var role in WebRoleMapping.Expand(ReadRoles(payload))) identity.AddClaim(new Claim(ClaimTypes.Role, role));
             return new ClaimsPrincipal(identity);
         }
         catch (Exception ex) when (ex is JsonException or FormatException or ArgumentException)
