@@ -111,6 +111,12 @@ VMS 쪽 `DlModelVersion` 열은 50자 제한이라, 여기서 형식을 늘리�
 
 **테스트의 가짜 시계를 토큰 발급에 쓰면 안 됩니다.** JWT 검증은 실제 시각을 봅니다.
 
+**개발 토큰은 운영 웹에서 통하면 안 됩니다.** 두 서버가 서명 키·발급자를 공유하고 audience 까지 운영 웹과 맞춰 두었으므로,
+개발 토큰을 `Jwt:Audience` 로 발급하면 개발 PC 에 운영 키를 넣고 서버를 띄운 동안 익명 요청 하나로 운영 웹이 받는
+30일짜리 Admin 토큰이 나옵니다 (2026-09-11 점검에서 발견). 그래서 개발 토큰은 `ServiceTokenIssuer.DevAudience` 로만 발급하고,
+서버는 `Auth:EnableDevTokens` 가 켜져 있을 때만 그 audience 를 받습니다. `DevTokenAudienceTests` 가 운영 웹의 검증 조건으로
+개발 토큰을 넣어 거부되는지 봅니다 — 개발 토큰 발급을 고칠 때 이 시험을 지우지 마세요.
+
 **Windows PowerShell 5.1 은 네이티브 exe 인자의 따옴표를 지웁니다.** curl 로 JSON 을 보낼 때는
 본문을 파일에 쓰고 `--data-binary @file` 로 넘기세요.
 

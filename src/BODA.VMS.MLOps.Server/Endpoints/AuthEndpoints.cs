@@ -23,7 +23,8 @@ public static class AuthEndpoints
             if (string.IsNullOrWhiteSpace(req.User)) return Results.BadRequest(new { error = "user 필수" });
 
             var roles = ServiceTokenIssuer.AcceptedRoles(req.Roles);
-            return Results.Ok(new { token = issuer.Issue(req.User, roles, req.Hours), roles });
+            // 전용 audience 로 발급한다 — 운영 웹과 키를 공유해도 거기서는 통하지 않게 (ServiceTokenIssuer.DevAudience)
+            return Results.Ok(new { token = issuer.Issue(req.User, roles, req.Hours, audience: ServiceTokenIssuer.DevAudience), roles });
         }).AllowAnonymous();
 
         g.MapGet("/me", (ClaimsPrincipal principal) =>
