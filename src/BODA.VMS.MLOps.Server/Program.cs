@@ -100,6 +100,9 @@ builder.Services.AddSignalR().AddJsonProtocol(o =>
 
 // 인증: JWT(BODA.VMS.Web 와 같은 키) + 워커 토큰(wk_…) — Authorization 헤더 접두사로 자동 선택
 var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
+// 개발 토큰은 전용 audience 로 나간다. 그 audience 는 개발 토큰이 켜져 있을 때만 받는다 — 운영에서는 막힌다.
+var devTokensEnabled = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>()?.EnableDevTokens == true;
+string[] validAudiences = devTokensEnabled ? [jwt.Audience, ServiceTokenIssuer.DevAudience] : [jwt.Audience];
 if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
     throw new InvalidOperationException(
         "Jwt:Key 가 설정되지 않았거나 32자 미만입니다. 개발: dotnet user-secrets set \"Jwt:Key\" \"<32자 이상>\" · 운영: 환경변수 Jwt__Key. " +
@@ -116,7 +119,7 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwt.Issuer,
-            ValidAudience = jwt.Audience,
+            ValidAudiences = validAudiences,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
             ClockSkew = TimeSpan.FromMinutes(1),
         };
