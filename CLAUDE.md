@@ -85,6 +85,13 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 `Monitoring:Audience` 를 명시합니다 — `Jwt:Audience` 를 누가 바꿔도 그 호출이 깨지지 않게.
 그 토큰의 역할은 `Viewer` 하나로 둡니다 — 새더라도 운영 데이터를 고칠 수 없어야 합니다.
 
+**운영 웹 역할은 `Core/Auth/WebRoleMapping.cs` 한 곳에서 옮깁니다.** 운영 웹은 Admin · User · Guest 만 싣고
+MLOps 는 Viewer ⊂ Labeler ⊂ Engineer ⊂ Admin 을 봅니다 (User→Engineer, Guest→Viewer — 사용자 결정 2026-09-11).
+**서버(JwtBearer `OnTokenValidated`)와 관리 화면(`TokenStore.Parse`)이 둘 다 이 규칙을 불러야 합니다.**
+화면은 토큰을 브라우저에서 직접 읽어 버튼을 보일지 정하므로, 서버만 옮기면 권한은 있는데 버튼이 안 보입니다.
+모르는 역할은 옮기지 않습니다 — 조용히 권한이 생기면 안 됩니다. `WebRoleMappingTests` 가 두 쪽을 함께 봅니다.
+운영 웹에 역할을 더하는 쪽으로 풀지 마세요 — 운영 웹은 GS 인증 범위 안입니다.
+
 **모델 식별자 규약은 두 리포에 두 벌 있습니다.** VMS 의 `DlModelIdentity` 와 여기의 `ModelVersionTag` 가
 같은 `mv:{32자}` 를 만듭니다. 한쪽만 바꾸면 집계가 **조용히 빕니다** — 오류도 없이 모델 줄이 안 나타납니다.
 `ModelVersionTagTests` 가 형식을 글자 그대로 못 박고 있으니 그 시험을 함께 고치지 않으면 못 지나갑니다.
