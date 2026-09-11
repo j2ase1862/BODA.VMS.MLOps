@@ -1,0 +1,201 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <!--
+    BODA VMS MLOps 관리 서버 설치 패키지.
+
+    설치하는 것: [Program Files]\BODA Vision AI\BODA VMS MLOps Server\ (self-contained 서버 + wwwroot 관리 화면 + scripts\ + 선택 models\sam\)
+                 Windows 서비스 BodaVmsMlops (자동·지연 시작, 실패 시 재시작, LocalSystem, 운영 환경으로 뜬다)
+                 방화벽 인바운드 예외 (라인 PC·브라우저·워커가 이 포트로 붙는다)
+    남기는 것: %ProgramData%\BODA VMS MLOps\server.json (설정, Jwt 키는 DPAPI 로 감싸고 파일 권한을 관리자로 좁힌다)
+               데이터 폴더 (mlops.db · storage\ · logs\) - 제거해도 지우지 않는다. 재설치가 곧 복구다.
+
+    설정 경로 2가지 (같은 속성 공유):
+      · 설치 마법사 "서버 설정" 화면 → DATADIR · PORT · WEBURL · JWTKEY
+      · 무인 설치: msiexec /i BODA-VMS-MLOps-Server-x.y.z.msi /qn JWTKEY=<운영 웹과 같은 키> DATADIR=D:\BODA-MLOps
+    첫 설치에 JWTKEY 가 없으면 파일만 놓고 서비스는 시작하지 않는다 - 나중에 관리자 명령 프롬프트에서
+    `BODA.VMS.MLOps.Server.exe configure` 에 jwt-key 옵션으로 키를 준 뒤 서비스 시작.
+    (XML 주석에는 하이픈 두 개를 이어 쓸 수 없어 옵션 이름을 풀어 적었다.)
+    업그레이드는 server.json 이 있으면 키를 다시 묻지 않는다. 데이터 폴더·포트·운영 웹 주소는 레지스트리에 기억해 두었다가 채운다.
+
+    scripts\install-server-service.ps1 (저장소에서 publish 하는 개발용 경로)과 같은 PC 에 함께 쓰지 않는다.
+    같은 이름의 서비스를 스크립트가 이미 만들었으면 설치를 막고 먼저 지우라고 말한다 (LaunchCondition).
+  -->
+  <Package Name="BODA VMS MLOps Server"
+           Manufacturer="BODA Vision AI"
+           Version="$(var.BuildVersion)"
+           UpgradeCode="DD6C3880-28F3-4DBF-83AE-0BE5E56AE562"
+           Codepage="949"
+           Language="1042"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="최신 버전이 이미 설치되어 있습니다." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Feature Id="Main" Title="BODA VMS MLOps Server" Level="1">
+      <ComponentGroupRef Id="ServerFiles" />
+      <ComponentRef Id="ServerServiceComp" />
+      <ComponentRef Id="ServerFirewallComp" />
+      <ComponentRef Id="ServerRememberComp" />
+      <ComponentRef Id="ServerStartComp" />
+<?ifdef SamDir ?>
+      <ComponentGroupRef Id="SamFiles" />
+<?endif?>
+    </Feature>
+
+    <!-- ── 스크립트로 설치한 서비스가 이미 있는가 ──
+         이 제품이 설치돼 있지 않은데(새 설치도 업그레이드도 아닌데) 같은 이름의 서비스가 있으면 스크립트가 만든 것이다.
+         MSI 가 같은 이름으로 서비스를 만들려다 1923 오류로 끝나기 전에 무엇을 해야 하는지 말해 준다. -->
+    <Property Id="SCRIPTSERVICE" Secure="yes">
+      <RegistrySearch Id="ScriptServiceSearch" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\BodaVmsMlops" Name="ImagePath" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="NOT SCRIPTSERVICE OR Installed OR WIX_UPGRADE_DETECTED"
+            Message="이 PC 에 스크립트(install-server-service.ps1)로 설치한 MLOps 서버 서비스 BodaVmsMlops 가 있습니다. 관리자 PowerShell 에서 install-server-service.ps1 -Uninstall 로 먼저 지운 뒤 다시 설치하세요. 데이터 폴더와 설정은 지워지지 않습니다." />
+
+    <!-- ── 설정 속성: 명령줄 값 > 지난 설치에서 기억한 값 > 기본값 ──
+         같은 속성으로 RegistrySearch 를 하면 명령줄로 준 값이 AppSearch 에서 덮인다. 그래서 기억한 값은
+         따로 받아 두었다가 비어 있을 때만 채운다 (WiX 의 remember property 패턴). -->
+    <Property Id="DATADIR" Secure="yes" />
+    <Property Id="PORT" Secure="yes" />
+    <Property Id="WEBURL" Secure="yes" />
+    <!-- Hidden: 상세 로그(/l*v)에 속성값이 찍히지 않게 한다. 그래도 로그를 밖에 내보냈다면 키를 바꾸는 것을 검토하라
+         - 이 키로 MLOps 와 운영 웹 양쪽의 관리자 토큰을 만들 수 있다. -->
+    <Property Id="JWTKEY" Secure="yes" Hidden="yes" />
+
+    <Property Id="REMEMBERED_DATADIR" Secure="yes">
+      <RegistrySearch Id="RememberDataDir" Root="HKLM" Key="Software\BODA Vision AI\BODA VMS MLOps Server" Name="DataDir" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="REMEMBERED_PORT" Secure="yes">
+      <RegistrySearch Id="RememberPort" Root="HKLM" Key="Software\BODA Vision AI\BODA VMS MLOps Server" Name="Port" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="REMEMBERED_WEBURL" Secure="yes">
+      <RegistrySearch Id="RememberWebUrl" Root="HKLM" Key="Software\BODA Vision AI\BODA VMS MLOps Server" Name="WebUrl" Type="raw" Bitness="always64" />
+    </Property>
+
+    <SetProperty Id="DATADIR" Action="SetDataDirRemembered" Value="[REMEMBERED_DATADIR]" After="AppSearch" Sequence="both" Condition="NOT DATADIR AND REMEMBERED_DATADIR" />
+    <SetProperty Id="DATADIR" Action="SetDataDirDefault" Value="[CommonAppDataFolder]BODA VMS MLOps" After="SetDataDirRemembered" Sequence="both" Condition="NOT DATADIR" />
+    <SetProperty Id="PORT" Action="SetPortRemembered" Value="[REMEMBERED_PORT]" After="AppSearch" Sequence="both" Condition="NOT PORT AND REMEMBERED_PORT" />
+    <SetProperty Id="PORT" Action="SetPortDefault" Value="5310" After="SetPortRemembered" Sequence="both" Condition="NOT PORT" />
+    <!-- 운영 웹 주소는 비워 두는 것도 뜻이 있다(모니터링 끔). 기억한 값이 없는 첫 설치에만 기본값을 넣는다. -->
+    <SetProperty Id="WEBURL" Action="SetWebUrlRemembered" Value="[REMEMBERED_WEBURL]" After="AppSearch" Sequence="both" Condition="NOT WEBURL AND REMEMBERED_WEBURL" />
+    <SetProperty Id="WEBURL" Action="SetWebUrlDefault" Value="http://localhost:5292" After="SetWebUrlRemembered" Sequence="both" Condition="NOT WEBURL AND NOT REMEMBERED_WEBURL" />
+
+    <!-- 이미 설정된 PC 인가 (업그레이드·재설치): server.json 이 있으면 키 없이도 서비스를 시작한다 -->
+    <Property Id="SERVERCONFIGURED" Secure="yes">
+      <DirectorySearch Id="ServerCfgDir" Path="[CommonAppDataFolder]BODA VMS MLOps" Depth="0">
+        <FileSearch Id="ServerCfgFile" Name="server.json" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- ── configure: 받은 값으로 server.json 을 쓴다 ──
+         deferred + Impersonate=no: ProgramData 쓰기와 DPAPI 범위·파일 권한이 서비스 계정(LocalSystem)과 같아야 한다.
+         JWTKEY 가 비어 있으면 configure 가 있던 키를 그대로 둔다 (업그레이드). -->
+    <CustomAction Id="ConfigureServer"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]BODA.VMS.MLOps.Server.exe&quot; configure --data-dir &quot;[DATADIR]&quot; --port &quot;[PORT]&quot; --web-url &quot;[WEBURL]&quot; --jwt-key &quot;[JWTKEY]&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="ConfigureServer" After="InstallFiles" Condition="(JWTKEY OR SERVERCONFIGURED) AND NOT (REMOVE~=&quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+
+    <!-- ── UI ── -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <!-- 이 기본 문구에는 속성 참조를 넣지 않는다 — 속성값 안의 대괄호는 다시 풀리지 않고 글자 그대로 보인다.
+         포트·데이터 폴더가 들어간 문구는 설정 화면의 [다음] 이 Publish 로 채운다 (그때는 값이 풀린다). -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="설치가 끝났습니다. Jwt 키를 넣었다면 서비스 BodaVmsMlops 가 시작됩니다. 브라우저에서 이 PC 의 주소와 설정한 포트로 관리 화면을 열고, 운영 웹에서 받은 토큰으로 로그인하세요." />
+    <UIRef Id="WixUI_ServerInstall" />
+    <WixVariable Id="WixUIBannerBmp" Value="Resources\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="Resources\dialog.bmp" />
+
+    <Property Id="ARPNOREPAIR" Value="1" />
+  </Package>
+
+  <!-- ── 디렉터리 ── -->
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="CompanyFolder" Name="BODA Vision AI">
+        <Directory Id="INSTALLFOLDER" Name="BODA VMS MLOps Server">
+          <Directory Id="ModelsFolder" Name="models">
+            <Directory Id="SamFolder" Name="sam" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- ── 서버 파일 (publish 폴더 통째로, exe 는 서비스 컴포넌트가 가진다) ── -->
+  <Fragment>
+    <ComponentGroup Id="ServerFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)BODA.VMS.MLOps.Server.exe" />
+        <!-- 개발용 설정에는 개발 Jwt 키가 들어 있다. 설치 패키지에 절대 싣지 않는다. -->
+        <Exclude Files="$(var.PublishDir)appsettings.Development.json" />
+        <!-- 스크립트 설치 경로의 템플릿. 설치 패키지는 configure 가 server.json 을 쓰므로 쓰지 않는다. -->
+        <Exclude Files="$(var.PublishDir)appsettings.Production.template.json" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="ServerServiceComp" Directory="INSTALLFOLDER" Guid="C5BB64E0-A06E-423D-9C35-D2F173981BC5">
+      <File Id="ServerExe" Source="$(var.PublishDir)BODA.VMS.MLOps.Server.exe" KeyPath="yes" />
+      <!-- 운영 환경으로 띄운다: 개발 토큰 발급이 막히고, 500 응답에 예외를 싣지 않으며, server.json 을 읽는다. -->
+      <ServiceInstall Id="ServerSvcInstall"
+                      Name="BodaVmsMlops"
+                      DisplayName="BODA VMS MLOps Server"
+                      Description="BODA VMS MLOps - 모델 레지스트리, 데이터셋, 라벨링, 학습 작업, 모니터링 관리 서버."
+                      Arguments="--environment Production"
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Vital="yes">
+        <ServiceConfig DelayedAutoStart="yes" OnInstall="yes" OnReinstall="yes" />
+        <util:ServiceConfig FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="restart"
+                            RestartServiceDelayInSeconds="10"
+                            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="ServerSvcControl" Name="BodaVmsMlops" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <!-- 라인 PC·브라우저·워커가 붙는 포트. 포트를 바꿔 다시 설치하면 규칙도 따라 바뀐다. -->
+    <Component Id="ServerFirewallComp" Directory="INSTALLFOLDER" Guid="7EC8286F-450B-4FFB-BBEE-01BC90F02D2D">
+      <RegistryValue Root="HKLM" Key="Software\BODA Vision AI\BODA VMS MLOps Server" Name="Firewall" Type="integer" Value="1" KeyPath="yes" />
+      <fire:FirewallException Id="ServerPortException"
+                              Name="BODA VMS MLOps Server"
+                              Description="BODA VMS MLOps 관리 서버 - 라인 PC, 브라우저, 학습 워커가 붙는 포트"
+                              Port="[PORT]"
+                              Protocol="tcp"
+                              Scope="any" />
+    </Component>
+
+    <!-- 다음 업그레이드 때 다시 묻지 않도록 고른 값을 기억해 둔다. Jwt 키는 여기 두지 않는다 (server.json 에 DPAPI 로). -->
+    <Component Id="ServerRememberComp" Directory="INSTALLFOLDER" Guid="7558A951-3146-4233-8CF7-64AF45DCC635">
+      <RegistryKey Root="HKLM" Key="Software\BODA Vision AI\BODA VMS MLOps Server">
+        <RegistryValue Name="DataDir" Type="string" Value="[DATADIR]" KeyPath="yes" />
+        <RegistryValue Name="Port" Type="string" Value="[PORT]" />
+        <RegistryValue Name="WebUrl" Type="string" Value="[WEBURL]" />
+      </RegistryKey>
+    </Component>
+
+    <!-- 서비스 시작은 설정이 있을 때만. 키 없이 시작하면 서버가 부팅을 거부해 설치가 "서비스 시작 실패" 로 끝난다.
+         Wait=no: 서버가 스스로 멈추더라도(설정 오류) 설치는 끝나고, 로그에서 이유를 볼 수 있다. -->
+    <Component Id="ServerStartComp" Directory="INSTALLFOLDER" Guid="3EADCA3A-EBE4-4BE3-B9DD-FB6723A89FAE" Condition="JWTKEY OR SERVERCONFIGURED">
+      <RegistryValue Root="HKLM" Key="Software\BODA Vision AI\BODA VMS MLOps Server" Name="AutoStart" Type="integer" Value="1" KeyPath="yes" />
+      <ServiceControl Id="ServerSvcStart" Name="BodaVmsMlops" Start="install" Wait="no" />
+    </Component>
+  </Fragment>
+
+<?ifdef SamDir ?>
+  <!-- SAM 보조 라벨링 모델 (.onnx 와 .onnx.data 가 한 세트). 없으면 기능만 꺼진다. -->
+  <Fragment>
+    <ComponentGroup Id="SamFiles" Directory="SamFolder">
+      <Files Include="$(var.SamDir)*.onnx" />
+      <Files Include="$(var.SamDir)*.onnx.data" />
+    </ComponentGroup>
+  </Fragment>
+<?endif?>
+
+</Wix>

@@ -1,0 +1,71 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+
+  <!--
+    MLOps 관리 서버 설치 패키지.
+      dotnet build src\BODA.VMS.MLOps.Server.Setup -c Release
+      → src\BODA.VMS.MLOps.Server.Setup\bin\Release\BODA-VMS-MLOps-Server-<버전>.msi
+    버전은 저장소 공통 Directory.Build.props 의 Version 이다. publish 에도 같은 값을 넘겨,
+    설치된 서버가 /health 로 내는 버전과 MSI 버전이 어긋나지 않게 한다 (설치 판 확인에 쓴다).
+
+    빌드 순서: 서버를 self-contained win-x64 로 publish (관리 서버 PC 에 .NET 런타임을 요구하지 않는다.
+    관리 화면 Blazor 산출물 wwwroot 와 워커에 나눠 줄 scripts 가 함께 들어간다)
+    → publish 폴더를 통째로 수확 → 서비스 등록 + 방화벽 예외 + (설치 마법사에서 받은 값으로) configure.
+    publish 폴더는 매번 지우고 다시 만든다. 지난 빌드의 잔재가 MSI 에 섞이는 사고를 막기 위해서다.
+
+    SAM 모델 번들: src\BODA.VMS.MLOps.Server\models\sam 에 모델 파일이 있으면 [설치 폴더]\models\sam 으로
+    함께 들어간다 (약 100MB). 산출물 이름에 -sam 이 붙는다. 없으면 SAM 보조 라벨링만 꺼진 채로 동작한다(경고만).
+    모델 파일은 저장소에 없다 — scripts\export_mobile_sam.py 로 만든다.
+
+    솔루션(slnx)에는 넣지 않는다. 매 빌드마다 publish 가 도는 것을 피하기 위해서다 (워커 설치 패키지와 같은 이유).
+  -->
+  <PropertyGroup>
+    <Cultures>ko-KR</Cultures>
+    <!-- ProgramFiles64Folder 아래 컴포넌트는 64비트여야 한다 (ICE80) -->
+    <InstallerPlatform>x64</InstallerPlatform>
+    <BuildVersionFull Condition=" '$(Version)' != '' AND !$(Version.Contains('.')) ">$(Version).0.0.0</BuildVersionFull>
+    <BuildVersionFull Condition=" '$(Version)' != '' AND $(Version.Split('.').Length) == 2 ">$(Version).0.0</BuildVersionFull>
+    <BuildVersionFull Condition=" '$(Version)' != '' AND $(Version.Split('.').Length) == 3 ">$(Version).0</BuildVersionFull>
+    <BuildVersionFull Condition=" '$(BuildVersionFull)' == '' ">$(Version)</BuildVersionFull>
+    <DefineConstants>$(DefineConstants);BuildVersion=$(BuildVersionFull)</DefineConstants>
+
+    <ServerProject>$(MSBuildProjectDirectory)\..\BODA.VMS.MLOps.Server\BODA.VMS.MLOps.Server.csproj</ServerProject>
+    <!-- Root 는 끝 백슬래시 없이 (Exec 인자에서 백슬래시+따옴표가 이스케이프로 읽혀 경로가 깨진다), Dir 은 WiX 변수용으로 끝 백슬래시 포함 -->
+    <ServerPublishRoot>$(MSBuildProjectDirectory)\obj\publish</ServerPublishRoot>
+    <ServerPublishDir>$(ServerPublishRoot)\</ServerPublishDir>
+    <DefineConstants>$(DefineConstants);PublishDir=$(ServerPublishDir)</DefineConstants>
+
+    <SamDir>$(MSBuildProjectDirectory)\..\BODA.VMS.MLOps.Server\models\sam\</SamDir>
+    <HasSam Condition="Exists('$(SamDir)mobile_sam_encoder.onnx')">true</HasSam>
+    <DefineConstants Condition="'$(HasSam)' == 'true'">$(DefineConstants);SamDir=$(SamDir)</DefineConstants>
+
+    <OutputName>BODA-VMS-MLOps-Server-$(Version)</OutputName>
+    <OutputName Condition="'$(HasSam)' == 'true'">BODA-VMS-MLOps-Server-$(Version)-sam</OutputName>
+  </PropertyGroup>
+
+  <!-- 서버 publish. 이 프로젝트를 빌드하면 항상 다시 publish 한다 (증분 없음, 잔재 방지가 우선). -->
+  <Target Name="PublishServer" BeforeTargets="CoreCompile">
+    <RemoveDir Directories="$(ServerPublishRoot)" />
+    <Exec Command="dotnet publish &quot;$(ServerProject)&quot; -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=none -p:Version=$(Version) -o &quot;$(ServerPublishRoot)&quot; --nologo" />
+    <Error Condition="!Exists('$(ServerPublishDir)BODA.VMS.MLOps.Server.exe')" Text="서버 publish 산출물이 없습니다: $(ServerPublishDir)" />
+    <Error Condition="!Exists('$(ServerPublishDir)wwwroot\index.html')" Text="관리 화면(wwwroot) 이 publish 에 없습니다 - 설치하면 빈 화면이 뜹니다: $(ServerPublishDir)" />
+  </Target>
+
+  <Target Name="WarnNoSam" BeforeTargets="CoreCompile" Condition="'$(HasSam)' != 'true'">
+    <Warning Text="SAM 모델 없음: SAM 보조 라벨링이 꺼진 MSI 입니다. 넣으려면 src\BODA.VMS.MLOps.Server\models\sam 에 모델 파일을 두고 다시 빌드하세요." />
+  </Target>
+
+  <!-- Cultures 지정 시 산출물이 bin\Release\ko-KR\ 로 내려간다 → 루트로 올린다 (워커 설치 패키지와 같은 계약). -->
+  <Target Name="FlattenCultureOutput" AfterTargets="Build">
+    <ItemGroup>
+      <CultureOutput Include="$(OutputPath)ko-KR\*.msi" />
+    </ItemGroup>
+    <Move SourceFiles="@(CultureOutput)" DestinationFolder="$(OutputPath)" Condition="'@(CultureOutput)' != ''" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Firewall.wixext" Version="6.0.2" />
+  </ItemGroup>
+
+</Project>

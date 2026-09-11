@@ -207,10 +207,20 @@ Blazor 쪽 `_samIndex` 를 스스로 계산하지 마세요.
 ResolutionImpossible 입니다. 범위를 바꾸면 `py -3.12 -m venv` 로 빈 환경에 실제로 설치해 `worker_diag.py` 가 `+cu124` 를 보고하는지
 확인하세요 (2026-09-10 실증). `worker_diag.py` 는 CPU 빌드(`torch.version.cuda is None`)를 실패 항목으로 냅니다.
 
-**워커 설치 패키지는 솔루션 밖입니다.** `src/BODA.VMS.MLOps.TrainWorker.Setup`(WiX 6)은 빌드마다 워커를 self-contained 로
-publish 하므로 slnx 에 넣지 않았습니다. `dotnet build src/BODA.VMS.MLOps.TrainWorker.Setup -c Release` 로 따로 만듭니다.
+**설치 패키지 두 개는 솔루션 밖입니다.** `src/BODA.VMS.MLOps.TrainWorker.Setup`·`src/BODA.VMS.MLOps.Server.Setup`(WiX 6)은
+빌드마다 self-contained 로 publish 하므로 slnx 에 넣지 않았습니다. `dotnet build src/<그 프로젝트> -c Release` 로 따로 만듭니다.
 MSI 문자열은 코드페이지 949 라 `—`·`▸`·`…` 같은 문자를 속성값·대화상자 텍스트에 넣으면 WIX0311 로 막힙니다(주석은 괜찮습니다).
 대화상자 텍스트의 `[…]` 는 속성 참조로 읽히므로 "[토큰 발급]" 같은 표기는 ICE03 입니다.
+**XML 주석 안에 하이픈 두 개를 이어 쓰지 마세요** — `--jwt-key` 같은 명령줄 옵션을 주석에 적으면 문서가 깨져 WiX 가 읽지 못합니다.
+**`WixToolset.Firewall.wixext` 는 en-US 문구만 가집니다.** ko-KR 로 빌드하면 WIX0102 이므로 서버 패키지의 `ko-KR.wxl` 이 그 문구를 채웁니다.
+**속성값 안의 대괄호는 다시 풀리지 않습니다.** `WIXUI_EXITDIALOGOPTIONALTEXT` 에 `[PORT]` 를 넣으면 글자 그대로 보입니다 —
+대화상자 [다음] 의 `Publish Property=` 로 채우면 그 시점에 풀립니다.
+
+**서버 설치 설정은 `%ProgramData%\BODA VMS MLOps\server.json` 입니다.** MSI 가 `BODA.VMS.MLOps.Server.exe configure` 로 쓰고,
+Jwt 키는 DPAPI(LocalMachine)로 감싸 파일 권한을 SYSTEM·관리자로 좁힙니다. 서버는 **운영 환경일 때만** 이 파일을 읽고,
+`appsettings.Production.json` 바로 아래에 끼웁니다 — 스크립트로 깐 PC 에 지난 MSI 가 남긴 이 파일이 있어도 스크립트 설정이 이기게.
+자리를 옮기면 `ServerSetupTests.A_leftover_file_does_not_override_the_script_installed_settings` 가 막습니다.
+설치 패키지에서 `appsettings.Development.json` 을 빼는 Exclude 를 지우지 마세요 — 개발 Jwt 키가 들어 있습니다.
 
 ## 손대면 안 되는 것
 

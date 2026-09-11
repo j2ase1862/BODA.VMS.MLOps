@@ -1,0 +1,113 @@
+<!-- WixUI_InstallDir(WiX 6.0.2) 기반 커스텀 다이얼로그 세트 — 워커 설치 패키지의 WixUI_WorkerInstall 과 같은 골격.
+     Welcome → InstallDir → 서버 설정(ServerConfigDlg) → VerifyReady. 라이선스 화면은 없다.
+     ServerConfigDlg 의 입력은 Package.wxs 의 DATADIR / PORT / WEBURL / JWTKEY 속성으로 들어가
+     무인 설치(msiexec … JWTKEY= DATADIR=)와 같은 경로를 탄다.
+
+     주의 (CLAUDE.md): MSI 문자열은 코드페이지 949 라 em dash 같은 문자를 속성값·대화상자 텍스트에 넣으면 WIX0311 로 막힌다.
+     대화상자 텍스트의 대괄호는 속성 참조로 읽힌다 — 뜻한 곳에만 쓴다. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Fragment>
+    <UI Id="WixUI_ServerInstall">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Segoe UI" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Segoe UI" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Segoe UI" Size="9" Bold="yes" />
+
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="CheckTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="3" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ServerConfigDlg" Order="4" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+
+      <Publish Dialog="ServerConfigDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
+      <!-- 마치는 화면 문구를 여기서 채운다: Publish 의 Value 는 이 시점에 속성이 풀린다 -->
+      <Publish Dialog="ServerConfigDlg" Control="Next" Property="WIXUI_EXITDIALOGOPTIONALTEXT"
+               Value="설치가 끝났습니다. Jwt 키를 넣었다면 서비스 BodaVmsMlops 가 시작됩니다. 브라우저에서 http://localhost:[PORT] 로 관리 화면을 열고 운영 웹에서 받은 토큰으로 로그인하세요. 다른 PC 에서는 이 PC 의 주소와 포트 [PORT] 로 붙습니다. 로그: [DATADIR]\logs" Order="1" />
+      <Publish Dialog="ServerConfigDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="2" />
+      <Publish Dialog="ServerConfigDlg" Control="Cancel" Event="SpawnDialog" Value="CancelDlg" />
+
+      <Publish Dialog="BrowseDlg" Control="OK" Event="CheckTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SetTargetPath" Value="[_BrowseProperty]" Order="3" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="4" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ServerConfigDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+
+    <!-- 서버 설정. 키를 비워 두고 지나가면 (첫 설치일 때) 파일만 설치되고 서비스는 시작하지 않는다
+         (Package.wxs 의 ServerStartComp 조건). 업그레이드는 비워 두면 있던 키를 그대로 쓴다. -->
+    <UI>
+      <Dialog Id="ServerConfigDlg" Width="370" Height="270" Title="[ProductName] 설치">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44"
+                 TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15"
+                 Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}서버 설정" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15"
+                 Transparent="yes" NoPrefix="yes"
+                 Text="데이터를 둘 곳과 운영 웹(BODA VMS Web) 연결을 지정합니다." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+        <Control Id="DataLabel" Type="Text" X="25" Y="52" Width="320" Height="12" NoPrefix="yes"
+                 Text="데이터 폴더 (DB, 사진, 모델, 로그 - 큰 드라이브에 두고 백업 대상에 넣으세요)" />
+        <Control Id="DataEdit" Type="Edit" X="25" Y="65" Width="320" Height="16" Property="DATADIR" Text="{260}" />
+
+        <Control Id="PortLabel" Type="Text" X="25" Y="87" Width="80" Height="12" NoPrefix="yes"
+                 Text="포트" />
+        <Control Id="PortEdit" Type="Edit" X="25" Y="100" Width="60" Height="16" Property="PORT" Text="{5}" />
+        <Control Id="PortHint" Type="Text" X="92" Y="102" Width="253" Height="12" NoPrefix="yes"
+                 Text="라인 PC, 브라우저, 학습 워커가 붙는 포트. 방화벽 예외를 만듭니다." />
+
+        <Control Id="WebLabel" Type="Text" X="25" Y="122" Width="320" Height="12" NoPrefix="yes"
+                 Text="운영 웹 내부 주소 (모니터링용, 같은 PC 면 http://localhost:5292 . 비우면 모니터링만 꺼집니다)" />
+        <Control Id="WebEdit" Type="Edit" X="25" Y="135" Width="320" Height="16" Property="WEBURL" Text="{200}" />
+
+        <Control Id="KeyLabel" Type="Text" X="25" Y="157" Width="320" Height="12" NoPrefix="yes"
+                 Text="Jwt 키 (로그인 토큰을 발급하는 운영 웹과 같은 값, 32자 이상)" />
+        <Control Id="KeyEdit" Type="Edit" X="25" Y="170" Width="320" Height="16" Property="JWTKEY" Password="yes" Text="{512}" />
+
+        <Control Id="Hint" Type="Text" X="25" Y="192" Width="320" Height="36" NoPrefix="yes"
+                 Text="Jwt 키는 이 PC 에서만 풀리게 암호화해 관리자만 읽을 수 있는 파일에 둡니다. 업그레이드 때는 비워 두면 있던 키를 그대로 씁니다. 첫 설치에 비워 두면 서비스는 멈춘 채로 남습니다 - 그때는 BODA.VMS.MLOps.Server.exe configure --jwt-key 키 를 실행한 뒤 서비스를 시작하세요." />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17"
+                 Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17"
+                 Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17"
+                 Cancel="yes" Text="!(loc.WixUICancel)" />
+      </Dialog>
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+
+</Wix>
