@@ -17,7 +17,15 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
+// 설치 패키지(MSI)가 부르는 명령 — %ProgramData%\BODA VMS MLOps\server.json 을 쓰고 끝낸다 (ServerSetup 참고).
+//   BODA.VMS.MLOps.Server.exe configure --data-dir D:\BODA-MLOps --port 5310 --web-url http://localhost:5292 --jwt-key <키>
+if (args.Length > 0 && args[0].Equals("configure", StringComparison.OrdinalIgnoreCase))
+    return ServerSetup.Configure(args[1..]);
+
 var builder = WebApplication.CreateBuilder(args);
+
+// 설치 설정(server.json)을 얹고 DPAPI 로 감싼 Jwt 키를 푼다. 운영 환경일 때만 얹는다.
+ServerSetup.Apply(builder.Configuration, builder.Environment);
 
 // Windows 서비스 지원 (콘솔 실행 시 영향 없음)
 builder.Host.UseWindowsService();
@@ -102,7 +110,8 @@ builder.Services.AddSignalR().AddJsonProtocol(o =>
 var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
 if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
     throw new InvalidOperationException(
-        "Jwt:Key 가 설정되지 않았거나 32자 미만입니다. 개발: dotnet user-secrets set \"Jwt:Key\" \"<32자 이상>\" · 운영: 환경변수 Jwt__Key. " +
+        "Jwt:Key 가 설정되지 않았거나 32자 미만입니다. 개발: dotnet user-secrets set \"Jwt:Key\" \"<32자 이상>\" · " +
+        "운영: 설치 패키지로 넣었다면 BODA.VMS.MLOps.Server.exe configure --jwt-key <키>, 스크립트로 넣었다면 환경변수 Jwt__Key. " +
         "BODA.VMS.Web 와 같은 값을 쓰면 기존 로그인 토큰을 그대로 받습니다.");
 
 builder.Services.AddAuthentication(SmartAuthScheme.Name)
@@ -217,6 +226,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", version = typeof(Ser
 app.MapFallbackToFile("index.html");
 
 app.Run();
+return 0;
 
 /// <summary>
 /// WebApplicationFactory 진입점 표식. 워커 프로젝트도 최상위 문(암시적 Program)을 쓰므로,

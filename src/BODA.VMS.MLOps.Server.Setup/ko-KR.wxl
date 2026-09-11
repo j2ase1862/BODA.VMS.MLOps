@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WixToolset.Firewall.wixext 는 en-US 문구만 가지고 있다. 이 패키지는 Cultures=ko-KR 로 빌드하므로
+  확장이 쓰는 문구를 여기서 채우지 않으면 WIX0102 (localization variable is unknown) 로 막힌다.
+  설치 진행 화면과 오류 대화상자에 보이는 글이다. 코드페이지 949 밖 글자를 쓰지 않는다.
+-->
+<WixLocalization Culture="ko-KR" Codepage="949" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="WixSchedFirewallExceptionsInstall" Value="Windows 방화벽 예외를 준비하는 중" />
+  <String Id="WixSchedFirewallExceptionsUninstall" Value="Windows 방화벽 예외 제거를 준비하는 중" />
+  <String Id="WixRollbackFirewallExceptionsInstall" Value="Windows 방화벽 예외를 되돌리는 중" />
+  <String Id="WixExecFirewallExceptionsInstall" Value="Windows 방화벽 예외를 만드는 중" />
+  <String Id="WixRollbackFirewallExceptionsUninstall" Value="Windows 방화벽 예외 제거를 되돌리는 중" />
+  <String Id="WixExecFirewallExceptionsUninstall" Value="Windows 방화벽 예외를 지우는 중" />
+  <String Id="msierrFirewallCannotConnect" Value="Windows 방화벽 서비스에 연결하지 못했습니다. 방화벽 서비스가 켜져 있는지 확인하세요. 무시하면 방화벽 예외 없이 설치를 계속합니다 - 그때는 포트를 직접 열어야 다른 PC 에서 붙을 수 있습니다." />
+</WixLocalization>

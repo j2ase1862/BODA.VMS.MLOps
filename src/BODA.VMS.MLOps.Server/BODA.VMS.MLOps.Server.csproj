@@ -16,6 +16,8 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.*" />
+    <!-- 설치 설정(server.json)의 Jwt 키를 DPAPI(LocalMachine)로 감싼다 — 워커의 worker.json 과 같은 방식 -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.*" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.*" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.0.*" />
