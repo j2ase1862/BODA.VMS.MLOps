@@ -182,9 +182,88 @@ def snap_resolution(model, requested):
     return snapped
 
 
+# ─────────────────────────── 학습 곡선 ───────────────────────────
+
+def write_history_artifacts(output, history, epochs, best_epoch):
+    """에폭별 기록을 metrics.json(요약 숫자 + history) 과 curves.png(학습 곡선) 으로 남긴다.
+
+    MLOps 워커가 output 폴더에서 이 두 파일을 찾아 아티팩트로 올린다(metrics·curve). 서버는 metrics.json 의
+    최상위 숫자만 ModelVersion.Metrics 로 읽으므로 요약은 평평하게 두고, 에폭별 기록은 history 아래에 둔다.
+    매 에폭마다 다시 쓴다 — 취소되거나 죽어도 그때까지의 곡선이 남는다. 그림은 matplotlib 이 없으면 건너뛴다.
+    train_dfine.py 와 같은 규약 (스크립트는 워커가 파일 하나씩 받아 돌리므로 공용 모듈을 쓸 수 없다).
+
+    best_epoch 은 여기서 고른 것이 아니라 "지금까지 mAP 가 가장 높았던 에폭" 표시용이다 —
+    실제 가중치 선택은 RF-DETR 내부가 한다.
+    """
+    if not history:
+        return
+    last = history[-1]
+    best = next((h for h in history if h["epoch"] == best_epoch), last)
+    summary = {
+        "epochs": epochs,
+        "epochs_done": last["epoch"],
+        "elapsed_sec": last["elapsed_sec"],
+    }
+    if last.get("train_loss") is not None:
+        summary["train_loss"] = last["train_loss"]
+    scored = [h for h in history if h.get("map") is not None]
+    if scored:
+        summary["best_epoch"] = best_epoch
+        summary["map"] = last.get("map")
+        summary["best_map"] = max(h["map"] for h in scored)
+        if best.get("train_loss") is not None:
+            summary["best_train_loss"] = best["train_loss"]
+    summary["history"] = history
+    tmp = os.path.join(output, "metrics.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, os.path.join(output, "metrics.json"))
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
+    except Exception as ex:  # noqa: BLE001
+        emit("WARN", f"matplotlib 없음 — curves.png 생략 ({ex})")
+        return
+    ep = [h["epoch"] for h in history]
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=110)
+    handles, labels = [], []
+    if any(h.get("train_loss") is not None for h in history):
+        ax.plot(ep, [h["train_loss"] if h.get("train_loss") is not None else float("nan") for h in history],
+                marker="o", ms=3, label="train loss")
+        handles, labels = ax.get_legend_handles_labels()
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss")
+    ax.grid(True, alpha=0.3)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    if scored:
+        ax2 = ax.twinx()
+        ax2.plot(ep, [h.get("map") if h.get("map") is not None else float("nan") for h in history],
+                 color="tab:green", marker="s", ms=3, label="val mAP (mask)")
+        ax2.set_ylabel("mAP")
+        ax2.set_ylim(0, 1)
+        h2, l2 = ax2.get_legend_handles_labels()
+        handles += h2
+        labels += l2
+        ax.axvline(best_epoch, color="gray", ls="--", lw=0.8)
+    if handles:
+        ax.legend(handles, labels, loc="best", fontsize=8)
+    title = "RF-DETR-seg training"
+    if scored:
+        title += f" — best epoch {best_epoch}/{epochs}"
+    ax.set_title(title)
+    fig.tight_layout()
+    tmp_png = os.path.join(output, "curves.png.tmp")
+    fig.savefig(tmp_png, format="png")
+    plt.close(fig)
+    os.replace(tmp_png, os.path.join(output, "curves.png"))
+
+
 # ─────────────────────────── 진행 보고 ───────────────────────────
 
-def attach_progress(rfdetr, total_epochs):
+def attach_progress(rfdetr, total_epochs, output=None):
     """
     에폭마다 진행을 stdout 프로토콜로 흘려보낸다.
 
@@ -206,10 +285,26 @@ def attach_progress(rfdetr, total_epochs):
         return
 
     class Reporter(pl.Callback):
-        """에폭이 끝날 때마다 한 줄씩. 없는 값은 내보내지 않는다 — 0 으로 채우면 손실이 0 인 것처럼 보인다."""
+        """에폭이 끝날 때마다 한 줄씩. 없는 값은 내보내지 않는다 — 0 으로 채우면 손실이 0 인 것처럼 보인다.
 
-        def __init__(self, total):
+        같은 값을 history 에 쌓아 metrics.json·curves.png 로도 남긴다. 검증은 학습 에폭보다 늦게 끝나므로
+        (on_validation_epoch_end 가 뒤) mAP 는 그 에폭 항목에 나중에 채워 넣고 그때 파일을 다시 쓴다.
+        """
+
+        def __init__(self, total, output):
             self.total = max(1, total)
+            self.output = output
+            self.history = []
+            self.best_epoch = 0
+            self.t0 = time.time()
+
+        def _flush(self):
+            if not self.output:
+                return
+            try:
+                write_history_artifacts(self.output, self.history, self.total, self.best_epoch)
+            except Exception as ex:  # noqa: BLE001
+                emit("WARN", f"학습 곡선 기록 실패 (계속 진행): {ex}")
 
         def on_train_epoch_end(self, trainer, module):
             done = int(trainer.current_epoch) + 1
@@ -221,12 +316,25 @@ def attach_progress(rfdetr, total_epochs):
             if loss is not None:
                 emit("LOSS", f"{loss:.4f}")
 
+            self.history.append({"epoch": done, "train_loss": loss, "map": None,
+                                 "elapsed_sec": round(time.time() - self.t0, 1)})
+            self._flush()
+
         def on_validation_epoch_end(self, trainer, module):
             metrics = {k: v for k, v in trainer.callback_metrics.items()}
             # 세그멘테이션이므로 마스크 mAP 를 먼저 본다. 없으면 박스 mAP.
             score = _first(metrics, ("val_map_segm", "map_segm", "val_map", "map", "val_map_50"))
-            if score is not None:
-                emit("ACC", f"{score:.4f}")
+            if score is None:
+                return
+            emit("ACC", f"{score:.4f}")
+            # 검증만 먼저 도는 판(sanity check 등)이면 채울 학습 에폭이 아직 없다
+            if not self.history:
+                return
+            self.history[-1]["map"] = score
+            if self.best_epoch == 0 or score >= max(
+                    h["map"] for h in self.history if h.get("map") is not None):
+                self.best_epoch = self.history[-1]["epoch"]
+            self._flush()
 
     def _first(metrics, keys):
         for key in keys:
@@ -239,7 +347,7 @@ def attach_progress(rfdetr, total_epochs):
 
     def with_reporter(*args, **kwargs):
         callbacks = list(kwargs.pop("callbacks", None) or [])
-        callbacks.append(Reporter(total_epochs))
+        callbacks.append(Reporter(total_epochs, output))
         try:
             return original(*args, callbacks=callbacks, **kwargs)
         except TypeError:
@@ -403,7 +511,7 @@ def main():
     model = build_model(rfdetr, args.pretrained)
     imgsz = snap_resolution(model, args.imgsz)
 
-    attach_progress(rfdetr, args.epochs)
+    attach_progress(rfdetr, args.epochs, args.output)
 
     emit("INFO", f"학습 시작 — epochs={args.epochs} batch={args.batch_size} lr={args.lr} imgsz={imgsz} device={device}")
     started = time.time()

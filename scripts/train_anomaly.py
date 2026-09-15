@@ -35,6 +35,48 @@ import sys
 import json
 
 
+def write_metrics(output, summary, scores=None, threshold=None, title="Anomaly training"):
+    """metrics.json(요약 숫자) 과 curves.png 를 남긴다.
+
+    MLOps 워커가 output 폴더에서 이 두 파일을 찾아 아티팩트로 올린다(metrics·curve). 서버는 metrics.json 의
+    최상위 숫자만 ModelVersion.Metrics 로 읽으므로 요약은 평평하게 둔다.
+
+    <b>이 스크립트에는 에폭 루프가 없다</b> — anomalib 은 Engine 이 내부에서 돌리고, 간이 경로는 특징을
+    한 번 훑어 뱅크를 만든다. 그래서 다른 스크립트 같은 학습 곡선이 성립하지 않는다. 대신 판정에 실제로
+    쓰이는 것(정상 이미지의 이상 점수 분포와 그 위에 놓인 임계값)을 그린다 — 임계값이 분포의 오른쪽
+    꼬리에 적절히 놓였는지가 이 모델에서 곡선보다 쓸모 있다. 점수가 없으면 그림은 건너뛴다.
+    """
+    tmp = os.path.join(output, "metrics.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, os.path.join(output, "metrics.json"))
+
+    if scores is None or len(scores) == 0:
+        return
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as ex:  # noqa: BLE001
+        print(f"[WARN] matplotlib 없음 — curves.png 생략 ({ex})", flush=True)
+        return
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=110)
+    ax.hist(scores, bins=min(40, max(5, len(scores) // 2)), color="tab:blue", alpha=0.75,
+            label="normal image score")
+    if threshold is not None:
+        ax.axvline(threshold, color="tab:red", ls="--", lw=1.2, label=f"threshold {threshold:.4f}")
+    ax.set_xlabel("anomaly score")
+    ax.set_ylabel("images")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=8)
+    ax.set_title(title)
+    fig.tight_layout()
+    tmp_png = os.path.join(output, "curves.png.tmp")
+    fig.savefig(tmp_png, format="png")
+    plt.close(fig)
+    os.replace(tmp_png, os.path.join(output, "curves.png"))
+
+
 def main():
     parser = argparse.ArgumentParser(description="VMS Anomaly Detection Training")
     parser.add_argument("--dataset", required=True, help="Dataset path (MVTec format)")
@@ -130,6 +172,18 @@ def train_with_anomalib(args):
     if test_results:
         auroc = test_results[0].get("image_AUROC", 0)
         print(f"[ACC] {auroc:.4f}", flush=True)
+
+    # 지표 남기기 — 에폭 루프가 없으므로 요약만. 숫자로 읽히는 항목만 골라 평평하게 둔다.
+    try:
+        summary = {"method": args.method, "backbone": args.backbone,
+                   "epochs": args.epochs, "imgsz": args.imgsz}
+        if test_results:
+            for key, value in test_results[0].items():
+                if isinstance(value, (int, float)):
+                    summary[str(key)] = float(value)
+        write_metrics(args.output, summary, title=f"Anomaly ({args.method}) — test metrics")
+    except Exception as ex:  # noqa: BLE001
+        print(f"[WARN] 지표 기록 실패 (계속 진행): {ex}", flush=True)
 
     print("[PROGRESS] 85", flush=True)
 
@@ -262,6 +316,29 @@ def train_simple_patchcore(args):
 
     print(f"Threshold: {threshold:.4f}", flush=True)
     print(f"[ACC] {1.0:.4f}", flush=True)
+
+    # 지표·분포 남기기 — 정상 이미지 점수와 그 위에 놓인 임계값이 이 모델의 판정 근거다
+    try:
+        write_metrics(
+            args.output,
+            {
+                "method": "simple_patchcore",
+                "backbone": args.backbone,
+                "imgsz": args.imgsz,
+                "threshold": threshold,
+                "coreset_ratio": coreset_ratio,
+                "feature_dim": int(feature_matrix.shape[1]),
+                "n_samples": int(feature_matrix.shape[0]),
+                "score_mean": float(np.mean(mean_distances)),
+                "score_std": float(np.std(mean_distances)),
+                "score_max": float(np.max(mean_distances)),
+            },
+            scores=mean_distances,
+            threshold=threshold,
+            title="Anomaly (simple PatchCore) — normal score distribution",
+        )
+    except Exception as ex:  # noqa: BLE001
+        print(f"[WARN] 지표 기록 실패 (계속 진행): {ex}", flush=True)
 
     # 간이 ONNX 변환 (특징 추출 백본만)
     if args.export_onnx:
