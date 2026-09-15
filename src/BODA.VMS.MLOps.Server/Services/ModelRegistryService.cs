@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Models;
 using BODA.VMS.MLOps.Core.Domain;
@@ -240,7 +241,14 @@ public sealed class ModelRegistryService(
     }
 
     /// <summary>라인 PC 의 model:// 참조 해석 — stage=production(기본) 또는 version=N</summary>
-    public async Task<ResolveResponse> ResolveAsync(Guid modelId, string? stage, int? number, CancellationToken ct)
+    /// <summary>
+    /// 라인 PC 가 model:// 참조를 실제 버전으로 푼다.
+    ///
+    /// <para><paramref name="caller"/> 를 주면 <b>누가 어느 버전을 언제 물었는지</b> 감사에 남긴다.
+    /// 예전에는 라인의 lastSeen 으로만 간접 추정할 수 있어, 사고가 났을 때 "그 라인이 그때 어느 버전을
+    /// 쓰고 있었나" 에 답할 수 없었다.</para>
+    /// </summary>
+    public async Task<ResolveResponse> ResolveAsync(Guid modelId, string? stage, int? number, CancellationToken ct, CurrentUser? caller = null)
     {
         if (!await db.Models.AnyAsync(m => m.Id == modelId, ct)) throw ApiException.NotFound("모델");
         ModelVersion? v;
@@ -253,15 +261,84 @@ public sealed class ModelRegistryService(
                 .OrderByDescending(x => x.Number).FirstOrDefaultAsync(ct);
         }
         if (v is null) throw ApiException.NotFound(number is not null ? $"버전 {number}" : $"{stage ?? "production"} 스테이지 버전");
+
+        if (caller is not null)
+        {
+            audit.Record(AuditService.Delivery, "Resolved", caller.Name, v.Id.ToString(),
+                new { lineId = caller.LineId, modelId, versionId = v.Id, number = v.Number, stage = v.Stage.ToString(), asked = number is not null ? $"v{number}" : stage ?? "production" });
+            await db.SaveChangesAsync(ct);
+        }
         return new ResolveResponse(modelId, v.Id, v.Number, v.Sha256, v.SizeBytes, v.Stage, Mapping.ArtifactUrl(v.Id));
     }
 
-    public async Task<(Stream Stream, ModelVersion Version)> OpenArtifactAsync(Guid versionId, CancellationToken ct)
+    /// <summary>
+    /// ONNX 파일을 연다.
+    ///
+    /// <para><paramref name="recordDelivery"/> 가 true 일 때만 감사에 남긴다. 이 응답은 Range 를 지원해
+    /// 한 번 받아 가는 데 요청이 여러 번 올 수 있는데, 그걸 다 남기면 "몇 번 받았나" 가 뜻을 잃는다 —
+    /// 호출 측이 <b>처음 조각(또는 통짜 요청)</b>일 때만 true 를 준다.</para>
+    /// </summary>
+    public async Task<(Stream Stream, ModelVersion Version)> OpenArtifactAsync(Guid versionId, CancellationToken ct,
+        CurrentUser? caller = null, bool recordDelivery = false)
     {
         var v = await db.ModelVersions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == versionId, ct)
                 ?? throw ApiException.NotFound("모델 버전");
         if (!storage.Exists(v.ArtifactKey)) throw ApiException.NotFound("아티팩트 파일");
+
+        if (caller is not null && recordDelivery)
+        {
+            audit.Record(AuditService.Delivery, "Downloaded", caller.Name, v.Id.ToString(),
+                new { lineId = caller.LineId, modelId = v.ModelId, versionId = v.Id, number = v.Number, sha256 = v.Sha256, sizeBytes = v.SizeBytes });
+            await db.SaveChangesAsync(ct);
+        }
         return (storage.OpenRead(v.ArtifactKey), v);
+    }
+
+    /// <summary>
+    /// 이 모델(또는 특정 버전)을 라인들이 받아 간 이력.
+    ///
+    /// <para>감사 로그의 Delivery 범주를 읽어 화면용으로 편다. 감사 로그는 append-only 라
+    /// 여기서는 읽기만 한다. DetailsJson 이 깨져 있으면 그 줄만 건너뛴다 — 옛 형식이 섞여 있어도
+    /// 화면 전체가 비지 않도록.</para>
+    /// </summary>
+    public async Task<List<ModelDeliveryDto>> ListDeliveriesAsync(Guid modelId, Guid? versionId, int take, CancellationToken ct)
+    {
+        // Guid → 문자열 변환은 반드시 메모리에서 한다. SQL 로 번역되면 SQLite 가 대문자 TEXT 로 돌려주는데
+        // EntityId 는 C# Guid.ToString()(소문자)으로 적혀 있어 한 건도 맞지 않는다.
+        List<Guid> ids = versionId is { } one
+            ? [one]
+            : await db.ModelVersions.AsNoTracking().Where(v => v.ModelId == modelId).Select(v => v.Id).ToListAsync(ct);
+        var versionIds = ids.Select(g => g.ToString()).ToList();
+        if (versionIds.Count == 0) return [];
+
+        var rows = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.Category == AuditService.Delivery && a.EntityId != null && versionIds.Contains(a.EntityId))
+            .OrderByDescending(a => a.At)
+            .Take(Math.Clamp(take, 1, 500))
+            .ToListAsync(ct);
+
+        var list = new List<ModelDeliveryDto>(rows.Count);
+        foreach (var a in rows)
+        {
+            if (!Guid.TryParse(a.EntityId, out var vid)) continue;
+            string? lineId = null, stage = null, asked = null;
+            int? number = null;
+            if (!string.IsNullOrEmpty(a.DetailsJson))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(a.DetailsJson);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("lineId", out var l) && l.ValueKind == JsonValueKind.String) lineId = l.GetString();
+                    if (root.TryGetProperty("stage", out var st) && st.ValueKind == JsonValueKind.String) stage = st.GetString();
+                    if (root.TryGetProperty("asked", out var ak) && ak.ValueKind == JsonValueKind.String) asked = ak.GetString();
+                    if (root.TryGetProperty("number", out var n) && n.TryGetInt32(out var ni)) number = ni;
+                }
+                catch (JsonException) { /* 옛 형식이면 있는 것만 보여 준다 */ }
+            }
+            list.Add(new ModelDeliveryDto(a.At, a.Action, lineId, a.Actor, vid, number, stage, asked));
+        }
+        return list;
     }
 
     // ───────────── 규칙 ─────────────

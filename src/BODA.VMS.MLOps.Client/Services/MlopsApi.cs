@@ -46,6 +46,11 @@ public sealed class MlopsApi(HttpClient http)
     public Task<List<ModelVersionDto>> VersionsAsync(Guid modelId) => GetAsync<List<ModelVersionDto>>($"/api/models/{modelId}/versions");
     public Task<ModelVersionDto> VersionAsync(Guid id) => GetAsync<ModelVersionDto>($"/api/model-versions/{id}");
     public Task<ModelVersionDto> PromoteAsync(Guid versionId, PromoteRequest req) => PostAsync<PromoteRequest, ModelVersionDto>($"/api/model-versions/{versionId}/promote", req);
+    /// <summary>라인 배포 이력 — 어느 라인이 어느 버전을 언제 받아 갔는지 (Engineer 이상).</summary>
+    public Task<List<ModelDeliveryDto>> DeliveriesAsync(Guid modelId, Guid? versionId = null, int take = 100) =>
+        GetAsync<List<ModelDeliveryDto>>($"/api/models/{modelId}/deliveries?take={take}"
+            + (versionId is { } v ? $"&versionId={v}" : ""));
+
     public static string ArtifactUrl(Guid versionId) => $"/api/model-versions/{versionId}/artifact";
 
     /// <summary>ONNX 업로드 — file 파트 + meta(json) 파트</summary>

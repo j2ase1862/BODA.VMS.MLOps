@@ -101,6 +101,82 @@ public class LineClientTests : IClassFixture<MlopsApiFactory>
         bytes.Should().Equal(onnx, "받은 파일이 올린 파일과 같아야 캐시에 넣을 수 있다");
     }
 
+    /// <summary>
+    /// 라인이 모델을 받아 간 사실이 남아야 한다.
+    ///
+    /// <para>예전에는 라인의 마지막 접속 시각으로만 간접 추정할 수 있었다. 사고가 났을 때
+    /// "그 라인이 그때 어느 버전을 쓰고 있었나" 에 답하려면 물어본 시점과 실제로 받아 간 시점이
+    /// 둘 다 남아야 한다.</para>
+    /// </summary>
+    [Fact]
+    public async Task 라인이_모델을_받아_간_기록이_남는다()
+    {
+        var eng = await _f.EngineerAsync();
+        var admin = await _f.AdminAsync();
+        var model = await CreateModelAsync(eng, "line-audit", TaskType.Detection, ["good", "defect"]);
+        var onnx = OnnxStubs.Bytes(OnnxStubs.DeployWithMeta);
+        var version = (await (await UploadVersionAsync(eng, model.Id, onnx, new VersionUploadMeta(Classes: ["good", "defect"])))
+            .Content.ReadFromJsonAsync<ModelVersionDto>(Json))!;
+        (await admin.PostAsJsonAsync($"/api/model-versions/{version.Id}/promote", new PromoteRequest(ModelStage.Staging), Json)).EnsureSuccessStatusCode();
+        (await admin.PostAsJsonAsync($"/api/model-versions/{version.Id}/promote", new PromoteRequest(ModelStage.Production), Json)).EnsureSuccessStatusCode();
+
+        var (_, line) = await IssueAsync("LINE-AUDIT");
+
+        // 아직 아무도 받아 가지 않았다
+        (await eng.GetFromJsonAsync<List<ModelDeliveryDto>>($"/api/models/{model.Id}/deliveries", Json))!
+            .Should().BeEmpty();
+
+        await line.GetFromJsonAsync<ResolveResponse>($"/api/models/{model.Id}/resolve?stage=production", Json);
+        (await line.GetAsync($"/api/model-versions/{version.Id}/artifact")).EnsureSuccessStatusCode();
+
+        var deliveries = (await eng.GetFromJsonAsync<List<ModelDeliveryDto>>($"/api/models/{model.Id}/deliveries", Json))!;
+
+        deliveries.Should().HaveCount(2);
+        deliveries.Should().OnlyContain(d => d.LineId == "LINE-AUDIT" && d.ModelVersionId == version.Id);
+        var resolved = deliveries.Single(d => d.Action == "Resolved");
+        resolved.Asked.Should().Be("production");
+        resolved.Number.Should().Be(version.Number);
+        resolved.Stage.Should().Be(nameof(ModelStage.Production));
+        deliveries.Should().ContainSingle(d => d.Action == "Downloaded");
+
+        // 특정 버전으로 좁힐 수 있고, 다른 버전으로 좁히면 비어 있다
+        (await eng.GetFromJsonAsync<List<ModelDeliveryDto>>($"/api/models/{model.Id}/deliveries?versionId={version.Id}", Json))!
+            .Should().HaveCount(2);
+        (await eng.GetFromJsonAsync<List<ModelDeliveryDto>>($"/api/models/{model.Id}/deliveries?versionId={Guid.NewGuid()}", Json))!
+            .Should().BeEmpty();
+
+        // 라인 토큰은 남의 배포 이력을 볼 수 없다 (Engineer 이상)
+        (await line.GetAsync($"/api/models/{model.Id}/deliveries")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// 이어받기(Range)로 여러 조각에 나눠 받아도 "받아 감" 은 한 번만 세어야 한다.
+    /// 조각마다 남기면 "몇 번 받아 갔나" 가 뜻을 잃는다.
+    /// </summary>
+    [Fact]
+    public async Task 이어받기_조각은_배포_기록을_부풀리지_않는다()
+    {
+        var eng = await _f.EngineerAsync();
+        var model = await CreateModelAsync(eng, "line-audit-range", TaskType.Detection, ["good", "defect"]);
+        var onnx = OnnxStubs.Bytes(OnnxStubs.DeployWithMeta);
+        var version = (await (await UploadVersionAsync(eng, model.Id, onnx, new VersionUploadMeta(Classes: ["good", "defect"])))
+            .Content.ReadFromJsonAsync<ModelVersionDto>(Json))!;
+
+        var (_, line) = await IssueAsync("LINE-RANGE");
+
+        // 첫 조각 → 1건, 이어지는 조각 → 늘지 않는다
+        foreach (var range in new[] { "bytes=0-9", "bytes=10-19", "bytes=20-" })
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, $"/api/model-versions/{version.Id}/artifact");
+            req.Headers.TryAddWithoutValidation("Range", range);
+            (await line.SendAsync(req)).StatusCode.Should().Be(HttpStatusCode.PartialContent, range);
+        }
+
+        var downloads = (await eng.GetFromJsonAsync<List<ModelDeliveryDto>>($"/api/models/{model.Id}/deliveries", Json))!
+            .Where(d => d.Action == "Downloaded").ToList();
+        downloads.Should().HaveCount(1, "첫 조각만 센다");
+    }
+
     [Fact]
     public async Task 라인_토큰으로_NG_사진을_올릴_수_있다()
     {
