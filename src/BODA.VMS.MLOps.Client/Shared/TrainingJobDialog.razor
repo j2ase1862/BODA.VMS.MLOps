@@ -76,13 +76,23 @@
                     </MudSelect>
                 </MudItem>
                 <MudItem xs="12" md="6">
-                    <MudSelect T="string" @bind-Value="_pretrainedRef" Label="사전학습 가중치" Clearable="true"
-                               HelperText="서버 미러에서만 받습니다">
-                        @foreach (var p in _pretrained)
-                        {
-                            <MudSelectItem T="string" Value="@p.Ref">@p.Ref (@Display.Size(p.TotalBytes))</MudSelectItem>
-                        }
-                    </MudSelect>
+                    @if (PretrainedNeed == PretrainedRequirement.NotSupported)
+                    {
+                        @* 이 스크립트는 --pretrained 를 받지 못한다 — 칸을 없애 고를 수 없게 한다 *@
+                        <MudTextField T="string" Value="@("쓰지 않음")" Label="사전학습 가중치" ReadOnly="true" Disabled="true"
+                                      HelperText="@($"{_script.FileName()} 은(는) 백본을 아래 하이퍼파라미터에서 이름으로 고릅니다")" />
+                    }
+                    else
+                    {
+                        <MudSelect T="string" @bind-Value="_pretrainedRef" Label="@(PretrainedNeed == PretrainedRequirement.Required ? "사전학습 가중치 *" : "사전학습 가중치")"
+                                   Clearable="true" Error="@(PretrainedNeed == PretrainedRequirement.Required && string.IsNullOrWhiteSpace(_pretrainedRef))"
+                                   HelperText="@PretrainedHelp">
+                            @foreach (var p in _pretrained)
+                            {
+                                <MudSelectItem T="string" Value="@p.Ref">@p.Ref (@Display.Size(p.TotalBytes))</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
                 </MudItem>
                 <MudItem xs="12" md="4">
                     <MudTextField @bind-Value="_backbone" Label="백본 (선택)" HelperText="예: dfine-small" />
@@ -141,7 +151,7 @@
     <DialogActions>
         <MudButton OnClick="@(() => VisibleChanged.InvokeAsync(false))" Disabled="@_submitting">취소</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled"
-                   Disabled="@(_submitting || _modelId is null || (!_takeNewSnapshot && _datasetId is null))"
+                   Disabled="@(_submitting || _modelId is null || (!_takeNewSnapshot && _datasetId is null) || PretrainedMissing)"
                    OnClick="SubmitAsync">제출</MudButton>
     </DialogActions>
 </MudDialog>
@@ -242,8 +252,21 @@
     private async Task OnScriptChangedAsync(TrainingScript script)
     {
         _script = script;
+        // --pretrained 를 못 받는 스크립트로 바꾸면 고른 미러를 버린다 — 그대로 두면 제출이 거부된다
+        if (PretrainedNeed == PretrainedRequirement.NotSupported) _pretrainedRef = null;
         await LoadSpecsAsync();
     }
+
+    /// <summary>스크립트가 사전학습 미러를 요구하는지 — 서버 검증과 같은 규칙(TrainingScriptExtensions).</summary>
+    private PretrainedRequirement PretrainedNeed => _script.PretrainedRequirement();
+
+    private string PretrainedHelp => PretrainedNeed == PretrainedRequirement.Required
+        ? "필수 — 워커는 인터넷에서 가중치를 받지 않습니다. [사전학습 미러] 에 먼저 올리세요."
+        : "서버 미러에서만 받습니다 (선택)";
+
+    /// <summary>필수인데 비어 있으면 제출 버튼을 잠근다 — 서버가 거부할 것을 눌러 보게 두지 않는다.</summary>
+    private bool PretrainedMissing =>
+        PretrainedNeed == PretrainedRequirement.Required && string.IsNullOrWhiteSpace(_pretrainedRef);
 
     private async Task LoadSpecsAsync()
     {
