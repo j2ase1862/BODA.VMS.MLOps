@@ -31,8 +31,78 @@ stdout 프로토콜:
 """
 
 import argparse
+import json
 import os
 import sys
+import time
+
+
+def write_history_artifacts(output, history, epochs, best_epoch):
+    """에폭별 기록을 metrics.json(요약 숫자 + history) 과 curves.png(학습 곡선) 으로 남긴다.
+
+    MLOps 워커가 output 폴더에서 이 두 파일을 찾아 아티팩트로 올린다(metrics·curve). 서버는 metrics.json 의
+    최상위 숫자만 ModelVersion.Metrics 로 읽으므로 요약은 평평하게 두고, 에폭별 기록은 history 아래에 둔다.
+    매 에폭마다 다시 쓴다 — 취소되거나 죽어도 그때까지의 곡선이 남는다. 그림은 matplotlib 이 없으면 건너뛴다.
+    train_dfine.py 와 같은 규약 (스크립트는 워커가 파일 하나씩 받아 돌리므로 공용 모듈을 쓸 수 없다).
+    """
+    if not history:
+        return
+    last = history[-1]
+    best = next((h for h in history if h["epoch"] == best_epoch), last)
+    summary = {
+        "epochs": epochs,
+        "epochs_done": last["epoch"],
+        "best_epoch": best_epoch,
+        "train_loss": last["train_loss"],
+        "train_acc": last["train_acc"],
+        "val_acc": last["val_acc"],
+        "best_val_acc": best["val_acc"],
+        "elapsed_sec": last["elapsed_sec"],
+    }
+    if last.get("val_loss") is not None:
+        summary["val_loss"] = last["val_loss"]
+        summary["best_val_loss"] = best.get("val_loss")
+    summary["history"] = history
+    tmp = os.path.join(output, "metrics.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, os.path.join(output, "metrics.json"))
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
+    except Exception as ex:  # noqa: BLE001
+        print(f"[WARN] matplotlib 없음 — curves.png 생략 ({ex})", flush=True)
+        return
+    ep = [h["epoch"] for h in history]
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=110)
+    ax.plot(ep, [h["train_loss"] for h in history], marker="o", ms=3, label="train loss")
+    if any(h.get("val_loss") is not None for h in history):
+        ax.plot(ep, [h["val_loss"] if h.get("val_loss") is not None else float("nan") for h in history],
+                marker="o", ms=3, label="val loss")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss")
+    ax.grid(True, alpha=0.3)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    handles, labels = ax.get_legend_handles_labels()
+    ax2 = ax.twinx()
+    ax2.plot(ep, [h["train_acc"] for h in history], color="tab:gray", ls=":", marker="^", ms=3, label="train acc")
+    ax2.plot(ep, [h["val_acc"] for h in history], color="tab:green", marker="s", ms=3, label="val acc")
+    ax2.set_ylabel("accuracy")
+    ax2.set_ylim(0, 1)
+    h2, l2 = ax2.get_legend_handles_labels()
+    handles += h2
+    labels += l2
+    ax.axvline(best_epoch, color="gray", ls="--", lw=0.8)
+    ax.legend(handles, labels, loc="best", fontsize=8)
+    ax.set_title(f"Classification training — best epoch {best_epoch}/{epochs}")
+    fig.tight_layout()
+    tmp_png = os.path.join(output, "curves.png.tmp")
+    fig.savefig(tmp_png, format="png")
+    plt.close(fig)
+    os.replace(tmp_png, os.path.join(output, "curves.png"))
 
 
 def main():
@@ -135,8 +205,11 @@ def main():
 
     print(f"[PROGRESS] 0", flush=True)
 
-    best_acc = 0.0
+    best_score = None
+    best_epoch = 0
+    history = []
     best_path = os.path.join(args.output, "best.pth")
+    t0 = time.time()
 
     for epoch in range(args.epochs):
         # Train
@@ -163,30 +236,49 @@ def main():
         train_loss = running_loss / len(train_loader)
         train_acc = correct / total
 
-        # Validation
+        # Validation — 정확도만으로는 best 를 고를 수 없어(동점) 손실도 함께 잰다
         val_acc = train_acc
+        val_loss = None
         if val_loader:
             model.eval()
             val_correct = 0
             val_total = 0
+            val_running = 0.0
             with torch.no_grad():
                 for images, labels in val_loader:
                     images, labels = images.to(device), labels.to(device)
                     outputs = model(images)
+                    val_running += criterion(outputs, labels).item()
                     _, predicted = outputs.max(1)
                     val_total += labels.size(0)
                     val_correct += predicted.eq(labels).sum().item()
             val_acc = val_correct / val_total
+            val_loss = val_running / len(val_loader)
 
         print(f"[EPOCH] {epoch + 1}/{args.epochs}", flush=True)
         print(f"[LOSS] {train_loss:.4f}", flush=True)
         print(f"[ACC] {val_acc:.4f}", flush=True)
         print(f"[PROGRESS] {(epoch + 1) / args.epochs * 100:.1f}", flush=True)
 
-        # Best 모델 저장
-        if val_acc > best_acc:
-            best_acc = val_acc
+        # Best 모델 저장 — 정확도 우선, 같으면 손실이 낮은 쪽.
+        # 정확도만 보면 작은 데이터셋에서 1.0 에 일찍 닿은 뒤 동점이라 갱신되지 않아, 손실이 훨씬 높은
+        # 초반 가중치가 그대로 ONNX 로 나간다 (train_dfine.py 가 같은 이유로 2026-09-10 에 고쳤다).
+        # 검증 세트가 없으면 학습 손실로 대신 가른다.
+        tie = -val_loss if val_loss is not None else -train_loss
+        score = (val_acc, tie)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_epoch = epoch + 1
             torch.save(model.state_dict(), best_path)
+
+        history.append({"epoch": epoch + 1, "train_loss": train_loss, "train_acc": train_acc,
+                        "val_loss": val_loss, "val_acc": val_acc,
+                        "lr": float(optimizer.param_groups[0]["lr"]),
+                        "elapsed_sec": round(time.time() - t0, 1)})
+        try:
+            write_history_artifacts(args.output, history, args.epochs, best_epoch)
+        except Exception as ex:  # noqa: BLE001
+            print(f"[WARN] 학습 곡선 기록 실패 (계속 진행): {ex}", flush=True)
 
     # ONNX 변환
     if args.export_onnx and os.path.exists(best_path):
