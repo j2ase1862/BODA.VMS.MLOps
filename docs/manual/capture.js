@@ -165,6 +165,30 @@ async function main() {
     await shoot(client, file);
   }
 
+  // 수집 사진은 기본이 "데이터셋에 안 담긴 것만" 이라 대개 몇 장만 남는다. 매뉴얼 그림은
+  // 라인이 보낸 사진이 쌓인 모습이 보여야 하므로 그 체크를 풀고, 한 장 골라 [데이터셋에 담기]
+  // 버튼이 나온 상태로 찍는다. 실패해도 기본 화면이라도 찍히도록 조용히 넘어간다.
+  await client.send("Page.navigate", { url: BASE + "/images" });
+  await sleep(3000);
+  await evaluate(client, `
+    (() => {
+      const label = Array.from(document.querySelectorAll('label, .mud-checkbox'))
+        .find(e => e.innerText && e.innerText.includes('안 담긴 것만'));
+      const box = label && label.querySelector('input[type=checkbox]');
+      if (box && box.checked) box.click();
+      return !!box;
+    })()`);
+  await sleep(2500);
+  await evaluate(client, `
+    (() => {
+      const tile = document.querySelector('img[loading=lazy]');
+      if (!tile) return false;
+      (tile.closest('.mud-paper') || tile.parentElement).click();
+      return true;
+    })()`);
+  await sleep(1200);
+  await shoot(client, "15_image_pool");
+
   // 재학습 창은 눌러야 나온다. 학습에서 나온 버전이 라인에서 나빠져 있어야 버튼이 생기므로,
   // 없으면 조용히 건너뛴다 — 그림이 없으면 문서 생성기가 자리만 비운다.
   await client.send("Page.navigate", { url: BASE + "/monitoring" });
