@@ -54,7 +54,24 @@ public sealed class TrainingJobService(
         if (req.Script == TrainingScript.TrainYolo && string.IsNullOrWhiteSpace(req.License))
             throw ApiException.BadRequest(ErrorCodes.LicenseRequired, "train_yolo(AGPL-3.0) 작업은 Enterprise License 확인 문자열(license)이 필요합니다.");
 
-        if (!string.IsNullOrWhiteSpace(req.PretrainedRef) && !await db.PretrainedAssets.AnyAsync(a => a.Ref == req.PretrainedRef, ct))
+        // 사전학습 미러 — 워커는 학습을 항상 오프라인으로 돌리므로(HF_HUB_OFFLINE·TRANSFORMERS_OFFLINE),
+        // 가중치를 받아 와야 하는 스크립트는 미러가 없으면 반드시 실패한다. 예전에는 그 사실이 작업이
+        // 배정되어 돌기 시작한 뒤에야 드러나, 큐에서 한참 기다린 끝에 실패 로그만 남았다.
+        // 반대로 --pretrained 를 못 받는 스크립트에 미러를 주면 argparse 단계에서 죽는다. 둘 다 여기서 막는다.
+        var pretrainedNeed = req.Script.PretrainedRequirement();
+        var hasPretrained = !string.IsNullOrWhiteSpace(req.PretrainedRef);
+        if (pretrainedNeed == PretrainedRequirement.Required && !hasPretrained)
+            throw ApiException.BadRequest(ErrorCodes.PretrainedRequired,
+                $"{req.Script.FileName()} 은(는) 사전학습 가중치가 있어야 학습할 수 있습니다. " +
+                "워커는 인터넷에서 가중치를 받지 않으므로(오프라인 고정), [사전학습 미러] 에 백본을 올린 뒤 " +
+                "작업 제출 화면에서 고르세요.");
+        if (pretrainedNeed == PretrainedRequirement.NotSupported && hasPretrained)
+            throw ApiException.BadRequest(ErrorCodes.PretrainedNotSupported,
+                $"{req.Script.FileName()} 은(는) 사전학습 미러를 쓰지 않습니다. 이 스크립트는 백본을 " +
+                "이름으로 고르며(하이퍼파라미터), 미러 폴더를 넘기면 학습이 시작하자마자 실패합니다. " +
+                "사전학습 가중치 선택을 비우세요.");
+
+        if (hasPretrained && !await db.PretrainedAssets.AnyAsync(a => a.Ref == req.PretrainedRef, ct))
             throw ApiException.NotFound($"사전학습 자산 '{req.PretrainedRef}'");
 
         var scriptName = req.Script.FileName();

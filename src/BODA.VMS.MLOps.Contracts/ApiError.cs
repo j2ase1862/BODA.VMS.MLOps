@@ -24,6 +24,8 @@ public static class ErrorCodes
     public const string DuplicateJob = "DuplicateJob";
     public const string WorkerDisabled = "WorkerDisabled";
     public const string ProtocolMismatch = "ProtocolMismatch";
+    public const string PretrainedRequired = "PretrainedRequired";
+    public const string PretrainedNotSupported = "PretrainedNotSupported";
     public const string Validation = "Validation";
 }
 

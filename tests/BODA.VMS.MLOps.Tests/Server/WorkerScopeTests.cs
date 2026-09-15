@@ -95,10 +95,11 @@ public class JobConcurrencyTests : IClassFixture<MlopsApiFactory>
     {
         var eng = await _f.EngineerAsync();
         var admin = await _f.AdminAsync();
+        await EnsurePretrainedAsync(admin);   // train_dfine 는 미러 없이는 제출이 거부된다
         var model = await CreateModelAsync(eng, "conc-model");
         var ds = await UploadDatasetAsync(eng, "conc-ds", zip: MakeYoloDatasetZip(11));
         var job = (await (await eng.PostAsJsonAsync("/api/training-jobs",
-            new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, Priority: 50), Json))
+            new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Priority: 50), Json))
             .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
 
         var created = await _f.CreateWorkerAsync(admin, "conc-worker", [TaskType.Detection]);
@@ -133,10 +134,11 @@ public class JobConcurrencyTests : IClassFixture<MlopsApiFactory>
     {
         var eng = await _f.EngineerAsync();
         var admin = await _f.AdminAsync();
+        await EnsurePretrainedAsync(admin);   // train_dfine 는 미러 없이는 제출이 거부된다
         var model = await CreateModelAsync(eng, "skip-model");
         var ds = await UploadDatasetAsync(eng, "skip-ds", zip: MakeYoloDatasetZip(12));
         var job = (await (await eng.PostAsJsonAsync("/api/training-jobs",
-            new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, Priority: 60), Json))
+            new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Priority: 60), Json))
             .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
 
         var created = await _f.CreateWorkerAsync(admin, "skip-worker", [TaskType.Detection]);

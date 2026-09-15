@@ -56,10 +56,11 @@ public class WorkerEndToEndTests : IClassFixture<MlopsApiFactory>, IDisposable
 
         var eng = await _f.EngineerAsync();
         var admin = await _f.AdminAsync();
+        await EnsurePretrainedAsync(admin);   // train_dfine 는 미러 없이는 제출이 거부된다
         var model = await CreateModelAsync(eng, "e2e-model");
         var ds = await UploadDatasetAsync(eng, "e2e-ds", zip: MakeYoloDatasetZip(3));
         var job = (await (await eng.PostAsJsonAsync("/api/training-jobs",
-                new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, Hyperparams: JsonDocument.Parse("""{"epochs": 3, "batch_size": 4}""").RootElement, Seed: 11, Priority: 100), Json))
+                new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Hyperparams: JsonDocument.Parse("""{"epochs": 3, "batch_size": 4}""").RootElement, Seed: 11, Priority: 100), Json))
             .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
 
         var created = await _f.CreateWorkerAsync(admin, "e2e-worker", [TaskType.Detection]);
@@ -114,10 +115,11 @@ public class WorkerEndToEndTests : IClassFixture<MlopsApiFactory>, IDisposable
 
         var eng = await _f.EngineerAsync();
         var admin = await _f.AdminAsync();
+        await EnsurePretrainedAsync(admin);   // train_dfine 는 미러 없이는 제출이 거부된다
         var model = await CreateModelAsync(eng, "e2e-fail-model");
         var ds = await UploadDatasetAsync(eng, "e2e-fail-ds", zip: MakeYoloDatasetZip(4));
         var job = (await (await eng.PostAsJsonAsync("/api/training-jobs",
-                new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, Hyperparams: JsonDocument.Parse("""{"epochs": 3}""").RootElement, Priority: 90), Json))
+                new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Hyperparams: JsonDocument.Parse("""{"epochs": 3}""").RootElement, Priority: 90), Json))
             .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
 
         var created = await _f.CreateWorkerAsync(admin, "e2e-fail-worker", [TaskType.Detection]);

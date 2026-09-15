@@ -1,3 +1,4 @@
+using System.Net;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -159,6 +160,24 @@ public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
         res.EnsureSuccessStatusCode();
         return (await res.Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
     }
+
+    /// <summary>
+    /// 사전학습 미러 하나를 만들어 둔다 (없으면 만들고, 있으면 그대로).
+    ///
+    /// <para>train_dfine·train_rfdetr_seg 는 미러 없이는 제출 자체가 거부된다(워커가 오프라인 고정이라
+    /// 가중치를 받아 올 수 없다 — TrainingScriptExtensions.PretrainedRequirement). 그 두 스크립트로
+    /// 작업을 만드는 시험은 이 헬퍼로 미러를 먼저 갖춘다.</para>
+    /// </summary>
+    public static async Task<string> EnsurePretrainedAsync(HttpClient admin, string @ref = SharedPretrainedRef)
+    {
+        var res = await admin.PostAsJsonAsync("/api/pretrained", new { @ref, license = "Apache-2.0" }, Json);
+        if (res.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.Conflict))
+            res.EnsureSuccessStatusCode();
+        return @ref;
+    }
+
+    /// <summary>시험들이 함께 쓰는 미러 이름 — 실제 D-FINE 백본 이름과 같게 둔다.</summary>
+    public const string SharedPretrainedRef = "dfine-small-obj2coco-test";
 
     public static async Task<ApiError?> ErrorAsync(HttpResponseMessage res) =>
         await res.Content.ReadFromJsonAsync<ApiError>(Json);

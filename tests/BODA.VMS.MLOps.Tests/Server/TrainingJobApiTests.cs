@@ -43,7 +43,9 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
     {
         var model = await CreateModelAsync(eng, modelName);
         var ds = await UploadDatasetAsync(eng, "ds-" + modelName, zip: MakeYoloDatasetZip(modelName.Length % 20));
-        var res = await eng.PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, Hyperparams: Hp(hp), Priority: priority), Json);
+        // train_dfine 는 사전학습 미러가 없으면 제출이 거부된다 (워커가 오프라인 고정이라 받아 올 수 없다)
+        await EnsurePretrainedAsync(await _f.AdminAsync());
+        var res = await eng.PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Hyperparams: Hp(hp), Priority: priority), Json);
         res.StatusCode.Should().Be(HttpStatusCode.Created);
         return ((await res.Content.ReadFromJsonAsync<TrainingJobDto>(Json))!, model);
     }
@@ -103,8 +105,55 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
         missingPretrained.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
         // Viewer 는 작업 생성 불가
-        (await (await _f.ViewerAsync()).PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine), Json))
+        (await (await _f.ViewerAsync()).PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef), Json))
             .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// 사전학습 미러 규칙은 <b>제출 시점</b>에 건다.
+    ///
+    /// <para>워커는 학습을 항상 오프라인으로 돌린다(HF_HUB_OFFLINE·TRANSFORMERS_OFFLINE). 그래서 가중치를
+    /// 받아 와야 하는 스크립트는 미러가 없으면 반드시 실패하는데, 예전에는 그 사실이 작업이 큐에서
+    /// 배정되어 실제로 돌기 시작한 뒤에야 드러났다 — 몇 분을 기다린 끝에 "HF 오프라인" 로그만 남았다.</para>
+    ///
+    /// <para>반대쪽도 막는다. train_classifier 의 --pretrained 는 <b>경로가 아니라 아키텍처 이름</b>이고
+    /// (getattr(torchvision.models, name)), train_anomaly 에는 그 인자가 <b>아예 없다</b>. 미러를 주면
+    /// 학습이 시작하자마자 죽는다.</para>
+    /// </summary>
+    [Fact]
+    public async Task Pretrained_mirror_requirement_is_enforced_when_the_job_is_submitted()
+    {
+        var eng = await _f.EngineerAsync();
+        var admin = await _f.AdminAsync();
+        var det = await CreateModelAsync(eng, "m-pre-det");
+        var detDs = await UploadDatasetAsync(eng, "ds-pre-det", zip: MakeYoloDatasetZip(17));
+
+        // ① 미러가 필요한 스크립트인데 비어 있으면 400 — 큐에 들어가지 않는다
+        var noMirror = await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(detDs.Id, det.Id, TrainingScript.TrainDfine, Hyperparams: Hp("""{"epochs": 2}""")), Json);
+        noMirror.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var err = await ErrorAsync(noMirror);
+        err!.Code.Should().Be(ErrorCodes.PretrainedRequired);
+        err.Message.Should().Contain("train_dfine.py").And.Contain("사전학습");
+
+        // ② 미러를 갖추면 통과한다
+        await EnsurePretrainedAsync(admin);
+        var ok = await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(detDs.Id, det.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Hyperparams: Hp("""{"epochs": 2}""")), Json);
+        ok.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // ③ --pretrained 를 못 받는 스크립트에 미러를 주면 400 (분류: 아키텍처 이름만 받는다)
+        var cls = await CreateModelAsync(eng, "m-pre-cls", TaskType.Classification, ["good", "defect"]);
+        var clsDs = await UploadDatasetAsync(eng, "ds-pre-cls", TaskType.Classification, "imagefolder");
+        var clsWithMirror = await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(clsDs.Id, cls.Id, TrainingScript.TrainClassifier, PretrainedRef: SharedPretrainedRef), Json);
+        clsWithMirror.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ErrorAsync(clsWithMirror))!.Code.Should().Be(ErrorCodes.PretrainedNotSupported);
+
+        // ④ 같은 스크립트를 미러 없이 내면 통과한다 — 막는 것은 '미러를 준 경우' 뿐이다
+        (await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(clsDs.Id, cls.Id, TrainingScript.TrainClassifier), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -199,7 +248,7 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
         logs!.Lines.Should().ContainSingle(l => l.Text == "[EPOCH] 1/3");
 
         // 같은 설정 재제출 → 409 DuplicateJob, force 면 허용; retry 엔드포인트도 새 작업
-        var dup = await eng.PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(job.DatasetVersionId, model.Id, TrainingScript.TrainDfine, Hyperparams: Hp("""{"epochs": 3, "batch_size": 8, "lr": 0.00025}"""), Priority: 5), Json);
+        var dup = await eng.PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(job.DatasetVersionId, model.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Hyperparams: Hp("""{"epochs": 3, "batch_size": 8, "lr": 0.00025}"""), Priority: 5), Json);
         dup.StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await ErrorAsync(dup))!.Code.Should().Be(ErrorCodes.DuplicateJob);
         (await eng.PostAsync($"/api/training-jobs/{job.Id}/retry", null)).StatusCode.Should().Be(HttpStatusCode.Created);
