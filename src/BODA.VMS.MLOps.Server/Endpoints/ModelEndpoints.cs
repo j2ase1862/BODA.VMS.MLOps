@@ -44,8 +44,12 @@ public static class ModelEndpoints
             return created ? Results.Created($"/api/model-versions/{dto.Id}", dto) : Results.Ok(dto);
         }).RequireAuthorization(Policies.WorkerOrEngineer);
 
-        models.MapGet("/{id:guid}/resolve", async (Guid id, string? stage, int? version, ModelRegistryService svc, CancellationToken ct) =>
-            Results.Ok(await svc.ResolveAsync(id, stage, version, ct))).RequireAuthorization(Policies.Line);
+        models.MapGet("/{id:guid}/resolve", async (Guid id, string? stage, int? version, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
+            Results.Ok(await svc.ResolveAsync(id, stage, version, ct, CurrentUser.From(p)))).RequireAuthorization(Policies.Line);
+
+        // 라인 배포 이력 — 어느 라인이 어느 버전을 언제 받아 갔는지 (Engineer 이상)
+        models.MapGet("/{id:guid}/deliveries", async (Guid id, Guid? versionId, int? take, ModelRegistryService svc, CancellationToken ct) =>
+            Results.Ok(await svc.ListDeliveriesAsync(id, versionId, take ?? 100, ct))).RequireAuthorization(Policies.Engineer);
 
         var versions = api.MapGroup("/model-versions").WithTags("Models");
 
@@ -53,9 +57,12 @@ public static class ModelEndpoints
             Results.Ok(await svc.GetVersionAsync(id, ct))).RequireAuthorization(Policies.Viewer);
 
         // ETag = "sha256" · If-None-Match → 304 · Range 지원
-        versions.MapGet("/{id:guid}/artifact", async (Guid id, ModelRegistryService svc, CancellationToken ct) =>
+        versions.MapGet("/{id:guid}/artifact", async (Guid id, HttpRequest request, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
         {
-            var (stream, v) = await svc.OpenArtifactAsync(id, ct);
+            // Range 로 이어받는 조각까지 다 남기면 "몇 번 받아 갔나" 가 뜻을 잃는다 — 첫 조각만 센다
+            var range = request.Headers.Range.ToString();
+            bool firstChunk = string.IsNullOrEmpty(range) || range.Contains("=0-", StringComparison.Ordinal);
+            var (stream, v) = await svc.OpenArtifactAsync(id, ct, CurrentUser.From(p), firstChunk);
             return Results.File(stream, "application/octet-stream", $"{v.Sha256}.onnx", enableRangeProcessing: true,
                 entityTag: new EntityTagHeaderValue($"\"{v.Sha256}\""));
         }).RequireAuthorization(Policies.Line);

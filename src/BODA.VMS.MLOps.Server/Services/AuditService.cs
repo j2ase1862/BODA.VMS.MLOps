@@ -13,6 +13,9 @@ public sealed class AuditService(MlopsDbContext db, TimeProvider clock)
     public const string Training = "Training";
     public const string Worker = "Worker";
 
+    /// <summary>라인 PC 가 모델을 받아 간 기록 — "어느 라인이 어느 버전을 언제" 를 남긴다.</summary>
+    public const string Delivery = "Delivery";
+
     public void Record(string category, string action, string actor, string? entityId, object? details = null)
     {
         db.AuditLogs.Add(new AuditLog

@@ -182,6 +182,46 @@ else
                 <MudText Typo="Typo.body2" Class="mud-text-secondary">아직 승격 이력이 없습니다.</MudText>
             }
 
+            <AuthorizeView Roles="Engineer,Admin">
+                <MudText Typo="Typo.subtitle2" Class="mt-4">라인 배포 이력</MudText>
+                @if (_loadingDeliveries)
+                {
+                    <MudProgressLinear Indeterminate="true" Class="mt-1" />
+                }
+                else if (_deliveries.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                        아직 이 버전을 받아 간 라인이 없습니다. 라인은 레시피의 model:// 참조를 풀 때 여기에 남습니다.
+                    </MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Elevation="0">
+                        <thead>
+                            <tr><th>시각</th><th>라인</th><th>무엇을</th><th>동작</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var d in _deliveries)
+                            {
+                                <tr>
+                                    <td>@Display.When(d.At)</td>
+                                    <td>@(string.IsNullOrWhiteSpace(d.LineId) ? d.Actor : d.LineId)</td>
+                                    <td>@(d.Asked ?? (d.Number is { } n ? $"v{n}" : "—"))</td>
+                                    <td>
+                                        <MudChip T="string" Size="Size.Small" Color="@(d.Action == "Downloaded" ? Color.Success : Color.Default)">
+                                            @(d.Action == "Downloaded" ? "받아 감" : "확인함")
+                                        </MudChip>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        "확인함" 은 라인이 어느 버전인지 물어본 것이고, "받아 감" 은 파일을 실제로 내려받은 것입니다.
+                    </MudText>
+                }
+            </AuthorizeView>
+
             @if (!string.IsNullOrWhiteSpace(_detail.Notes))
             {
                 <MudText Typo="Typo.subtitle2" Class="mt-4">메모</MudText>
@@ -273,6 +313,8 @@ else
 
     private bool _detailOpen;
     private ModelVersionDto? _detail;
+    private List<ModelDeliveryDto> _deliveries = [];
+    private bool _loadingDeliveries;
 
     private bool _uploadOpen, _uploading;
     private IBrowserFile? _file;
@@ -312,8 +354,15 @@ else
     {
         _detail = version;
         _detailOpen = true;
+        _deliveries = [];
         try { _detail = await Api.VersionAsync(version.Id); }  // 스테이지 이력까지 채운다
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+
+        // 배포 이력은 Engineer 이상만 볼 수 있다 — Viewer 면 403 이 오므로 조용히 비워 둔다
+        _loadingDeliveries = true;
+        try { _deliveries = await Api.DeliveriesAsync(Id, version.Id); }
+        catch (MlopsApiException) { _deliveries = []; }
+        finally { _loadingDeliveries = false; }
     }
 
     private void OnFilePicked(IBrowserFile? file)
