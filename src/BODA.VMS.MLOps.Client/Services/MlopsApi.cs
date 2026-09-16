@@ -113,6 +113,9 @@ public sealed class MlopsApi(HttpClient http)
     public sealed record HyperparamSpecDto(string Key, string Type, double? Min, double? Max, string[]? Choices, string? Default);
     public Task<List<HyperparamSpecDto>> HyperparamsAsync(TrainingScript script) => GetAsync<List<HyperparamSpecDto>>($"/api/training/hyperparams/{Camel(script)}");
 
+    /// <summary>이 서버에서 쓸 수 있는 학습 스크립트. 워커에 프레임워크가 없는 것은 빠져 있다.</summary>
+    public Task<List<string>> EnabledScriptsAsync() => GetAsync<List<string>>("/api/training/scripts");
+
     // ───────────── 데이터셋 (라벨링 대상 묶음) ─────────────
 
     public Task<List<DatasetDto>> DatasetListAsync(TaskType? taskType = null, bool archived = false)

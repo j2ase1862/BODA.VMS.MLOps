@@ -36,6 +36,29 @@ public sealed class MlopsOptions
     public int SupervisorIntervalSec { get; set; } = 10;
     public int MaxAttempts { get; set; } = 2;
 
+    /// <summary>
+    /// 이 서버에서 쓰지 않는 학습 스크립트 — 제출 자체를 막고 화면에서도 감춘다.
+    ///
+    /// <para><b>기본값이 train_yolo 인 이유.</b> Ultralytics YOLO 는 AGPL-3.0 이라 상용 배포에 제약이
+    /// 있어 검출 백본을 D-FINE(Apache 2.0) 으로 옮겼고, 그래서 <c>ultralytics</c> 는 워커 패키지 허용
+    /// 목록(<c>scripts/requirements-allowlist.txt</c>)에도 <b>일부러 없다</b>. 그런데 제출은 막히지
+    /// 않아서, 고르면 라이선스 확인 문구까지 받아 놓고 워커에서 "ultralytics가 설치되지 않았습니다" 로
+    /// 실패했다 — 몇 분 기다린 끝에야 알게 되는 길이다 (2026-09-16 확인).</para>
+    ///
+    /// <para>Enterprise License 를 갖춘 현장이라면 이 목록을 비우고 워커 허용 목록에 ultralytics 를
+    /// 추가하면 된다. 코드를 고칠 필요는 없다.</para>
+    /// </summary>
+    /// <para><b>배열이 아니라 쉼표 구분 문자열인 이유.</b> ConfigurationBinder 는 배열을 덮어쓰지 않고
+    /// <b>기존 값 뒤에 이어 붙인다</b> — 배열로 두면 설정으로 목록을 비울 수가 없다(시험에서 드러났다).
+    /// 문자열은 그대로 대체되므로 빈 값으로 두면 전부 열린다.</para>
+    public string DisabledScripts { get; set; } = nameof(Core.Domain.TrainingScript.TrainYolo);
+
+    /// <summary>스크립트가 이 서버에서 쓸 수 있는지. 이름 비교는 대소문자를 가리지 않는다.</summary>
+    public bool IsScriptEnabled(Core.Domain.TrainingScript script) =>
+        !DisabledScripts
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(d => string.Equals(d, script.ToString(), StringComparison.OrdinalIgnoreCase));
+
     public string ResolvedStorageRoot() =>
         string.IsNullOrWhiteSpace(StorageRoot)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "BODA VMS MLOps", "storage")

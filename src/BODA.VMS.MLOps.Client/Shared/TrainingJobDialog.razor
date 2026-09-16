@@ -69,7 +69,7 @@
                 </MudItem>
                 <MudItem xs="12" md="6">
                     <MudSelect T="TrainingScript" Value="_script" ValueChanged="OnScriptChangedAsync" Label="스크립트">
-                        @foreach (var s in Enum.GetValues<TrainingScript>())
+                        @foreach (var s in _scripts)
                         {
                             <MudSelectItem T="TrainingScript" Value="@s">@s.FileName() (@Display.TaskTypeText(s.TaskType()))</MudSelectItem>
                         }
@@ -200,6 +200,7 @@
             _datasets = await Safe(() => Api.DatasetsAsync());
             _models = await Safe(() => Api.ModelsAsync());
             _pretrained = await Safe(() => Api.PretrainedAsync());
+            await LoadScriptsAsync();   // 쓸 수 있는 스크립트만 목록에 올린다
             await LoadSpecsAsync();
             await PrefillAsync();
         }
@@ -255,6 +256,30 @@
         // --pretrained 를 못 받는 스크립트로 바꾸면 고른 미러를 버린다 — 그대로 두면 제출이 거부된다
         if (PretrainedNeed == PretrainedRequirement.NotSupported) _pretrainedRef = null;
         await LoadSpecsAsync();
+    }
+
+    /// <summary>
+    /// 이 서버에서 쓸 수 있는 스크립트. 워커에 프레임워크가 없는 것(예: ultralytics 미설치 → train_yolo)은
+    /// 서버가 빼고 준다 — 고를 수 있게 두면 제출에서야 막혀 이유를 찾기 어렵다.
+    /// 목록을 못 받으면 전부 보여 준다(구버전 서버 호환). 그 경우 제출에서 서버가 사유와 함께 거절한다.
+    /// </summary>
+    private List<TrainingScript> _scripts = [.. Enum.GetValues<TrainingScript>()];
+
+    private async Task LoadScriptsAsync()
+    {
+        try
+        {
+            var names = await Api.EnabledScriptsAsync();
+            var parsed = names
+                .Select(n => Enum.TryParse<TrainingScript>(n, ignoreCase: true, out var v) ? v : (TrainingScript?)null)
+                .Where(v => v is not null).Select(v => v!.Value).ToList();
+            if (parsed.Count > 0)
+            {
+                _scripts = parsed;
+                if (!_scripts.Contains(_script)) await OnScriptChangedAsync(_scripts[0]);
+            }
+        }
+        catch (MlopsApiException) { /* 구버전 서버 — 전부 보여 준다 */ }
     }
 
     /// <summary>스크립트가 사전학습 미러를 요구하는지 — 서버 검증과 같은 규칙(TrainingScriptExtensions).</summary>
