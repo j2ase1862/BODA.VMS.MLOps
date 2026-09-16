@@ -53,6 +53,10 @@ public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
         builder.UseSetting("Mlops:StorageRoot", StorageRoot);
         builder.UseSetting("Mlops:ScriptsRoot", ScriptsRoot);
         builder.UseSetting("Mlops:SupervisorIntervalSec", "3600");
+        // 시험에서는 모든 스크립트를 열어 둔다. 운영 기본값은 train_yolo 를 막지만(ultralytics 는
+        // AGPL 이라 워커 허용 목록에 없다), 라이선스 규칙 같은 기존 검증이 그 앞에서 끊기면 안 된다.
+        // 막히는 쪽은 ScriptAvailabilityTests 의 YoloDisabledFactory 가 따로 맡는다.
+        builder.UseSetting("Mlops:DisabledScripts", "");
         builder.UseSetting("Mlops:MaxModelBytes", (64L * 1024 * 1024).ToString());
         // SAM 은 기본으로 꺼 둔다. 서버 프로젝트 폴더에 모델을 둔 개발 PC 에서만 켜지면
         // 같은 시험이 사람마다 다르게 도는 셈이 된다. 켜는 쪽은 SamEnabledFactory 가 따로 맡는다.

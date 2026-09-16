@@ -39,6 +39,14 @@ public sealed class TrainingJobService(
         var model = await db.Models.AsNoTracking().FirstOrDefaultAsync(m => m.Id == req.ModelId, ct)
                     ?? throw ApiException.NotFound("모델");
 
+        // 이 서버에서 쓰지 않는 스크립트는 여기서 끊는다. 예전에는 제출이 통과한 뒤 워커가
+        // 받아 돌리는 순간 "패키지가 없습니다" 로 죽어서, 몇 분 기다린 끝에야 알 수 있었다.
+        if (!options.Value.IsScriptEnabled(req.Script))
+            throw ApiException.BadRequest(ErrorCodes.ScriptDisabled,
+                $"{req.Script.FileName()} 은(는) 이 서버에서 쓰지 않습니다. " +
+                "학습 워커에 그 프레임워크가 설치되어 있지 않아 작업을 받아도 실패합니다. " +
+                "다른 스크립트를 고르거나, 관리자에게 문의하세요.");
+
         var taskType = req.Script.TaskType();
         if (dataset.TaskType != taskType)
             throw ApiException.BadRequest(ErrorCodes.TaskTypeMismatch, $"데이터셋 작업 유형 {dataset.TaskType} 은(는) 스크립트 {req.Script}({taskType}) 와 맞지 않습니다.");

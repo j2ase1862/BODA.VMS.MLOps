@@ -5,6 +5,7 @@ using BODA.VMS.MLOps.Core.Domain;
 using BODA.VMS.MLOps.Core.Training;
 using BODA.VMS.MLOps.Server.Auth;
 using BODA.VMS.MLOps.Server.Services;
+using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 
 namespace BODA.VMS.MLOps.Server.Endpoints;
@@ -88,6 +89,14 @@ public static class TrainingJobEndpoints
             {
                 s.Key, type = s.Type.ToString().ToLowerInvariant(), s.Min, s.Max, s.Choices, s.Default,
             }))).WithTags("TrainingJobs").RequireAuthorization(Policies.Viewer);
+
+        // ── 화면용: 이 서버에서 쓸 수 있는 스크립트 ──
+        // 못 쓰는 것을 골라 놓고 제출에서야 막히면 이유를 찾기 어렵다 — 목록에서 미리 뺀다.
+        api.MapGet("/training/scripts", (IOptions<MlopsOptions> opt) =>
+            Results.Ok(Enum.GetValues<TrainingScript>()
+                .Where(s => opt.Value.IsScriptEnabled(s))
+                .Select(s => s.ToString())))
+            .WithTags("TrainingJobs").RequireAuthorization(Policies.Viewer);
 
         return api;
     }
