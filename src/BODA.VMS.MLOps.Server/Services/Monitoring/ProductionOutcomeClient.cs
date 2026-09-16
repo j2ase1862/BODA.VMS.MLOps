@@ -35,10 +35,13 @@ public sealed class ProductionOutcomeException(string message, Exception? inner 
 /// 그래서 읽기 전용 API 를 이쪽에서 당겨 온다. 못 당겨 와도 MLOps 의 다른 기능은 그대로 돈다.
 /// </para>
 /// <para><b>인증.</b>
-/// 두 서버가 같은 서명 키를 쓰므로 MLOps 가 스스로 토큰을 만들어 붙는다.
-/// 그 토큰의 역할은 <see cref="Roles.Viewer"/> 하나다 — 집계를 읽는 데 그 이상은 필요 없고,
-/// 이 토큰이 새더라도 운영 데이터를 고칠 수 없어야 한다.
+/// 운영 웹의 기계용 API 키(<c>X-API-Key</c>)를 쓴다 — 라인 PC 가 붙는 것과 같은 방식이다.
+/// 예전에는 두 서버가 같은 서명 키를 쓴다는 점을 이용해 MLOps 가 스스로 JWT 를 만들어 붙었는데,
+/// 운영 웹이 토큰 세대 검사를 넣으면서 <b>사람 계정이 아닌 토큰</b>이 401 로 막혔다 (2026-09-16).
+/// 읽기 전용 집계라 키 하나로 충분하고, 이 키가 새더라도 운영 데이터를 고칠 수 없다.
 /// </para>
+/// <para>구버전 운영 웹(기계용 전환 이전)은 이 경로에 JWT 를 요구한다. 그런 서버에도 붙도록
+/// 토큰을 함께 보낸다 — 새 서버는 무시하고, 구버전 서버는 그것으로 통과한다.</para>
 /// </summary>
 public sealed class ProductionOutcomeClient(
     HttpClient http,
@@ -55,6 +58,9 @@ public sealed class ProductionOutcomeClient(
     /// <summary>운영 웹에 붙을 때 쓰는 이름. 감사 로그에 이 이름이 남는다.</summary>
     public const string ServiceUser = "mlops-monitor";
 
+    /// <summary>운영 웹의 기계용 API 키 헤더 — 라인 PC 가 쓰는 것과 같다.</summary>
+    public const string ApiKeyHeader = "X-API-Key";
+
     /// <summary>
     /// 기간 안의 모델별 결과를 받는다. <paramref name="daily"/> 면 모델×날짜로 나눠 온다.
     /// </summary>
@@ -68,7 +74,10 @@ public sealed class ProductionOutcomeClient(
         if (clientId is { } id) url += $"&clientId={id}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        // 운영 웹이 검증하는 audience 로 발급한다. 우리 것으로 만들면 서명 키가 같아도 401 이다.
+        if (!string.IsNullOrWhiteSpace(options.Value.ApiKey))
+            request.Headers.TryAddWithoutValidation(ApiKeyHeader, options.Value.ApiKey);
+        // 구버전 운영 웹 호환 — 그쪽은 이 경로에 JWT 를 요구한다. 새 서버는 이 헤더를 보지 않는다.
+        // (운영 웹이 검증하는 audience 로 발급한다. 우리 것으로 만들면 서명 키가 같아도 401 이다.)
         request.Headers.Authorization = new AuthenticationHeaderValue(
             "Bearer", tokens.Issue(ServiceUser, [Roles.Viewer], audience: options.Value.Audience));
 

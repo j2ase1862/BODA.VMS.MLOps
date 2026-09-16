@@ -38,13 +38,17 @@ public class MonitoringReportTests : IClassFixture<MonitoringReportTests.Stubbed
         public Guid ModelId { get; } = Guid.NewGuid();
         public Guid JobId { get; } = Guid.NewGuid();
 
-        /// <summary>가짜가 받은 요청 — audience·역할을 확인할 수 있게 남긴다.</summary>
+        /// <summary>가짜가 받은 요청 — audience·역할·API 키 헤더를 확인할 수 있게 남긴다.</summary>
         public List<HttpRequestMessage> Requests { get; } = [];
+
+        /// <summary>운영 웹의 기계용 API 키 (시험용 값).</summary>
+        public const string ApiKey = "stub-machine-api-key";
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             base.ConfigureWebHost(builder);
             builder.UseSetting("Monitoring:ProductionWebUrl", "http://stub-web.invalid");
+            builder.UseSetting("Monitoring:ApiKey", ApiKey);
             builder.UseSetting("Monitoring:RecentWindowDays", "7");
             builder.UseSetting("Monitoring:BaselineWindowDays", "21");
 
@@ -191,5 +195,32 @@ public class MonitoringReportTests : IClassFixture<MonitoringReportTests.Stubbed
         jwt.Audiences.Should().ContainSingle().Which.Should().Be("BODA.VMS.Web.Client");
         jwt.Claims.Where(c => c.Type.EndsWith("/role") || c.Type == "role")
            .Select(c => c.Value).Should().BeEquivalentTo([MLOps.Server.Auth.Roles.Viewer]);
+    }
+
+    /// <summary>
+    /// 운영 웹은 이 호출을 <b>기계용 endpoint</b>(X-API-Key)로 지킨다 — 라인 PC 와 같은 방식이다.
+    ///
+    /// <para>예전에는 JWT 만 보냈다. 그런데 운영 웹이 토큰 세대 검사를 넣으면서 <b>모든 토큰에
+    /// "Web 사용자 번호"를 요구</b>하게 됐고, 사람 계정이 아닌 서비스 토큰은 그 클레임이 없어
+    /// 서명·발급자·수신자가 다 맞아도 401 이 났다. 모니터링은 실패해도 경고 한 줄만 남기고
+    /// 나머지가 그대로 돌아 한동안 아무도 몰랐다 (2026-09-16 확인).</para>
+    /// </summary>
+    [Fact]
+    public async Task Sends_the_machine_api_key_header()
+    {
+        await SeedAsync();
+        var viewer = await _f.ViewerAsync();
+        _f.Requests.Clear();
+
+        await viewer.GetFromJsonAsync<ModelMonitorReportDto>("/api/monitoring/models", Json);
+
+        var sent = _f.Requests.Should().NotBeEmpty().And.Subject.First();
+        sent.Headers.TryGetValues(
+            MLOps.Server.Services.Monitoring.ProductionOutcomeClient.ApiKeyHeader, out var values)
+            .Should().BeTrue("운영 웹이 키 강제 모드면 이 헤더가 없으면 401 이다");
+        values!.Should().ContainSingle().Which.Should().Be(StubbedWebFactory.ApiKey);
+
+        // 구버전 운영 웹(기계용 전환 이전)에도 붙도록 토큰은 그대로 함께 보낸다
+        sent.Headers.Authorization.Should().NotBeNull();
     }
 }

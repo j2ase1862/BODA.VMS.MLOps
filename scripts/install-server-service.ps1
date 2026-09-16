@@ -24,6 +24,9 @@ param(
     [string]$DataDir = "C:\ProgramData\BODA VMS MLOps",
     [int]$Port = 5310,
     [string]$ProductionWebUrl = "http://localhost:5292",
+    # 운영 웹의 기계용 API 키(X-API-Key). 모니터링이 검사 이력을 당겨 올 때 쓴다 —
+    # 운영 웹이 키 강제 모드면 없으면 모니터링만 401 로 막힌다. 파일이 아니라 서비스 환경변수로 넣는다.
+    [string]$WebApiKey = "",
     [string]$JwtKey = "",
     [string]$ServiceName = "BodaVmsMlops",
     [string]$PublishDir = "",
@@ -115,13 +118,25 @@ if (-not $existed) {
 }
 & sc.exe config $ServiceName start= delayed-auto | Out-Null
 & sc.exe failure $ServiceName reset= 86400 actions= restart/10000/restart/10000/restart/30000 | Out-Null
-# 서비스 전용 환경변수: Jwt 키는 파일에 남기지 않는다
+# 서비스 전용 환경변수: Jwt 키·Web API 키는 파일에 남기지 않는다
 $envKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
-Set-ItemProperty -Path $envKey -Name Environment -Type MultiString -Value @(
+# -WebApiKey 를 안 주면 이미 설정된 값을 그대로 둔다. 이 블록이 Environment 를 통째로 다시 쓰기
+# 때문에, 보존하지 않으면 다음 재배포에서 키가 조용히 사라져 모니터링만 401 로 막힌다.
+if (-not $WebApiKey) {
+    $existingEnv = (Get-ItemProperty -Path $envKey -Name Environment -ErrorAction SilentlyContinue).Environment
+    $kept = ($existingEnv | Where-Object { $_ -like "Monitoring__ApiKey=*" } | Select-Object -First 1)
+    if ($kept) {
+        $WebApiKey = $kept -replace '^Monitoring__ApiKey=', ''
+        Write-Host "Web API 키: 기존 설정 값을 유지합니다"
+    }
+}
+$serviceEnv = @(
     "DOTNET_ENVIRONMENT=Production",
     "ASPNETCORE_ENVIRONMENT=Production",
     "Jwt__Key=$JwtKey"
 )
+if ($WebApiKey) { $serviceEnv += "Monitoring__ApiKey=$WebApiKey" }
+Set-ItemProperty -Path $envKey -Name Environment -Type MultiString -Value $serviceEnv
 
 # ── 5) 방화벽 ──
 if (-not $SkipFirewall) {

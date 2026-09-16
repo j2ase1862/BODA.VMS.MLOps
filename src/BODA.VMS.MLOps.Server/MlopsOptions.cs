@@ -96,6 +96,21 @@ public sealed class MonitoringOptions
     public int? ClientId { get; set; }
 
     /// <summary>
+    /// 운영 웹의 기계용 API 키(<c>X-API-Key</c>). 라인 PC 가 쓰는 것과 같은 키다.
+    ///
+    /// <para><b>왜 JWT 가 아닌가.</b> 예전에는 두 서버가 같은 서명 키를 쓴다는 점을 이용해 MLOps 가
+    /// 스스로 토큰을 만들어 붙었다. 그런데 운영 웹이 토큰 세대 검사(AccessTokenVersionGuard)를 넣으면서
+    /// <b>모든 토큰에 "Web 사용자 번호"를 요구</b>하게 됐고, 사람 계정이 아닌 서비스 토큰은 그 클레임이
+    /// 없어 서명·발급자·수신자가 다 맞아도 401 이 났다. 모니터링은 실패해도 경고 한 줄만 남기고 나머지가
+    /// 그대로 돌아, 한동안 아무도 몰랐다 (2026-09-16 확인).</para>
+    ///
+    /// <para>운영 웹은 이 호출을 <b>기계용 endpoint</b> 로 바꿔 X-API-Key 로 지킨다 — 라인 PC 와 같은 방식이다.
+    /// 비워 두면 헤더를 붙이지 않는다. 운영 웹이 호환 모드(<c>ClientApiKey:Required=false</c>)면 그래도 통하지만,
+    /// 키 강제 모드로 넘어가는 순간 막히므로 현장 배포에는 채워 두는 것이 맞다.</para>
+    /// </summary>
+    public string ApiKey { get; set; } = "";
+
+    /// <summary>
     /// 운영 웹이 검증하는 JWT audience.
     ///
     /// <para>
@@ -103,6 +118,7 @@ public sealed class MonitoringOptions
     /// 검증은 <c>BODA.VMS.Web.Client</c> 로 한다. 이 값을 우리 것으로 두면 요청이 401 로 돌아온다 —
     /// 서명 키가 같아도 그렇다.
     /// </para>
+    /// <para>지금은 기계용 endpoint 라 쓰이지 않지만, 구버전 운영 웹(이 변경 이전)에 붙을 때를 위해 남긴다.</para>
     /// </summary>
     public string Audience { get; set; } = "BODA.VMS.Web.Client";
 }
