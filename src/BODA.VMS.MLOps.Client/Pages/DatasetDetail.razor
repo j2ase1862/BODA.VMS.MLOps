@@ -31,9 +31,11 @@ else
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Draw"
                            Href="@($"/datasets/{Id}/label")">라벨링 시작</MudButton>
             </AuthorizeView>
-            <AuthorizeView Roles="Engineer,Admin" Context="eng">
+            <AuthorizeView Roles="Labeler,Engineer,Admin" Context="lab">
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PhotoCamera"
-                           OnClick="@(() => _uploadOpen = true)">이미지 올리기</MudButton>
+                           OnClick="@(() => _uploadOpen = true)">사진 올리기</MudButton>
+            </AuthorizeView>
+            <AuthorizeView Roles="Engineer,Admin" Context="eng">
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AutoFixHigh"
                            OnClick="OpenPrelabelAsync">모델로 미리 채우기</MudButton>
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Archive"
@@ -199,39 +201,9 @@ else
     }
 }
 
-@* ── 이미지 업로드 ── *@
-<MudDialog @bind-Visible="_uploadOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
-    <TitleContent><MudText Typo="Typo.h6">이미지 올리기</MudText></TitleContent>
-    <DialogContent>
-        <MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="OnFilesPicked" Accept=".jpg,.jpeg,.png,.bmp,.webp"
-                       MaximumFileCount="500">
-            <ActivatorContent>
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AttachFile" FullWidth="true">
-                    @(_files.Count == 0 ? "이미지 선택 (여러 장 가능)" : $"{_files.Count}장 선택됨")
-                </MudButton>
-            </ActivatorContent>
-        </MudFileUpload>
-
-        <MudTextField @bind-Value="_uploadTags" Label="태그 (쉼표 구분, 선택)" Class="mt-3" Placeholder="야간, 재검" />
-        <MudTextField @bind-Value="_uploadLineId" Label="라인 ID (선택)" Class="mt-3" />
-        <MudCheckBox T="bool" @bind-Value="_addToDataset" Label="올린 뒤 이 데이터셋에 담기" Class="mt-2" />
-
-        @if (_uploading)
-        {
-            <MudProgressLinear Indeterminate="true" Class="mt-3" />
-            <MudText Typo="Typo.caption" Class="mud-text-secondary">@_uploadProgress</MudText>
-        }
-        @if (_uploadError is not null)
-        {
-            <MudAlert Severity="Severity.Error" Class="mt-3">@_uploadError</MudAlert>
-        }
-    </DialogContent>
-    <DialogActions>
-        <MudButton OnClick="@(() => _uploadOpen = false)" Disabled="@_uploading">닫기</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_files.Count == 0 || _uploading)"
-                   OnClick="UploadAsync">올리기</MudButton>
-    </DialogActions>
-</MudDialog>
+@* ── 사진 올리기 (수집 사진 화면과 같은 컴포넌트) ── *@
+<ImageUploadDialog @bind-Visible="_uploadOpen" DatasetId="Id" DatasetName="@_dataset?.Name"
+                   OnUploaded="OnUploadedAsync" />
 
 @* ── 사전 라벨링 (Active Learning) ── *@
 <MudDialog @bind-Visible="_prelabelOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
@@ -340,10 +312,7 @@ else
     private LabelStatus? _status;
     private string _search = "";
 
-    private bool _uploadOpen, _uploading, _addToDataset = true;
-    private IReadOnlyList<IBrowserFile> _files = [];
-    private string _uploadTags = "", _uploadLineId = "", _uploadProgress = "";
-    private string? _uploadError;
+    private bool _uploadOpen;
 
     private bool _snapshotOpen, _snapshotting, _reviewedOnly, _includeUnlabeled;
     private string _snapshotName = "";
@@ -403,58 +372,11 @@ else
         if (!_selectedIds.Add(imageId)) _selectedIds.Remove(imageId);
     }
 
-    private void OnFilesPicked(IReadOnlyList<IBrowserFile> files)
+    /// <summary>올리기가 끝나면 통계와 격자를 다시 읽는다 (담기까지는 컴포넌트가 했다)</summary>
+    private async Task OnUploadedAsync(int _)
     {
-        _files = files;
-        _uploadError = null;
-    }
-
-    private async Task UploadAsync()
-    {
-        _uploading = true;
-        _uploadError = null;
-        try
-        {
-            var tags = _uploadTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var uploaded = new List<Guid>();
-            var errors = new List<string>();
-
-            // 한 번에 다 보내면 큰 요청 하나가 되어 실패 시 전부 날아간다. 묶음으로 나눠 보낸다.
-            const int batchSize = 10;
-            for (int i = 0; i < _files.Count; i += batchSize)
-            {
-                var batch = _files.Skip(i).Take(batchSize).ToList();
-                _uploadProgress = $"{i + 1}~{Math.Min(i + batch.Count, _files.Count)} / {_files.Count}장";
-                StateHasChanged();
-
-                var streams = batch.Select(f => (f.Name, (Stream)f.OpenReadStream(maxAllowedSize: 64L * 1024 * 1024))).ToList();
-                try
-                {
-                    var result = await Api.UploadImagesAsync(streams, ImageSource.Manual,
-                        string.IsNullOrWhiteSpace(_uploadLineId) ? null : _uploadLineId, tags);
-                    uploaded.AddRange(result.Results.Select(r => r.Image.Id));
-                    errors.AddRange(result.Errors);
-                }
-                finally
-                {
-                    foreach (var (_, stream) in streams) await stream.DisposeAsync();
-                }
-            }
-
-            if (_addToDataset && uploaded.Count > 0)
-                await Api.AddImagesAsync(Id, uploaded.Distinct().ToArray(), DatasetSplit.Train);
-
-            Snackbar.Add($"{uploaded.Count}장 처리했습니다", Severity.Success);
-            foreach (var e in errors.Take(5)) Snackbar.Add(e, Severity.Warning);
-
-            _uploadOpen = false;
-            _files = [];
-            _dataset = await Api.DatasetAsync(Id);
-            await LoadImagesAsync();
-        }
-        catch (MlopsApiException ex) { _uploadError = ex.Describe(); }
-        catch (IOException ex) { _uploadError = $"파일을 읽지 못했습니다: {ex.Message}"; }
-        finally { _uploading = false; _uploadProgress = ""; }
+        _dataset = await Api.DatasetAsync(Id);
+        await LoadImagesAsync();
     }
 
     private async Task SetSplitAsync(DatasetSplit split)

@@ -1,0 +1,172 @@
+@* 사진 올리기 (개발 문서 §5.2 수집). 데이터셋 상세와 수집 사진 화면이 함께 쓴다 —
+   문구·묶음 전송·오류 처리가 두 벌이 되면 한쪽이 조용히 낡는다.
+
+   DatasetId 를 주면 "올린 뒤 이 데이터셋에 담기" 체크 하나로 끝나고,
+   주지 않으면(수집 사진 화면) 담을 데이터셋을 고르게 한다 — 안 고르면 풀에만 쌓인다. *@
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+<MudDialog Visible="Visible" VisibleChanged="VisibleChanged"
+           Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">사진 올리기</MudText></TitleContent>
+    <DialogContent>
+        @* 끌어다 놓기는 실제 <input type=file> 을 이 영역 위에 투명하게 덮어서 받는다.
+           Hidden="false" 가 아니면 입력이 숨겨져 드롭을 받지 못한다. *@
+        <MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="OnFilesPicked"
+                       Accept="@Accept" MaximumFileCount="500" Hidden="false"
+                       InputClass="absolute mud-width-full mud-height-full overflow-hidden z-10"
+                       InputStyle="opacity:0" Disabled="@_uploading"
+                       @ondrop="@ClearDrag" @ondragenter="@SetDrag" @ondragleave="@ClearDrag" @ondragend="@ClearDrag">
+            <ActivatorContent>
+                <MudPaper Outlined="true" Class="@($"pa-6 d-flex flex-column align-center justify-center {_dragClass}")"
+                          Style="min-height:150px; cursor:pointer">
+                    <MudIcon Icon="@Icons.Material.Filled.CloudUpload" Size="Size.Large" Class="mud-text-secondary" />
+                    <MudText Typo="Typo.body1" Class="mt-2">
+                        @(_files.Count == 0 ? "여기로 끌어다 놓거나 눌러서 고르세요" : $"{_files.Count}장 선택됨")
+                    </MudText>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        jpg · png · bmp · webp · gif · 한 번에 500장까지 · 장당 64MB
+                    </MudText>
+                </MudPaper>
+            </ActivatorContent>
+        </MudFileUpload>
+
+        @if (DatasetId is { } id)
+        {
+            <MudCheckBox T="bool" @bind-Value="_addToDataset" Class="mt-3" Dense="true"
+                         Label="@($"올린 뒤 '{DatasetName ?? "이 데이터셋"}' 에 담기")" />
+        }
+        else
+        {
+            @* 수집 사진 화면에서 올릴 때. 담지 않아도 되므로 비울 수 있게 둔다. *@
+            <MudSelect T="Guid?" @bind-Value="_targetDatasetId" Label="담을 데이터셋 (선택)" Class="mt-3"
+                       Clearable="true" Margin="Margin.Dense"
+                       HelperText="고르지 않으면 수집 사진에만 쌓입니다. 나중에 [데이터셋에 담기] 로 담을 수 있습니다.">
+                @foreach (var d in _datasets)
+                {
+                    <MudSelectItem T="Guid?" Value="@d.Id">@d.Name (@Display.TaskTypeText(d.TaskType))</MudSelectItem>
+                }
+            </MudSelect>
+        }
+
+        <MudTextField @bind-Value="_tags" Label="태그 (쉼표 구분, 선택)" Class="mt-3" Placeholder="야간, 재검" />
+        <MudTextField @bind-Value="_lineId" Label="라인 ID (선택)" Class="mt-3"
+                      HelperText="어느 라인에서 찍힌 사진인지 알면 적어 둡니다. 나중에 라인으로 골라 볼 수 있습니다." />
+
+        @if (_uploading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mt-3" />
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@_progress</MudText>
+        }
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseAsync" Disabled="@_uploading">닫기</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(_files.Count == 0 || _uploading)" OnClick="UploadAsync">올리기</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    /// <summary>서버가 받는 확장자 (ImageProcessor.IsSupportedExtension 과 같아야 한다)</summary>
+    private const string Accept = ".jpg,.jpeg,.png,.bmp,.webp,.gif";
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>주면 그 데이터셋에 담는 갈래가 되고, 주지 않으면 화면이 데이터셋을 고르게 한다.</summary>
+    [Parameter] public Guid? DatasetId { get; set; }
+    [Parameter] public string? DatasetName { get; set; }
+
+    /// <summary>올라간 장수. 화면은 이걸 받아 목록을 다시 읽는다.</summary>
+    [Parameter] public EventCallback<int> OnUploaded { get; set; }
+
+    private IReadOnlyList<IBrowserFile> _files = [];
+    private List<DatasetDto> _datasets = [];
+    private Guid? _targetDatasetId;
+    private bool _uploading, _addToDataset = true;
+    private string _tags = "", _lineId = "", _progress = "";
+    private string? _error;
+    private string _dragClass = "";
+
+    private void SetDrag() => _dragClass = "mud-border-primary";
+    private void ClearDrag() => _dragClass = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // 데이터셋 목록은 고르게 할 때만 필요하다. 열릴 때 한 번 읽는다.
+        if (Visible && DatasetId is null && _datasets.Count == 0)
+        {
+            try { _datasets = await Api.DatasetListAsync(); }
+            catch (MlopsApiException) { _datasets = []; }
+        }
+    }
+
+    private void OnFilesPicked(IReadOnlyList<IBrowserFile> files)
+    {
+        ClearDrag();
+        _files = files;
+        _error = null;
+    }
+
+    private Task CloseAsync()
+    {
+        _files = [];
+        _error = null;
+        return VisibleChanged.InvokeAsync(false);
+    }
+
+    /// <summary>
+    /// 묶음으로 나눠 보낸다. 한 번에 다 보내면 큰 요청 하나가 되어 실패할 때 전부 날아간다.
+    /// 한 장이 잘못돼도 서버는 나머지를 받고 그 파일만 오류로 돌려준다.
+    /// </summary>
+    private async Task UploadAsync()
+    {
+        _uploading = true;
+        _error = null;
+        try
+        {
+            var tags = _tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var uploaded = new List<Guid>();
+            var errors = new List<string>();
+
+            const int batchSize = 10;
+            for (int i = 0; i < _files.Count; i += batchSize)
+            {
+                var batch = _files.Skip(i).Take(batchSize).ToList();
+                _progress = $"{i + 1}~{Math.Min(i + batch.Count, _files.Count)} / {_files.Count}장";
+                StateHasChanged();
+
+                var streams = batch.Select(f => (f.Name, (Stream)f.OpenReadStream(maxAllowedSize: 64L * 1024 * 1024))).ToList();
+                try
+                {
+                    var result = await Api.UploadImagesAsync(streams, ImageSource.Manual,
+                        string.IsNullOrWhiteSpace(_lineId) ? null : _lineId, tags);
+                    uploaded.AddRange(result.Results.Select(r => r.Image.Id));
+                    errors.AddRange(result.Errors);
+                }
+                finally
+                {
+                    foreach (var (_, stream) in streams) await stream.DisposeAsync();
+                }
+            }
+
+            var target = DatasetId is { } id ? (_addToDataset ? id : (Guid?)null) : _targetDatasetId;
+            if (target is { } datasetId && uploaded.Count > 0)
+                await Api.AddImagesAsync(datasetId, uploaded.Distinct().ToArray(), DatasetSplit.Train);
+
+            Snackbar.Add($"{uploaded.Count}장 처리했습니다", Severity.Success);
+            foreach (var e in errors.Take(5)) Snackbar.Add(e, Severity.Warning);
+
+            _files = [];
+            await VisibleChanged.InvokeAsync(false);
+            await OnUploaded.InvokeAsync(uploaded.Count);
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        catch (IOException ex) { _error = $"파일을 읽지 못했습니다: {ex.Message}"; }
+        finally { _uploading = false; _progress = ""; }
+    }
+}

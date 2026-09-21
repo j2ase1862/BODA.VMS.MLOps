@@ -53,7 +53,7 @@ public class ImageProcessorHandleTests
                 var processed = processor.Process(source);
                 processed.Width.Should().Be(400);
 
-                var move = () => File.Move(source, target, overwrite: false);
+            var move = () => File.Move(source, target, overwrite: false);
                 move.Should().NotThrow<IOException>($"{i}번째 사진을 읽은 뒤에도 파일이 잡혀 있으면 안 된다");
             }
         }
@@ -61,5 +61,22 @@ public class ImageProcessorHandleTests
         {
             try { Directory.Delete(dir, true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// 받는 확장자는 <b>화면의 파일 고르개와 같아야 한다</b>.
+    /// 화면(<c>Shared/ImageUploadDialog.razor</c> 의 <c>Accept</c>)이 여기보다 넓으면 사람이 고를 수 있는 파일이
+    /// 올리는 순간 거부되고, 좁으면 받을 수 있는 파일을 고르지 못한다. 어느 쪽이든 화면에서만 드러난다.
+    /// </summary>
+    [Fact]
+    public void Supported_extensions_are_exactly_what_the_upload_dialog_offers()
+    {
+        string[] offered = [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"];
+        foreach (var ext in offered)
+            ImageProcessor.IsSupportedExtension("사진" + ext).Should().BeTrue(ext);
+
+        // 화면이 내밀지 않는 것은 서버도 받지 않는다 — tif 는 내용 유형 표에만 있고 허용 목록에는 없다
+        foreach (var ext in new[] { ".tif", ".tiff", ".heic", ".svg", ".exe", "" })
+            ImageProcessor.IsSupportedExtension("사진" + ext).Should().BeFalse(ext);
     }
 }
