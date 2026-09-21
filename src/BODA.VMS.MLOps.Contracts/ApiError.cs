@@ -28,6 +28,16 @@ public static class ErrorCodes
     public const string PretrainedRequired = "PretrainedRequired";
     public const string PretrainedNotSupported = "PretrainedNotSupported";
     public const string Validation = "Validation";
+
+    // ── 자체 계정 로그인 (Auth:Mode=Local) ──
+    /// <summary>아이디나 비밀번호가 맞지 않는다. 둘 중 무엇이 틀렸는지는 알리지 않는다 — 계정 이름 훑기를 돕는 셈이다.</summary>
+    public const string InvalidCredentials = "InvalidCredentials";
+    /// <summary>연속 실패로 계정이 잠겼다. 언제 풀리는지는 메시지에 있다.</summary>
+    public const string AccountLocked = "AccountLocked";
+    /// <summary>임시 비밀번호 상태. 바꾸기 전에는 다른 화면에 들어가지 못한다.</summary>
+    public const string PasswordChangeRequired = "PasswordChangeRequired";
+    /// <summary>한 IP 에서 너무 자주 시도했다.</summary>
+    public const string TooManyAttempts = "TooManyAttempts";
 }
 
 /// <summary>서버·워커·클라이언트 공통 JSON 규약 — camelCase, enum 문자열</summary>

@@ -3,23 +3,30 @@
 @inject WebLogin Web
 @inject TokenStore Tokens
 @inject JwtAuthenticationStateProvider Auth
+@inject NavigationManager Nav
 @inject ISnackbar Snackbar
 
 <MudContainer MaxWidth="MaxWidth.Small" Class="mt-16">
     <MudPaper Class="pa-8" Elevation="2">
         <MudText Typo="Typo.h5" Class="mb-2">BODA VMS MLOps</MudText>
         <MudText Typo="Typo.body2" Class="mb-6 mud-text-secondary">
-            BODA VMS Web 계정으로 로그인합니다. 계정을 따로 만들지 않습니다.
+            @(_local
+                ? "이 서버의 계정으로 로그인합니다. 비밀번호를 잊었으면 관리자에게 초기화를 요청하세요."
+                : "BODA VMS Web 계정으로 로그인합니다. 계정을 따로 만들지 않습니다.")
         </MudText>
 
-        @if (_webAvailable)
+        @if (_local || _webAvailable)
         {
             <EditForm Model="@this" OnValidSubmit="SignInAsync">
                 <MudTextField @bind-Value="_username" Label="아이디" Variant="Variant.Outlined"
                               Immediate="true" Disabled="@_busy" />
                 <MudTextField @bind-Value="_password" Label="비밀번호" Variant="Variant.Outlined"
                               InputType="InputType.Password" Class="mt-4" Immediate="true" Disabled="@_busy" />
-                <MudCheckBox @bind-Value="_remember" Label="로그인 유지" Class="mt-2" Dense="true" Disabled="@_busy" />
+                @* "로그인 유지" 는 운영 웹의 refresh 토큰으로 도는 기능이라 자체 계정 모드에는 없다. *@
+                @if (!_local)
+                {
+                    <MudCheckBox @bind-Value="_remember" Label="로그인 유지" Class="mt-2" Dense="true" Disabled="@_busy" />
+                }
 
                 @* ButtonType 을 명시한다. 폼 안의 button 은 기본이 submit 이라, 그대로 두면
                    누를 때 브라우저가 폼을 제출해 페이지가 새로 뜨고 로그인이 조용히 사라진다. *@
@@ -49,24 +56,28 @@
             </MudAlert>
         }
 
-        <MudDivider Class="my-6" />
+        @* 토큰 붙여넣기는 운영 웹 모드의 뒷길이다 (그쪽이 잠시 막혔거나 주소가 없을 때).
+           자체 계정 모드에는 붙여 넣을 토큰을 주는 곳이 없으므로 보여 주지 않는다. *@
+        @if (!_local)
+        {
+            <MudDivider Class="my-6" />
 
-        @* 운영 웹이 잠시 막혔거나 주소가 없을 때를 위한 뒷길. 평소에는 접어 둔다. *@
-        @* MudBlazor 7 의 이름이다. v6 의 DisableBorders·IsExpanded 를 쓰면 빌드는 통과하고
-           화면에서만 조용히 안 듣는다 (분석기가 MUD0001·MUD0002 로 알려 준다). *@
-        <MudExpansionPanels Elevation="0" Gutters="false">
-            <MudExpansionPanel Text="토큰으로 로그인" Dense="true" @bind-Expanded="_tokenOpen">
-                <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                    BODA VMS Web 에서 받은 토큰을 그대로 붙여 넣습니다. 두 서버가 같은 서명 키를 씁니다.
-                </MudText>
-                <MudTextField @bind-Value="_token" Label="액세스 토큰 (JWT)" Variant="Variant.Outlined"
-                              Lines="3" Class="mono mt-3" Placeholder="eyJhbGciOi..." Immediate="true" />
-                <MudButton Class="mt-3" Variant="Variant.Outlined"
-                           Disabled="@(string.IsNullOrWhiteSpace(_token) || _busy)" OnClick="SignInWithTokenAsync">
-                    토큰으로 로그인
-                </MudButton>
-            </MudExpansionPanel>
-        </MudExpansionPanels>
+            @* MudBlazor 7 의 이름이다. v6 의 DisableBorders·IsExpanded 를 쓰면 빌드는 통과하고
+               화면에서만 조용히 안 듣는다 (분석기가 MUD0001·MUD0002 로 알려 준다). *@
+            <MudExpansionPanels Elevation="0" Gutters="false">
+                <MudExpansionPanel Text="토큰으로 로그인" Dense="true" @bind-Expanded="_tokenOpen">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        BODA VMS Web 에서 받은 토큰을 그대로 붙여 넣습니다. 두 서버가 같은 서명 키를 씁니다.
+                    </MudText>
+                    <MudTextField @bind-Value="_token" Label="액세스 토큰 (JWT)" Variant="Variant.Outlined"
+                                  Lines="3" Class="mono mt-3" Placeholder="eyJhbGciOi..." Immediate="true" />
+                    <MudButton Class="mt-3" Variant="Variant.Outlined"
+                               Disabled="@(string.IsNullOrWhiteSpace(_token) || _busy)" OnClick="SignInWithTokenAsync">
+                        토큰으로 로그인
+                    </MudButton>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
 
         @if (_devAvailable)
         {
@@ -90,12 +101,20 @@
     private string _username = "", _password = "", _token = "";
     private bool _remember;
     private string? _error, _diagnosis;
-    private bool _busy, _devAvailable, _webAvailable, _tokenOpen;
+    private bool _busy, _devAvailable, _webAvailable, _tokenOpen, _local;
 
     protected override async Task OnInitializedAsync()
     {
-        _webAvailable = await Web.WebBaseUrlAsync() is not null;
-        _tokenOpen = !_webAvailable;
+        // 서버가 정한다. 모드는 배타적이라 화면이 두 문을 함께 보여 줄 일은 없다.
+        try { _local = (await Api.AuthModeAsync()).Mode.Equals("Local", StringComparison.OrdinalIgnoreCase); }
+        catch (MlopsApiException) { _local = false; }
+        catch (HttpRequestException) { _local = false; }
+
+        if (!_local)
+        {
+            _webAvailable = await Web.WebBaseUrlAsync() is not null;
+            _tokenOpen = !_webAvailable;
+        }
 
         // 개발 토큰 발급이 열려 있는지 확인 — 닫혀 있으면 404 라 버튼을 숨긴다
         try { _devAvailable = await Api.DevTokenAsync("probe", []) is not null; }
@@ -103,7 +122,34 @@
         catch (HttpRequestException) { _devAvailable = false; }
     }
 
-    private async Task SignInAsync()
+    private Task SignInAsync() => _local ? SignInLocalAsync() : SignInWebAsync();
+
+    /// <summary>자체 계정 — 우리 서버가 확인한다. 브라우저가 밖으로 나가지 않아 CORS 가 없다.</summary>
+    private async Task SignInLocalAsync()
+    {
+        _busy = true;
+        _error = _diagnosis = null;
+        try
+        {
+            var result = await Api.LocalLoginAsync(_username.Trim(), _password);
+            _password = "";
+            await Auth.SignInAsync(result.Token);
+
+            // 임시 비밀번호 상태에서는 역할이 없어 어느 화면도 열리지 않는다. 곧장 변경으로 보낸다.
+            if (result.MustChangePassword)
+            {
+                Snackbar.Add("임시 비밀번호입니다. 새 비밀번호를 정하세요.", Severity.Info);
+                Nav.NavigateTo("/change-password");
+                return;
+            }
+            await FinishAsync(result.Token);
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _busy = false; }
+    }
+
+    /// <summary>운영 웹 — 브라우저가 그쪽에 직접 보낸다 (비밀번호가 우리 서버를 지나지 않는다).</summary>
+    private async Task SignInWebAsync()
     {
         _busy = true;
         _error = _diagnosis = null;

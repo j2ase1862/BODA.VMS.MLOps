@@ -86,6 +86,8 @@ builder.Services.AddScoped<DatasetSnapshotService>();
 builder.Services.AddScoped<PrelabelService>();
 // 모니터링 (Phase 5). 운영 웹 주소가 없으면 스스로 꺼진 상태로 남는다.
 builder.Services.AddSingleton<ServiceTokenIssuer>();
+builder.Services.AddSingleton<LocalTokenIssuer>();
+builder.Services.AddScoped<LocalAccountService>();
 builder.Services.AddHttpClient<ProductionOutcomeClient>(http => http.Timeout = TimeSpan.FromSeconds(30));
 // 운영 웹에서 끊긴 토큰을 걸러낸다 (Auth:RevocationCheckSeconds).
 builder.Services.AddHttpClient<WebTokenRevocationClient>(http => http.Timeout = TimeSpan.FromSeconds(5));
@@ -103,12 +105,31 @@ builder.Services.AddSignalR().AddJsonProtocol(o =>
     o.PayloadSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
 });
 
-// 인증: JWT(BODA.VMS.Web 와 같은 키) + 워커 토큰(wk_…) — Authorization 헤더 접두사로 자동 선택
+// 인증: JWT + 워커 토큰(wk_…) — Authorization 헤더 접두사로 자동 선택.
+// 사람의 토큰을 누가 발급하느냐는 Auth:Mode 가 정한다.
+//   Web  (기본) — BODA.VMS.Web 이 발급한다. 같은 Jwt:Key/Issuer/Audience 를 써야 그 토큰이 통한다.
+//   Local        — 이 서버가 발급한다 (Auth:Local:*). 운영 웹이 없는 설치를 위한 문이다.
+// 모드는 배타적이다: 한 서버는 한 가지 방법으로만 사람을 들인다.
 var jwt = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
-if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
+var authOptions = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
+var localMode = authOptions.Mode == AuthMode.Local;
+
+if (localMode)
+{
+    if (string.IsNullOrWhiteSpace(authOptions.Local.Key) || authOptions.Local.Key.Length < 32)
+        throw new InvalidOperationException(
+            "Auth:Mode=Local 인데 Auth:Local:Key 가 없거나 32자 미만입니다. 운영: 환경변수 Auth__Local__Key. " +
+            "운영 웹의 Jwt:Key 와 같은 값을 쓰지 마세요 — 우리가 발급한 토큰이 그쪽에서도 통할 여지를 만듭니다.");
+    if (string.Equals(authOptions.Local.Key, jwt.Key, StringComparison.Ordinal))
+        throw new InvalidOperationException("Auth:Local:Key 는 Jwt:Key 와 달라야 합니다 (발급 주체가 다릅니다).");
+}
+else if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
+{
     throw new InvalidOperationException(
         "Jwt:Key 가 설정되지 않았거나 32자 미만입니다. 개발: dotnet user-secrets set \"Jwt:Key\" \"<32자 이상>\" · 운영: 환경변수 Jwt__Key. " +
-        "BODA.VMS.Web 와 같은 값을 쓰면 기존 로그인 토큰을 그대로 받습니다.");
+        "BODA.VMS.Web 와 같은 값을 쓰면 기존 로그인 토큰을 그대로 받습니다. " +
+        "운영 웹이 없는 설치라면 Auth:Mode=Local 로 두고 Auth:Local:Key 를 주세요.");
+}
 
 builder.Services.AddAuthentication(SmartAuthScheme.Name)
     .AddPolicyScheme(SmartAuthScheme.Name, "JWT or WorkerToken", o => o.ForwardDefaultSelector = SmartAuthScheme.Select)
@@ -120,9 +141,10 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwt.Issuer,
-            ValidAudience = jwt.Audience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+            ValidIssuer = localMode ? authOptions.Local.Issuer : jwt.Issuer,
+            ValidAudience = localMode ? authOptions.Local.Audience : jwt.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(localMode ? authOptions.Local.Key : jwt.Key)),
             ClockSkew = TimeSpan.FromMinutes(1),
         };
         o.Events = new JwtBearerEvents
@@ -151,6 +173,11 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
             {
                 // 우리가 발급한 토큰(개발 토큰·서비스 토큰)은 운영 웹이 모른다 — 물어보면 무조건 401 이다.
                 if (ctx.Principal?.HasClaim(ServiceTokenIssuer.SelfIssuedClaim, "1") == true) return;
+
+                // 로컬 모드의 로그인 토큰도 마찬가지다. 이쪽은 자체 발급 표시를 일부러 붙이지 않는데
+                // (붙이면 역할 표가 적용되지 않아 강등·비활성이 듣지 않는다), 그래서 여기서 모드로 가른다.
+                // 가르지 않으면 모니터링 주소만 있어도 검사가 켜져 로그인한 사람이 전원 쫓겨난다.
+                if (localMode) return;
 
                 // .NET 8 의 기본 핸들러는 JsonWebToken 을 준다. JwtSecurityToken 으로만 받으면
                 // 캐스팅이 null 이 되어 검사가 조용히 꺼진다 — 둘 다 받는다.
@@ -210,6 +237,13 @@ using (var scope = app.Services.CreateScope())
     app.Logger.LogInformation("스토리지 {Root} · 스크립트 {Count}개 ({ScriptsRoot})",
         scope.ServiceProvider.GetRequiredService<IOptions<MlopsOptions>>().Value.ResolvedStorageRoot(), manifest.Count, scripts.Root);
 
+    // 자체 계정 모드에서 표가 비어 있으면 첫 관리자를 만든다. 그러지 않으면 아무도 들어올 수 없다 —
+    // 운영 웹이 없는 설치라 "운영 웹 Admin 이면 인정" 하는 부트스트랩 통로도 없다.
+    if (localMode)
+    {
+        var accounts = scope.ServiceProvider.GetRequiredService<LocalAccountService>();
+        await accounts.BootstrapAsync(AppContext.BaseDirectory, CancellationToken.None);
+    }
 }
 
 app.UseMiddleware<ApiExceptionMiddleware>();

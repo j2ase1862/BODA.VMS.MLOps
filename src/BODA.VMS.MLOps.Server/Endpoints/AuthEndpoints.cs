@@ -20,14 +20,47 @@ public static class AuthEndpoints
 
         /// 운영에서는 BODA.VMS.Web 의 로그인 JWT 를 그대로 쓴다 (같은 Jwt:Key/Issuer/Audience).
         /// 이 엔드포인트는 Auth:EnableDevTokens=true 일 때만 열리는 개발·테스트용 발급기다.
-        g.MapPost("/dev-token", (DevTokenRequest req, ServiceTokenIssuer issuer, IOptions<AuthOptions> auth) =>
+        g.MapPost("/dev-token", (DevTokenRequest req, ServiceTokenIssuer issuer, LocalTokenIssuer local,
+            IOptions<AuthOptions> auth) =>
         {
             if (!auth.Value.EnableDevTokens) return Results.NotFound();
             if (string.IsNullOrWhiteSpace(req.User)) return Results.BadRequest(new { error = "user 필수" });
 
             var roles = ServiceTokenIssuer.AcceptedRoles(req.Roles);
-            return Results.Ok(new { token = issuer.Issue(req.User, roles, req.Hours), roles });
+            // 모드마다 이 서버가 받아들이는 서명 키·발급자가 다르다. 로컬 모드에서 운영 웹 키로
+            // 만들어 주면 방금 받은 토큰이 다음 요청에서 401 이 된다.
+            var token = auth.Value.Mode == AuthMode.Local
+                ? local.IssueService(req.User, roles, req.Hours)
+                : issuer.Issue(req.User, roles, req.Hours);
+            return Results.Ok(new { token, roles });
         }).AllowAnonymous();
+
+        // 로그인 화면이 "이 서버는 사람을 어떻게 들이나" 를 묻는다. 로그인 전이라 익명이어야 한다.
+        g.MapGet("/mode", (IOptions<AuthOptions> auth, IOptions<MonitoringOptions> monitoring) =>
+            Results.Ok(new AuthModeInfo(
+                auth.Value.Mode.ToString(),
+                auth.Value.Mode == AuthMode.Local ? "" : WebBase(auth.Value, monitoring.Value))))
+            .AllowAnonymous();
+
+        // 자체 계정 로그인. Web 모드에서는 열지 않는다 — 두 문을 함께 열면 같은 아이디가
+        // 두 출처에서 들어올 수 있고, Members 는 계정 이름이 키라 누구인지 알 수 없게 된다.
+        g.MapPost("/login", async (LocalLoginRequest req, LocalAccountService accounts, HttpContext http,
+            CancellationToken ct) =>
+        {
+            if (!accounts.Enabled) return Results.NotFound();
+            var ip = http.Connection.RemoteIpAddress?.ToString();
+            return Results.Ok(await accounts.LoginAsync(req, ip, ct));
+        }).AllowAnonymous();
+
+        // 비밀번호 바꾸기. 역할을 요구하지 않는다(인증만) — 임시 비밀번호 상태에서는 역할이 없고,
+        // 그 상태를 풀 수 있는 유일한 통로가 여기이기 때문이다.
+        g.MapPost("/change-password", async (ChangePasswordRequest req, LocalAccountService accounts,
+            ClaimsPrincipal principal, CancellationToken ct) =>
+        {
+            if (!accounts.Enabled) return Results.NotFound();
+            var user = CurrentUser.From(principal);
+            return Results.Ok(await accounts.ChangePasswordAsync(user.Name, req, ct));
+        }).RequireAuthorization();
 
         // 로그인 화면이 "어디로 로그인하면 되나" 를 묻는다. 로그인하기 전이라 익명이어야 한다.
         // 주소가 비어 있으면 화면은 토큰 붙여넣기만 내놓는다.

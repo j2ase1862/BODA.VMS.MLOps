@@ -65,6 +65,14 @@ YOLO 계열(AGPL)은 라이선스 필드 없이는 등록도 Production 승격�
 우리가 발급한 토큰은 `ServiceTokenIssuer.SelfIssuedClaim` 이 붙어 변환을 건너뜁니다 — 개발 토큰의 역할이 곧 의도입니다.
 역할을 바꾸면 캐시를 즉시 버립니다(`MemberRoleClaimsTransformation.Invalidate`). 권한 회수가 늦으면 안 됩니다.
 
+**사람이 들어오는 문은 `Auth:Mode` 하나가 정하고 둘은 배타적입니다.** `Web`(기본)은 운영 웹이 인증하고,
+`Local` 은 이 서버가 계정을 들고 `Auth:Local:Key` 로 발급합니다. 함께 열지 마세요 — `Members` 는 계정 이름이 키라
+같은 아이디가 두 출처에서 오면 누구인지 가릴 수 없습니다. 로컬 로그인 토큰에 **`ServiceTokenIssuer.SelfIssuedClaim` 을 붙이지 마세요** —
+붙이면 역할 변환을 건너뛰어 표에서 강등하거나 비활성해도 토큰 수명(8시간) 동안 듣지 않습니다.
+그래서 발급자(`Auth:Local:Issuer`)로 가릅니다. **가르지 않으면 취소 검사가 로그인한 사람을 전원 쫓아냅니다** —
+그 검사는 `Monitoring:ProductionWebUrl` 만 있으면 켜지는데 운영 웹은 우리 로컬 계정을 모르니 무조건 401 입니다.
+비밀번호를 바꿀 때 찍는 도장은 시각이 아니라 난수(`Member.SecurityStamp`)입니다 — 시각으로 두면 같은 틱 안의 두 번째 변경에서 옛 토큰이 살아남습니다.
+
 **끊긴 토큰은 운영 웹에 물어봅니다.** 그쪽은 토큰의 세대(`tv`)를 DB 와 대조해 로그아웃·비밀번호 변경·
 계정 삭제 뒤의 토큰을 거부합니다. 우리는 서명과 만료만 보므로 물어보지 않으면 잘린 계정이 8시간 더 삽니다.
 `WebTokenRevocationClient` 가 받은 토큰을 그쪽 `/api/auth/me` 에 들려 보내 **401 일 때만** 끊습니다 —

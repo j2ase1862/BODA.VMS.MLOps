@@ -32,6 +32,25 @@ public static class MemberEndpoints
             return Results.NoContent();
         }).RequireAuthorization(Policies.Admin);
 
+        // 임시 비밀번호를 새로 내준다. 자체 계정 로그인(Auth:Mode=Local)에서만 뜻이 있다 —
+        // Web 모드의 비밀번호는 운영 웹 것이라 우리가 건드릴 수 없다.
+        // 만들어진 비밀번호는 이 응답에서 한 번만 나가고 서버에는 해시만 남는다.
+        g.MapPost("/{id:guid}/reset-password", async (Guid id, LocalAccountService accounts, ClaimsPrincipal p,
+            CancellationToken ct) =>
+        {
+            if (!accounts.Enabled) return Results.NotFound();
+            return Results.Ok(await accounts.ResetPasswordAsync(id, CurrentUser.From(p), ct));
+        }).RequireAuthorization(Policies.Admin);
+
+        // 비활성은 두 모드 모두에서 듣는다. 운영 웹 계정이라도 여기서 끊을 수 있어야 한다 —
+        // 그쪽에서 지우기 전에 이 서버에서만 먼저 막아야 하는 일이 있다.
+        g.MapPost("/{id:guid}/disabled", async (Guid id, SetMemberDisabledRequest req, LocalAccountService accounts,
+            ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            await accounts.SetDisabledAsync(id, req.Disabled, CurrentUser.From(p), ct);
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Admin);
+
         return api;
     }
 }
