@@ -200,6 +200,7 @@
             "아래 \"Python 3.12\" 줄에서 파이썬이 잡혔는지 확인하고 설치합니다."
           ]
         },
+        { "type": "figure", "file": "17_msi_wizard", "caption": "워커 연결 설정 — 서버 주소·토큰·이름을 넣습니다. 토큰은 입력하는 동안 가려집니다. 아래 \"Python 3.12\" 줄이 이 PC 에서 찾은 파이썬을 알려 주는데, 여기에 \"현재 사용자 전용 설치\" 라고 나오면 서비스 계정이 못 읽을 수 있습니다 (2.3·4.7)." },
         { "type": "p", "text": "설치가 끝나면 서비스 `BodaVmsTrainWorker` 가 자동(지연 시작)으로 등록되고 바로 시작됩니다. 서버 주소와 토큰을 비워 두고 설치했다면 서비스는 등록만 되고 멈춘 상태로 남습니다 — 4.4 로 나중에 설정합니다." },
         { "type": "h2", "text": "4.3 무인 설치" },
         { "type": "code", "caption": "관리자 명령 프롬프트", "text": ["msiexec /i BODA-VMS-TrainWorker-0.1.1.msi /qn ^", "  SERVERURL=http://192.168.0.10:5310 WORKERTOKEN=wk_xxxxxxxx WORKERNAME=GPU-01"] },
