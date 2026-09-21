@@ -12,6 +12,13 @@ namespace BODA.VMS.MLOps.Client.Services;
 public sealed class TokenStore(ILocalStorageService storage)
 {
     private const string Key = "mlops.token";
+
+    /// <summary>
+    /// 운영 웹의 refresh 토큰. 로그인할 때 "로그인 유지" 를 켠 경우에만 생긴다.
+    /// 액세스 토큰이 만료되면(기본 8시간) 이것으로 조용히 새로 받는다.
+    /// </summary>
+    private const string RefreshKey = "mlops.refresh";
+
     private string? _cached;
 
     public async Task<string?> GetAsync()
@@ -27,27 +34,63 @@ public sealed class TokenStore(ILocalStorageService storage)
         await storage.SetItemAsStringAsync(Key, _cached);
     }
 
+    public async Task<string?> GetRefreshAsync()
+    {
+        var value = await storage.GetItemAsStringAsync(RefreshKey);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    public Task SetRefreshAsync(string? token) =>
+        string.IsNullOrWhiteSpace(token)
+            ? storage.RemoveItemAsync(RefreshKey).AsTask()
+            : storage.SetItemAsStringAsync(RefreshKey, token.Trim()).AsTask();
+
     public async Task ClearAsync()
     {
         _cached = null;
         await storage.RemoveItemAsync(Key);
+        await storage.RemoveItemAsync(RefreshKey);
     }
 }
 
 /// <summary>JWT 를 그대로 읽어 인증 상태를 만든다. 만료된 토큰은 익명으로 취급하고 지운다.</summary>
-public sealed class JwtAuthenticationStateProvider(TokenStore tokens) : AuthenticationStateProvider
+public sealed class JwtAuthenticationStateProvider(TokenStore tokens, WebLogin webLogin) : AuthenticationStateProvider
 {
     private static readonly AuthenticationState Anonymous = new(new ClaimsPrincipal(new ClaimsIdentity()));
+
+    /// <summary>
+    /// 갱신은 한 번만 시도한다. 실패한 refresh 토큰으로 화면을 그릴 때마다 운영 웹을 두드리면
+    /// 그쪽 갱신 예산(분당 60회)을 혼자 태운다.
+    /// </summary>
+    private bool _refreshTried;
 
     public override async Task<AuthenticationState> GetAuthenticationStateAsync()
     {
         var token = await tokens.GetAsync();
-        if (token is null) return Anonymous;
+        var principal = token is null ? null : Parse(token);
 
-        var principal = Parse(token);
+        // 토큰이 없거나 만료됐고 "로그인 유지" 를 켜 뒀다면, 로그인 화면을 보여 주기 전에 한 번 갱신해 본다.
+        if (principal is null && !_refreshTried)
+        {
+            _refreshTried = true;
+            var refresh = await tokens.GetRefreshAsync();
+            if (refresh is not null)
+            {
+                var renewed = await webLogin.RefreshAsync(refresh);
+                if (renewed is not null)
+                {
+                    await tokens.SetAsync(renewed.Token);
+                    // 운영 웹은 갱신할 때 refresh 토큰을 돌려 끼운다(로테이션). 새것을 받으면 바꿔 둔다.
+                    if (!string.IsNullOrWhiteSpace(renewed.RefreshToken))
+                        await tokens.SetRefreshAsync(renewed.RefreshToken);
+                    principal = Parse(renewed.Token);
+                }
+            }
+        }
+
         if (principal is null)
         {
-            await tokens.ClearAsync();
+            if (token is not null) await tokens.ClearAsync();
             return Anonymous;
         }
         return new AuthenticationState(principal);
@@ -55,6 +98,7 @@ public sealed class JwtAuthenticationStateProvider(TokenStore tokens) : Authenti
 
     public async Task SignInAsync(string token)
     {
+        _refreshTried = false;
         await tokens.SetAsync(token);
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }

@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using BODA.VMS.MLOps.Contracts.Auth;
 using BODA.VMS.MLOps.Server.Auth;
 using BODA.VMS.MLOps.Server.Services;
 using Microsoft.Extensions.Options;
@@ -9,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 namespace BODA.VMS.MLOps.Server.Endpoints;
 
 public sealed record DevTokenRequest(string User, string[] Roles, int Hours = 8);
+
 
 public static class AuthEndpoints
 {
@@ -25,6 +27,36 @@ public static class AuthEndpoints
 
             var roles = ServiceTokenIssuer.AcceptedRoles(req.Roles);
             return Results.Ok(new { token = issuer.Issue(req.User, roles, req.Hours), roles });
+        }).AllowAnonymous();
+
+        // 로그인 화면이 "어디로 로그인하면 되나" 를 묻는다. 로그인하기 전이라 익명이어야 한다.
+        // 주소가 비어 있으면 화면은 토큰 붙여넣기만 내놓는다.
+        g.MapGet("/web-login", (IOptions<AuthOptions> auth, IOptions<MonitoringOptions> monitoring) =>
+            Results.Ok(new WebLoginInfo(WebBase(auth.Value, monitoring.Value))))
+            .AllowAnonymous();
+
+        // 브라우저 로그인이 실패했을 때 원인을 갈라 준다. 브라우저에서는 CORS 거부와 네트워크 단절이
+        // 똑같이 "Failed to fetch" 로 보이지만, 서버가 그 주소에 닿는지는 우리가 알 수 있다 —
+        // 닿는데 브라우저만 막혔다면 십중팔구 운영 웹의 Cors:AllowedOrigins 에 우리 주소가 없는 것이다.
+        g.MapGet("/web-reachable", async (IOptions<AuthOptions> auth, IOptions<MonitoringOptions> monitoring,
+            IHttpClientFactory factory, CancellationToken ct) =>
+        {
+            var baseUrl = WebBase(auth.Value, monitoring.Value);
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                return Results.Ok(new WebReachability(false, "운영 웹 주소가 설정되지 않았습니다."));
+
+            using var http = factory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(5);
+            try
+            {
+                // 아무 응답이나 오면 닿는 것이다. 401·404 도 "그 서버가 거기 있다" 는 뜻이다.
+                using var res = await http.GetAsync(baseUrl.TrimEnd('/') + "/api/auth/me", ct);
+                return Results.Ok(new WebReachability(true, $"서버는 운영 웹에 닿습니다 (HTTP {(int)res.StatusCode})."));
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return Results.Ok(new WebReachability(false, $"서버도 운영 웹에 닿지 못합니다: {ex.Message}"));
+            }
         }).AllowAnonymous();
 
         // 화면이 로그인 직후 한 번 부른다. 역할 표에 있는 사람이면 이때 마지막 접속 시각을 남긴다 —
@@ -67,6 +99,10 @@ public static class AuthEndpoints
 
         return api;
     }
+
+    /// <summary>로그인용 운영 웹 주소. 따로 적지 않았으면 모니터링이 쓰는 주소와 같다.</summary>
+    private static string WebBase(AuthOptions auth, MonitoringOptions monitoring) =>
+        string.IsNullOrWhiteSpace(auth.WebBaseUrl) ? monitoring.ProductionWebUrl ?? "" : auth.WebBaseUrl;
 }
 
 /// <summary>이미지 요청에만 쓰이는 쿠키. 이름과 경로를 한 곳에 모아 서버와 클라이언트가 어긋나지 않게 한다.</summary>
