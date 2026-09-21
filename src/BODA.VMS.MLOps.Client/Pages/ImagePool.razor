@@ -12,6 +12,12 @@
         라인 PC 가 올린 NG 사진과 양품 샘플, 사람이 올린 사진이 모두 모이는 곳입니다.
         아직 어느 데이터셋에도 담기지 않은 사진을 골라 데이터셋에 담으면 라벨링을 시작할 수 있습니다.
     </Lead>
+    <Actions>
+        <AuthorizeView Roles="Labeler,Engineer,Admin">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CloudUpload"
+                       OnClick="@(() => _uploadOpen = true)">사진 올리기</MudButton>
+        </AuthorizeView>
+    </Actions>
 </PageHeader>
 
 @if (_error is not null)
@@ -66,6 +72,9 @@ else if (_images.Count == 0)
         <MudIcon Icon="@Icons.Material.Filled.PhotoLibrary" Size="Size.Large" class="mud-text-secondary" />
         <MudText Typo="Typo.body1" Class="mt-2">조건에 맞는 사진이 없습니다.</MudText>
         <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1">
+            내 PC 에 있는 사진은 오른쪽 위 [사진 올리기] 로 끌어다 놓거나 골라서 올릴 수 있습니다.
+        </MudText>
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
             라인 사진은 라인 PC 의 이미지 저장 설정에서 [NG 이미지 MLOps 전송] 을 켜야 올라옵니다. 라인 PC 화면에서 등록·토큰을 확인하세요.
         </MudText>
     </MudPaper>
@@ -114,6 +123,8 @@ else
     }
 }
 
+<ImageUploadDialog @bind-Visible="_uploadOpen" OnUploaded="OnUploadedAsync" />
+
 <MudDialog @bind-Visible="_addOpen" Options="@(new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent><MudText Typo="Typo.h6">데이터셋에 담기</MudText></TitleContent>
     <DialogContent>
@@ -149,7 +160,7 @@ else
     private bool _onlyUnassigned = true;
     private string _tag = "", _search = "";
     private int _total;
-    private bool _loading, _busy, _addOpen;
+    private bool _loading, _busy, _addOpen, _uploadOpen;
     private Guid? _targetDatasetId;
     private DatasetSplit _targetSplit = DatasetSplit.Train;
     private string? _error;
@@ -177,6 +188,16 @@ else
     }
 
     private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    /// <summary>
+    /// 올린 사진이 목록에 보이게 한다. 기본 거르개는 [라인 NG] 라 방금 올린 사진이 그대로면 안 보인다 —
+    /// "올렸는데 아무 일도 없다" 로 읽히므로 출처를 풀어 준다.
+    /// </summary>
+    private async Task OnUploadedAsync(int count)
+    {
+        if (count > 0 && _source is not null) _source = null;
+        await LoadAsync();
+    }
     private Task OnSourceChanged(ImageSource? v) { _source = v; return LoadAsync(); }
     private Task OnUnassignedChanged(bool v) { _onlyUnassigned = v; return LoadAsync(); }
     private async Task OnSearchKeyAsync(KeyboardEventArgs e) { if (e.Key == "Enter") await LoadAsync(); }
