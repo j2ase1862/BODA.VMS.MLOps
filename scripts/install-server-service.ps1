@@ -9,6 +9,7 @@
   4) 서비스 등록 (자동·지연 시작, 실패 시 재시작) + 서비스 환경변수 Jwt__Key / DOTNET_ENVIRONMENT=Production
   5) 방화벽 인바운드 규칙 (라인 PC·브라우저·워커가 붙는 포트)
   6) SAM 모델(있으면) 복사, 서비스 시작, 응답 확인
+  7) 운영 웹에 넣어야 할 CORS 한 줄 안내 (로그인은 브라우저가 운영 웹에 직접 보낸다)
 
   Jwt:Key 는 운영 웹(BODA.VMS.Web)과 같은 값이어야 로그인 토큰이 통한다. -JwtKey 를 주지 않으면
   환경변수 MLOPS_JWT_KEY → 서버 프로젝트 user-secrets(Jwt:Key) 순서로 찾는다. 파일에는 남기지 않는다.
@@ -161,5 +162,22 @@ Write-Host "  화면/API : http://localhost:$Port  (다른 PC 에서는 http://<
 Write-Host "  서비스   : $ServiceName (자동·지연 시작, LocalSystem)"
 Write-Host "  설치 폴더: $InstallDir"
 Write-Host "  데이터   : $DataDir  (mlops.db · storage\ · logs\)  ← 백업 대상"
-Write-Host "  로그인   : 운영 웹(BODA.VMS.Web)에서 받은 토큰 붙여넣기 (dev 토큰 꺼짐)"
+Write-Host "  로그인   : 운영 웹(BODA.VMS.Web) 계정의 아이디·비밀번호 (dev 토큰 꺼짐, 토큰 붙여넣기는 뒷길로 남아 있음)"
 Write-Host "  워커     : BODA-VMS-TrainWorker MSI 를 SERVERURL=http://localhost:$Port 로 설치"
+
+# ── 7) 남은 한 줄: 운영 웹의 CORS ──
+# 로그인 화면은 아이디·비밀번호를 우리 서버가 아니라 브라우저가 운영 웹으로 곧장 보낸다 (설치 가이드 3.4).
+# 오리진이 달라지므로 운영 웹의 Cors:AllowedOrigins 에 이 서버 주소가 없으면 로그인만 막히고,
+# 브라우저에는 네트워크 단절과 똑같은 오류만 보인다 — 설치하는 사람이 여기서 보고 가도록 남긴다.
+$ips = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+    Select-Object -ExpandProperty IPAddress | Sort-Object -Unique)
+$origins = @("http://localhost:$Port") + ($ips | ForEach-Object { "http://${_}:$Port" })
+Write-Host ""
+Write-Host "남은 한 줄 — 운영 웹에 이 서버 주소를 허용하세요 (빠지면 로그인만 막힙니다)" -ForegroundColor Yellow
+Write-Host "  운영 웹($ProductionWebUrl)의 appsettings.Production.json:"
+Write-Host "    `"Cors`": { `"AllowedOrigins`": [ `"$($origins[0])`" ] }"
+Write-Host "  주소는 사용자가 브라우저 주소창에 치는 것과 글자 그대로 같아야 합니다. 이 PC 기준 후보:"
+Write-Host ("    " + ($origins -join "  ·  "))
+Write-Host "  넣은 뒤 운영 웹 서비스를 다시 시작합니다. 설정 값이라 운영 웹 프로그램은 바뀌지 않습니다."
+Write-Host "  자세한 것은 설치 가이드 3.4 (docs/manual/install.json)."
