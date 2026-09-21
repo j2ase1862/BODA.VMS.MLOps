@@ -46,6 +46,20 @@ node docs/manual/gen_manual.js install.json   # 설치 가이드
 **고정폭은 Consolas 입니다.** 받는 PC 에 반드시 있는 글꼴이라야 합니다. D2Coding 은 따로 설치해야 하고,
 없는 PC 에서는 Word 가 비례 글꼴로 바꿔 명령이 한 줄에 안 맞습니다.
 
+## 다시 찍으면 다시 가려야 하는 것
+
+`17_msi_wizard.png` 의 "Python 3.12" 줄에는 **그 PC 의 사용자 이름이 찍힙니다**
+(`C:\Users\<이름>\AppData\...`). 고객에게 나가는 문서라 그 부분만 덮어 두었습니다 —
+원본 PNG 를 다시 만들면 가림도 사라지므로 다시 칠하세요.
+
+**docx 에서 가리지 마세요.** Word 에서 이미지 위에 도형을 얹으면 그 문서에서는 지워지지만,
+`gen_manual.js` 를 다시 돌리는 순간 없어집니다. 가림은 `screenshots/` 의 PNG 에 넣습니다.
+
+MSI 마법사 화면(`17_msi_wizard`)은 워커가 **설치되지 않은** PC 에서만 찍힙니다.
+설치된 상태에서는 `WelcomeDlg` 의 [다음] 이 `NOT Installed` 조건이라 유지 관리 모드로 빠집니다.
+같은 PC 에서 찍어야 한다면 버전만 올려 MSI 를 따로 빌드하고(`-p:Version=<다음 버전>`),
+설정 화면까지 간 뒤 **[설치] 전에 취소**하세요. "시스템이 수정되지 않았습니다" 가 나오면 그대로입니다.
+
 ## 설치 절차를 고칠 때
 
 **절차의 정본은 `install.json` 한 벌입니다.** `install-server-service.ps1` 의 옵션이나 워커 MSI 의
