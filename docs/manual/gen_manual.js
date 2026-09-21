@@ -1,10 +1,13 @@
-// BODA VMS MLOps 사용자 매뉴얼 docx 생성기
+// BODA VMS MLOps 문서 docx 생성기
 //
-//   node docs/manual/gen_manual.js
-//   → docs/manual/BODA_VMS_MLOps_사용자매뉴얼_v1.0.docx
+//   node docs/manual/gen_manual.js                → 사용자 매뉴얼 (manual.json)
+//   node docs/manual/gen_manual.js install.json   → 설치 가이드 (install.json)
 //
-// 입력: manual.json (본문) + screenshots/ (capture.js 가 만든 그림)
-// docx 를 직접 편집하지 마세요 — 다시 만들면 사라집니다. 본문은 manual.json 을 고칩니다.
+// 입력: 본문 json + screenshots/ (capture.js 가 만든 그림)
+// docx 를 직접 편집하지 마세요 — 다시 만들면 사라집니다. 본문은 json 을 고칩니다.
+//
+// 독자가 다릅니다. manual.json 은 라벨링·학습·승격을 하는 사용자,
+// install.json 은 서버와 워커를 세우는 관리자입니다. 개정 주기도 반출 단위도 달라 파일을 나눴습니다.
 const path = require("path");
 const fs = require("fs");
 
@@ -17,8 +20,9 @@ const {
 
 const DIR = __dirname;
 const SHOT = path.join(DIR, "screenshots");
-const manual = JSON.parse(fs.readFileSync(path.join(DIR, "manual.json"), "utf-8"));
-const OUT = path.join(DIR, `BODA_VMS_MLOps_사용자매뉴얼_${manual.version}.docx`);
+const SRC = process.argv[2] || "manual.json";
+const manual = JSON.parse(fs.readFileSync(path.resolve(DIR, SRC), "utf-8"));
+const OUT = path.join(DIR, `BODA_VMS_MLOps_${manual.docName || "사용자매뉴얼"}_${manual.version}.docx`);
 
 // A4 세로, 1인치 여백
 const PAGE_W = 11906, MARGIN = 1440;
@@ -26,7 +30,9 @@ const CONTENT_W = PAGE_W - 2 * MARGIN;          // 9026 twip
 const CONTENT_PX = Math.round(CONTENT_W / 15);  // 96dpi 기준 약 602px
 
 const FONT = "맑은 고딕";
-const MONO = "D2Coding";
+// 받는 PC 에 반드시 있는 고정폭이라야 합니다. D2Coding 은 따로 설치해야 하고,
+// 없으면 Word 가 비례 글꼴로 바꿔 명령이 한 줄에 안 맞습니다.
+const MONO = "Consolas";
 const INK = "101010";
 const MUTED = "5F5F5F";
 const ACCENT = "FF4052";
@@ -36,9 +42,18 @@ const borders = { top: thin, bottom: thin, left: thin, right: thin };
 const cellMargins = { top: 60, bottom: 60, left: 120, right: 120 };
 
 function text(value, opts = {}) {
-  // 줄바꿈을 TextRun 의 break 로 옮긴다
-  return String(value).split("\n").map((line, i) =>
-    new TextRun({ text: line, font: FONT, size: 20, color: INK, break: i ? 1 : 0, ...opts }));
+  // 줄바꿈을 TextRun 의 break 로 옮기고, `…` 로 감싼 토막은 고정폭으로 바꾼다.
+  // 설치 문서는 문장 안에 경로·옵션·서비스 이름이 섞이는데, 본문 글꼴로 쓰면 어디까지가 값인지 안 보인다.
+  const runs = [];
+  String(value).split("\n").forEach((line, i) => {
+    line.split("`").forEach((seg, j) => {
+      runs.push(new TextRun({
+        text: seg, font: j % 2 ? MONO : FONT, size: 20, color: INK,
+        break: i && j === 0 ? 1 : 0, ...opts,
+      }));
+    });
+  });
+  return runs;
 }
 
 function para(value, opts = {}) {
@@ -138,6 +153,37 @@ function table(block) {
   ];
 }
 
+/** 명령·설정·로그 출력 — 한 칸 표에 고정폭으로 넣는다. 줄을 문단마다 끊어 긴 줄이 잘리지 않게 한다. */
+function code(block) {
+  const out = [];
+  if (block.caption) {
+    out.push(new Paragraph({
+      children: text(block.caption, { size: 17, color: MUTED }),
+      spacing: { before: 140, after: 40 },
+    }));
+  }
+  out.push(new Table({
+    width: { size: CONTENT_W, type: WidthType.DXA },
+    borders: {
+      top: thin, bottom: thin, left: thin, right: thin,
+      insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE },
+    },
+    rows: [new TableRow({
+      children: [new TableCell({
+        margins: { top: 120, bottom: 120, left: 160, right: 160 },
+        shading: { type: ShadingType.CLEAR, fill: "F7F7F7" },
+        // 줄을 배열로 써도 된다 — json 에서 \n 을 이어 붙이는 것보다 고치기 쉽다
+        children: (Array.isArray(block.text) ? block.text : String(block.text).split("\n")).map((line) => new Paragraph({
+          children: [new TextRun({ text: line, font: MONO, size: 17, color: INK })],
+          spacing: { line: 260 },
+        })),
+      })],
+    })],
+  }));
+  out.push(new Paragraph({ text: "", spacing: { after: 200 } }));
+  return out;
+}
+
 function steps(items) {
   return items.map((item, i) => new Paragraph({
     children: [
@@ -163,6 +209,7 @@ function render(block) {
     case "steps": return steps(block.items);
     case "table": return table(block);
     case "figure": return figure(block);
+    case "code": return code(block);
     default: throw new Error("모르는 블록: " + block.type);
   }
 }
@@ -251,5 +298,6 @@ const doc = new Document({
 Packer.toBuffer(doc).then((buf) => {
   fs.writeFileSync(OUT, buf);
   console.log(`${path.basename(OUT)}  (${(buf.length / 1024).toFixed(0)} KB)`);
-  console.log(`장 ${manual.sections.length}개 · 그림 ${fs.readdirSync(SHOT).filter(f => f.endsWith(".png")).length}장`);
+  const figures = manual.sections.reduce((n, s) => n + s.blocks.filter(b => b.type === "figure").length, 0);
+  console.log(`${SRC} · 장 ${manual.sections.length}개 · 그림 ${figures}장`);
 });
