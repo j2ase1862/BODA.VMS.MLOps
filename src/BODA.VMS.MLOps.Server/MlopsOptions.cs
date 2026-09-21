@@ -162,4 +162,22 @@ public sealed class AuthOptions
     /// </para>
     /// </summary>
     public string BootstrapWebRole { get; set; } = "Admin";
+
+    /// <summary>
+    /// 로그인 화면이 아이디·비밀번호를 보낼 운영 웹 주소. 비우면 <see cref="MonitoringOptions.ProductionWebUrl"/>
+    /// 를 쓴다 — 보통 같은 서버라 따로 적을 일이 없다.
+    ///
+    /// <para>
+    /// <b>이 주소는 브라우저가 부릅니다.</b> 서버가 대신 부르지 않는 이유가 둘 있다.
+    /// 하나, 비밀번호가 우리 서버를 지나가지 않는다. 둘, 운영 웹의 로그인 제한이 IP 당 5회/분이라
+    /// 우리가 대신 부르면 공장 전체가 그 5회를 나눠 쓰게 된다 — 아침에 여럿이 동시에 들어오면
+    /// 정상 사용만으로 429 가 난다.
+    /// </para>
+    /// <para>
+    /// 브라우저가 다른 오리진으로 부르므로 <b>운영 웹의 <c>Cors:AllowedOrigins</c> 에 이 서버 주소를
+    /// 넣어야 합니다</b>(설정만 바꾸면 되고 운영 웹 코드는 건드리지 않는다). 빠뜨리면 로그인만 막히고
+    /// 브라우저에는 원인이 안 보인다 — 그래서 <c>/api/auth/web-reachable</c> 로 우리가 대신 짚어 준다.
+    /// </para>
+    /// </summary>
+    public string WebBaseUrl { get; set; } = "";
 }

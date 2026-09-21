@@ -33,6 +33,7 @@ builder.Services.AddHttpClient<MlopsApi>(c =>
     c.Timeout = TimeSpan.FromMinutes(30); // 대용량 ONNX·데이터셋 업로드
 }).AddHttpMessageHandler<AuthTokenHandler>();
 
+builder.Services.AddScoped<WebLogin>();
 builder.Services.AddScoped<TrainingHubClient>();
 
 await builder.Build().RunAsync();

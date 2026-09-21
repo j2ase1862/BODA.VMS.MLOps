@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Datasets;
+using BODA.VMS.MLOps.Contracts.Auth;
 using BODA.VMS.MLOps.Contracts.Lines;
 using BODA.VMS.MLOps.Contracts.Members;
 using BODA.VMS.MLOps.Contracts.Models;
@@ -328,6 +329,12 @@ public sealed class MlopsApi(HttpClient http)
         if (res.StatusCode == HttpStatusCode.NotFound) return null;
         return await ReadAsync<DevTokenResponse>(res);
     }
+
+    // ───────────── 로그인 ─────────────
+
+    public Task<WebLoginInfo> WebLoginInfoAsync() => GetAsync<WebLoginInfo>("/api/auth/web-login");
+
+    public Task<WebReachability> WebReachableAsync() => GetAsync<WebReachability>("/api/auth/web-reachable");
 
     // ───────────── 사용자 역할 ─────────────
 

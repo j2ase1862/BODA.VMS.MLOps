@@ -1,5 +1,7 @@
 @* 라우트가 없는 컴포넌트 — App.razor 의 NotAuthorized 가 직접 그린다 *@
 @inject MlopsApi Api
+@inject WebLogin Web
+@inject TokenStore Tokens
 @inject JwtAuthenticationStateProvider Auth
 @inject ISnackbar Snackbar
 
@@ -7,21 +9,62 @@
     <MudPaper Class="pa-8" Elevation="2">
         <MudText Typo="Typo.h5" Class="mb-2">BODA VMS MLOps</MudText>
         <MudText Typo="Typo.body2" Class="mb-6 mud-text-secondary">
-            BODA VMS Web 에서 로그인해 받은 토큰으로 들어옵니다. 두 서버가 같은 서명 키를 쓰기 때문에 그대로 통합니다.
+            BODA VMS Web 계정으로 로그인합니다. 계정을 따로 만들지 않습니다.
         </MudText>
 
-        <MudTextField @bind-Value="_token" Label="액세스 토큰 (JWT)" Variant="Variant.Outlined"
-                      Lines="4" Class="mono" Placeholder="eyJhbGciOi..." Immediate="true" />
+        @if (_webAvailable)
+        {
+            <EditForm Model="@this" OnValidSubmit="SignInAsync">
+                <MudTextField @bind-Value="_username" Label="아이디" Variant="Variant.Outlined"
+                              Immediate="true" Disabled="@_busy" />
+                <MudTextField @bind-Value="_password" Label="비밀번호" Variant="Variant.Outlined"
+                              InputType="InputType.Password" Class="mt-4" Immediate="true" Disabled="@_busy" />
+                <MudCheckBox @bind-Value="_remember" Label="로그인 유지" Class="mt-2" Dense="true" Disabled="@_busy" />
 
-        <MudButton Class="mt-4" FullWidth="true" Variant="Variant.Filled" Color="Color.Primary"
-                   Disabled="@(string.IsNullOrWhiteSpace(_token) || _busy)" OnClick="SignInAsync">
-            @(_busy ? "확인 중…" : "로그인")
-        </MudButton>
+                @* ButtonType 을 명시한다. 폼 안의 button 은 기본이 submit 이라, 그대로 두면
+                   누를 때 브라우저가 폼을 제출해 페이지가 새로 뜨고 로그인이 조용히 사라진다. *@
+                <MudButton ButtonType="ButtonType.Button" OnClick="SignInAsync" Class="mt-4" FullWidth="true"
+                           Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="@(_busy || string.IsNullOrWhiteSpace(_username) || string.IsNullOrWhiteSpace(_password))">
+                    @(_busy ? "확인 중…" : "로그인")
+                </MudButton>
+            </EditForm>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-4">
+                이 서버에 운영 웹 주소가 설정되어 있지 않아 아이디·비밀번호로 로그인할 수 없습니다.
+                관리자에게 문의하시거나, 아래에 토큰을 직접 붙여 넣으세요.
+            </MudAlert>
+        }
 
         @if (_error is not null)
         {
-            <MudAlert Severity="Severity.Error" Class="mt-4">@_error</MudAlert>
+            <MudAlert Severity="Severity.Error" Class="mt-4">
+                @_error
+                @if (_diagnosis is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mt-2">@_diagnosis</MudText>
+                }
+            </MudAlert>
         }
+
+        <MudDivider Class="my-6" />
+
+        @* 운영 웹이 잠시 막혔거나 주소가 없을 때를 위한 뒷길. 평소에는 접어 둔다. *@
+        <MudExpansionPanels Elevation="0" DisableBorders="true">
+            <MudExpansionPanel Text="토큰으로 로그인" Dense="true" @bind-IsExpanded="_tokenOpen">
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    BODA VMS Web 에서 받은 토큰을 그대로 붙여 넣습니다. 두 서버가 같은 서명 키를 씁니다.
+                </MudText>
+                <MudTextField @bind-Value="_token" Label="액세스 토큰 (JWT)" Variant="Variant.Outlined"
+                              Lines="3" Class="mono mt-3" Placeholder="eyJhbGciOi..." Immediate="true" />
+                <MudButton Class="mt-3" Variant="Variant.Outlined"
+                           Disabled="@(string.IsNullOrWhiteSpace(_token) || _busy)" OnClick="SignInWithTokenAsync">
+                    토큰으로 로그인
+                </MudButton>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
 
         @if (_devAvailable)
         {
@@ -42,13 +85,16 @@
 </MudContainer>
 
 @code {
-    private string _token = "";
-    private string? _error;
-    private bool _busy;
-    private bool _devAvailable;
+    private string _username = "", _password = "", _token = "";
+    private bool _remember;
+    private string? _error, _diagnosis;
+    private bool _busy, _devAvailable, _webAvailable, _tokenOpen;
 
     protected override async Task OnInitializedAsync()
     {
+        _webAvailable = await Web.WebBaseUrlAsync() is not null;
+        _tokenOpen = !_webAvailable;
+
         // 개발 토큰 발급이 열려 있는지 확인 — 닫혀 있으면 404 라 버튼을 숨긴다
         try { _devAvailable = await Api.DevTokenAsync("probe", []) is not null; }
         catch (MlopsApiException) { _devAvailable = false; }
@@ -57,7 +103,29 @@
 
     private async Task SignInAsync()
     {
-        _error = null;
+        _busy = true;
+        _error = _diagnosis = null;
+        try
+        {
+            var outcome = await Web.LoginAsync(_username.Trim(), _password, _remember);
+            if (!outcome.Ok)
+            {
+                _error = Describe(outcome.Failure, outcome.Detail);
+                // 브라우저만 막힌 것인지 네트워크가 끊긴 것인지는 서버에 물어야 갈린다
+                if (outcome.Failure == WebLoginFailure.Unreachable) _diagnosis = await Web.DiagnoseAsync();
+                return;
+            }
+
+            await Tokens.SetRefreshAsync(_remember ? outcome.Result!.RefreshToken : null);
+            await FinishAsync(outcome.Result!.Token);
+            _password = "";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task SignInWithTokenAsync()
+    {
+        _error = _diagnosis = null;
         var token = _token.Trim();
         if (token.StartsWith("wk_", StringComparison.Ordinal))
         {
@@ -71,6 +139,27 @@
         }
 
         _busy = true;
+        try { await FinishAsync(token); }
+        finally { _busy = false; }
+    }
+
+    private async Task DevSignInAsync(string role)
+    {
+        _busy = true;
+        _error = _diagnosis = null;
+        try
+        {
+            var issued = await Api.DevTokenAsync(role.ToLowerInvariant(), [role]);
+            if (issued is null) { _devAvailable = false; return; }
+            await FinishAsync(issued.Token);
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _busy = false; }
+    }
+
+    /// <summary>토큰을 어디서 얻었든 마무리는 같다 — 저장하고, 서버로 확인하고, 이미지 쿠키를 받는다.</summary>
+    private async Task FinishAsync(string token)
+    {
         try
         {
             await Auth.SignInAsync(token);
@@ -83,23 +172,16 @@
             await Auth.SignOutAsync();
             _error = $"서버가 토큰을 거부했습니다: {ex.Describe()}";
         }
-        finally { _busy = false; }
     }
 
-    private async Task DevSignInAsync(string role)
+    private static string Describe(WebLoginFailure failure, string? detail) => failure switch
     {
-        _busy = true;
-        _error = null;
-        try
-        {
-            var issued = await Api.DevTokenAsync(role.ToLowerInvariant(), [role]);
-            if (issued is null) { _devAvailable = false; return; }
-            _token = issued.Token;
-            await Auth.SignInAsync(issued.Token);
-            await Api.EnsureImageCookieAsync();
-            Snackbar.Add($"{role} 로 로그인했습니다", Severity.Success);
-        }
-        catch (MlopsApiException ex) { _error = ex.Describe(); }
-        finally { _busy = false; }
-    }
+        WebLoginFailure.BadCredentials => "아이디 또는 비밀번호가 맞지 않습니다.",
+        WebLoginFailure.TooManyAttempts => "로그인 시도가 많아 잠시 막혔습니다. 1분 뒤에 다시 해 보세요.",
+        WebLoginFailure.MustChangePassword =>
+            "임시 비밀번호 상태입니다. BODA VMS Web 에서 비밀번호를 바꾼 뒤 다시 로그인하세요.",
+        WebLoginFailure.Unreachable => "BODA VMS Web 에 연결하지 못했습니다.",
+        WebLoginFailure.NotConfigured => "이 서버에 운영 웹 주소가 설정되어 있지 않습니다.",
+        _ => $"로그인에 실패했습니다. {detail}",
+    };
 }
