@@ -332,9 +332,22 @@ public sealed class MlopsApi(HttpClient http)
 
     // ───────────── 로그인 ─────────────
 
+    /// <summary>이 서버가 사람을 어떻게 들이는지 (Web: 운영 웹이 인증 · Local: 자체 계정). 로그인 전이라 익명이다.</summary>
+    public Task<AuthModeInfo> AuthModeAsync() => GetAsync<AuthModeInfo>("/api/auth/mode");
+
     public Task<WebLoginInfo> WebLoginInfoAsync() => GetAsync<WebLoginInfo>("/api/auth/web-login");
 
     public Task<WebReachability> WebReachableAsync() => GetAsync<WebReachability>("/api/auth/web-reachable");
+
+    /// <summary>자체 계정 로그인. 이쪽은 우리 서버가 확인한다 — 운영 웹 모드의 로그인과 달리 브라우저가 밖으로 나가지 않는다.</summary>
+    public Task<LocalLoginResponse> LocalLoginAsync(string username, string password) =>
+        SendJsonAsync<LocalLoginRequest, LocalLoginResponse>(HttpMethod.Post, "/api/auth/login",
+            new LocalLoginRequest(username, password));
+
+    /// <summary>비밀번호 바꾸기. 새 토큰이 나오고, 다른 자리에 남아 있던 세션은 그 즉시 끊긴다.</summary>
+    public Task<LocalLoginResponse> ChangePasswordAsync(string current, string next) =>
+        SendJsonAsync<ChangePasswordRequest, LocalLoginResponse>(HttpMethod.Post, "/api/auth/change-password",
+            new ChangePasswordRequest(current, next));
 
     // ───────────── 사용자 역할 ─────────────
 
@@ -347,6 +360,17 @@ public sealed class MlopsApi(HttpClient http)
 
     public Task RevokeMemberAsync(Guid id) =>
         SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/members/{id}"));
+
+    /// <summary>임시 비밀번호를 새로 내준다 (자체 계정 모드에서만). 값은 이 응답에서 한 번만 나온다.</summary>
+    public Task<TemporaryPasswordResponse> ResetMemberPasswordAsync(Guid id) =>
+        SendJsonAsync<object, TemporaryPasswordResponse>(HttpMethod.Post, $"/api/members/{id}/reset-password", new { });
+
+    /// <summary>계정을 쓰지 못하게 하거나 되살린다. 살아 있는 토큰도 다음 요청부터 막힌다.</summary>
+    public Task SetMemberDisabledAsync(Guid id, bool disabled) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Post, $"/api/members/{id}/disabled")
+        {
+            Content = JsonContent.Create(new SetMemberDisabledRequest(disabled), options: Json),
+        });
 
     // ───────────── 하부 ─────────────
 

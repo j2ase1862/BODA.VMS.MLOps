@@ -92,5 +92,6 @@ public sealed class MemberService(
     }
 
     private static MemberDto ToDto(Member m) =>
-        new(m.Id, m.Username, m.Role, m.DisplayName, m.Note, m.GrantedBy, m.GrantedAt, m.LastSeenAt);
+        new(m.Id, m.Username, m.Role, m.DisplayName, m.Note, m.GrantedBy, m.GrantedAt, m.LastSeenAt,
+            m.Disabled, !string.IsNullOrEmpty(m.PasswordHash), m.MustChangePassword, m.LockedUntil);
 }

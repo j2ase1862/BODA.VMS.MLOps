@@ -64,18 +64,33 @@ public sealed class MemberRoleClaimsTransformation(
         if (string.IsNullOrWhiteSpace(username)) return principal;
 
         var normalized = Data.Entities.Member.Normalize(username);
-        var mapped = await cache.GetOrCreateAsync(Key(normalized), async entry =>
+        var snapshot = await cache.GetOrCreateAsync(Key(normalized), async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = CacheFor;
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MlopsDbContext>();
             return await db.Members.AsNoTracking()
                 .Where(m => m.Username == normalized)
-                .Select(m => m.Role)
+                .Select(m => new MemberSnapshot(m.Role, m.Disabled, m.MustChangePassword, m.SecurityStamp))
                 .FirstOrDefaultAsync();
         });
 
-        var role = mapped;
+        // 비활성 계정은 역할을 주지 않는다 — 토큰이 살아 있어도 그 다음 요청부터 모든 정책이 막힌다.
+        // 인증 단계가 아니라 여기서 하는 이유는, 이 자리가 요청마다 돌고 캐시를 즉시 버릴 수 있어서다.
+        if (snapshot is { Disabled: true }) return WithRole(principal, null);
+
+        // 임시 비밀번호 상태도 같다. 비밀번호 변경만 열려 있어야 하는데 그 엔드포인트는
+        // 역할을 요구하지 않는다(인증만). 나머지는 최소 Viewer 를 요구하므로 여기서 다 막힌다.
+        if (snapshot is { MustChangePassword: true }) return WithRole(principal, null);
+
+        // 우리가 발급한 로그인 토큰이라면, 비밀번호가 바뀐 뒤의 옛 토큰인지 본다.
+        // 운영 웹이 토큰 세대(tv)로 하는 일을 로컬 모드에서는 이 도장으로 한다.
+        var stamp = principal.FindFirstValue(LocalTokenIssuer.PasswordStampClaim);
+        if (stamp is not null && snapshot is not null
+            && !string.Equals(stamp, LocalTokenIssuer.Stamp(snapshot.SecurityStamp), StringComparison.Ordinal))
+            return WithRole(principal, null);
+
+        var role = snapshot?.Role;
         if (string.IsNullOrWhiteSpace(role))
         {
             var bootstrap = auth.Value.BootstrapWebRole;
@@ -84,8 +99,16 @@ public sealed class MemberRoleClaimsTransformation(
                 : auth.Value.DefaultRole;
         }
 
-        // 토큰이 들고 온 역할은 운영 웹의 것이라 우리 사다리와 맞지 않는다. 남겨 두면
-        // 이름이 겹치는 역할(Admin)이 표의 결정을 덮어쓴다 — 강등이 듣지 않는다.
+        return WithRole(principal, role);
+    }
+
+    /// <summary>
+    /// 토큰이 들고 온 역할을 지우고 표의 역할 하나만 남긴다. 남겨 두면 이름이 겹치는 역할(Admin)이
+    /// 표의 결정을 덮어써 강등이 듣지 않는다. <paramref name="role"/> 이 비면 역할 없이 돌려준다 —
+    /// 인증은 됐지만 아무 정책도 통과하지 못하는 상태(비활성·임시 비밀번호·끊긴 토큰)다.
+    /// </summary>
+    private static ClaimsPrincipal WithRole(ClaimsPrincipal principal, string? role)
+    {
         var result = principal.Clone();
         var target = (ClaimsIdentity)result.Identity!;
         foreach (var stale in target.FindAll(target.RoleClaimType).ToArray()) target.RemoveClaim(stale);
@@ -95,4 +118,7 @@ public sealed class MemberRoleClaimsTransformation(
         if (!string.IsNullOrWhiteSpace(role)) target.AddClaim(new Claim(ClaimTypes.Role, role));
         return result;
     }
+
+    /// <summary>캐시에 담는 표 한 줄. 역할만 담던 것을 넓혔다 — 비활성과 비밀번호 도장도 매 요청 봐야 한다.</summary>
+    private sealed record MemberSnapshot(string Role, bool Disabled, bool MustChangePassword, string? SecurityStamp);
 }

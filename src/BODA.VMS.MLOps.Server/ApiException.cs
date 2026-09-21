@@ -15,6 +15,9 @@ public sealed class ApiException(int status, string code, string message, IReadO
     public static ApiException Conflict(string code, string message) => new(409, code, message);
     public static ApiException Forbidden(string message) => new(403, ErrorCodes.Forbidden, message);
     public static ApiException TooLarge(string message) => new(413, ErrorCodes.TooLarge, message);
+    /// <summary>자격 증명이 틀렸다. <b>아이디가 없는 것과 비밀번호가 틀린 것을 구분해 알리지 않는다</b> — 계정 이름 훑기를 돕는 셈이다.</summary>
+    public static ApiException Unauthorized(string message) => new(401, ErrorCodes.InvalidCredentials, message);
+    public static ApiException TooManyRequests(string code, string message) => new(429, code, message);
 }
 
 /// <summary>

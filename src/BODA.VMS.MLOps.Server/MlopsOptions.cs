@@ -132,12 +132,35 @@ public sealed class JwtOptions
     public string Audience { get; set; } = "BODA.VMS.Web";
 }
 
+/// <summary>
+/// 사람이 어떻게 들어오는가. <b>둘 중 하나만 고른다</b> — 둘 다 열면 같은 아이디가 두 출처에서
+/// 들어올 수 있고, <c>Members</c> 는 계정 이름이 키라 그 사람이 누구인지 아무도 모르게 된다.
+/// </summary>
+public enum AuthMode
+{
+    /// <summary>운영 웹(BODA.VMS.Web)이 인증한다. 브라우저가 그쪽에 직접 로그인하고 우리는 토큰만 검증한다.</summary>
+    Web,
+
+    /// <summary>이 서버의 계정으로 로그인한다. 운영 웹이 없는 설치를 위한 두 번째 문이다.</summary>
+    Local,
+}
+
 /// <summary>appsettings "Auth"</summary>
 public sealed class AuthOptions
 {
     public const string Section = "Auth";
     /// <summary>개발/테스트용 토큰 발급 엔드포인트 (/api/auth/dev-token). 운영은 반드시 false.</summary>
     public bool EnableDevTokens { get; set; }
+
+    /// <summary>
+    /// 사람을 들이는 방법. 기본은 <see cref="AuthMode.Web"/> — 운영 웹이 있는 설치는 계정이
+    /// 한 곳에 있는 편이 낫다 (퇴사자를 한 번만 지우면 되고, 비밀번호 보관 책임도 그쪽에 남는다).
+    /// <see cref="AuthMode.Local"/> 은 운영 웹이 없는 설치에서만 쓴다.
+    /// </summary>
+    public AuthMode Mode { get; set; } = AuthMode.Web;
+
+    /// <summary>자체 계정 로그인 설정 (<see cref="Mode"/> 가 <see cref="AuthMode.Local"/> 일 때만 쓰인다).</summary>
+    public LocalAuthOptions Local { get; set; } = new();
 
     /// <summary>
     /// 역할 표(<c>Members</c>)에 없는 계정이 받는 역할. 운영 웹으로 로그인은 되지만 우리가 아직
@@ -191,4 +214,51 @@ public sealed class AuthOptions
     /// </para>
     /// </summary>
     public int RevocationCheckSeconds { get; set; } = 60;
+}
+
+/// <summary>
+/// appsettings "Auth:Local" — 이 서버가 직접 사람을 들일 때 쓰는 값들.
+///
+/// <para>
+/// <b>서명 키를 <see cref="JwtOptions.Key"/> 와 따로 두는 이유.</b> 그 키는 "운영 웹과 같아야 하는 값" 이다.
+/// 같은 키로 우리 로그인 토큰까지 발급하면, 우리가 만든 토큰이 운영 웹에서도 통할 여지를 스스로 만드는 셈이다.
+/// 로컬 모드에서도 <c>Jwt:*</c> 는 남는다 — 모니터링이 운영 웹으로 나갈 때 그 키로 발급하기 때문이다.
+/// </para>
+/// </summary>
+public sealed class LocalAuthOptions
+{
+    /// <summary>발급·검증 서명 키. 32자 이상. 파일에 두지 말고 서비스 환경변수 <c>Auth__Local__Key</c> 로 준다.</summary>
+    public string Key { get; set; } = "";
+
+    /// <summary>
+    /// 우리가 발급한 로그인 토큰의 발급자. <b>운영 웹 것과 달라야 한다</b> —
+    /// 이 값으로 "이 토큰은 운영 웹에 물어볼 필요가 없다" 를 가른다 (<see cref="Auth.WebTokenRevocationClient"/>).
+    /// </summary>
+    public string Issuer { get; set; } = "BODA.VMS.MLOps";
+
+    public string Audience { get; set; } = "BODA.VMS.MLOps.Client";
+
+    /// <summary>토큰 수명(시간). 1단계는 갱신(refresh)을 두지 않아 이 시간이 지나면 다시 로그인한다.</summary>
+    public int TokenHours { get; set; } = 8;
+
+    /// <summary>연속 실패가 이만큼 쌓이면 <see cref="LockoutMinutes"/> 동안 잠근다.</summary>
+    public int MaxFailedAttempts { get; set; } = 5;
+
+    public int LockoutMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// 한 IP 가 1분에 시도할 수 있는 로그인 횟수. 계정 잠금만으로는 아이디를 바꿔 가며 찌르는 것을 막지 못한다.
+    /// 공장은 여럿이 한 IP 로 나가는 일이 흔해 계정 잠금(5회)보다 넉넉히 둔다.
+    /// </summary>
+    public int MaxAttemptsPerIpPerMinute { get; set; } = 30;
+
+    /// <summary>
+    /// 표가 비어 있는 새 서버가 만들 첫 관리자의 계정 이름. 임시 비밀번호는 서버가 만들어
+    /// 설치 폴더의 <c>initial-admin-password.txt</c> 에 한 번 남기고 로그에 위치를 알린다.
+    /// 비우면 만들지 않는다 — 그러면 아무도 첫 로그인을 할 수 없다.
+    /// </summary>
+    public string BootstrapAdmin { get; set; } = "admin";
+
+    /// <summary>비밀번호 최소 길이. 복잡도 규칙은 두지 않는다 (1단계).</summary>
+    public int MinPasswordLength { get; set; } = 8;
 }

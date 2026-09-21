@@ -16,6 +16,9 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.*" />
+    <!-- 자체 계정 로그인(Auth:Mode=Local)의 비밀번호 해시. PasswordHasher<T> 하나만 쓴다 (PBKDF2).
+         MIT 라이선스라 허용 목록(개발 문서 §8)에 맞는다. Identity 전체(스토어·UI)는 쓰지 않는다. -->
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.*" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.*" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.*" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.0.*" />

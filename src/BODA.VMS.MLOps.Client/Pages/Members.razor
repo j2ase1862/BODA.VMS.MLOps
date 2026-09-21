@@ -9,8 +9,20 @@
 
 <PageHeader Eyebrow="ADMINISTRATION" Title="사용자 역할">
     <Lead>
-        로그인은 BODA VMS Web 이 확인하고, 그 사람이 MLOps 에서 무엇을 할 수 있는지는 여기가 정합니다.
-        운영 웹의 계정 이름을 올리고 역할을 붙이세요. 운영 웹 쪽 설정은 바뀌지 않습니다.
+        @if (_local)
+        {
+            <span>
+                이 서버가 계정을 직접 관리합니다 (운영 웹이 없는 설치). 계정을 올리고 역할을 붙인 뒤
+                <b>임시 비밀번호</b>를 내주세요 — 받은 사람은 첫 로그인에서 비밀번호를 바꿔야 합니다.
+            </span>
+        }
+        else
+        {
+            <span>
+                로그인은 BODA VMS Web 이 확인하고, 그 사람이 MLOps 에서 무엇을 할 수 있는지는 여기가 정합니다.
+                운영 웹의 계정 이름을 올리고 역할을 붙이세요. 운영 웹 쪽 설정은 바뀌지 않습니다.
+            </span>
+        }
     </Lead>
     <Actions>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PersonAdd"
@@ -35,7 +47,8 @@
             {
                 <span>이 목록에 없는 계정은 <b>@_policy.DefaultRole</b> 로 들어옵니다.</span>
             }
-            @if (!string.IsNullOrWhiteSpace(_policy.BootstrapWebRole))
+            @* 운영 웹 역할로 들어오는 통로는 Web 모드에만 있다. *@
+            @if (!_local && !string.IsNullOrWhiteSpace(_policy.BootstrapWebRole))
             {
                 <span>
                     운영 웹에서 <b>@_policy.BootstrapWebRole</b> 인 계정은 목록에 없어도 관리자로 들어옵니다 —
@@ -56,7 +69,8 @@ else if (_members.Count == 0)
         <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" Size="Size.Large" Class="mud-text-secondary" />
         <MudText Typo="Typo.body1" Class="mt-2">역할을 붙인 계정이 없습니다.</MudText>
         <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
-            라벨링을 맡길 사람부터 올리세요. 운영 웹에서 쓰는 계정 이름 그대로 넣으면 됩니다.
+            라벨링을 맡길 사람부터 올리세요.
+            @(_local ? "올린 뒤 임시 비밀번호를 내주면 그 사람이 로그인할 수 있습니다." : "운영 웹에서 쓰는 계정 이름 그대로 넣으면 됩니다.")
         </MudText>
     </MudPaper>
 }
@@ -70,6 +84,7 @@ else
                 <MudTh>메모</MudTh>
                 <MudTh>준 사람</MudTh>
                 <MudTh>마지막 접속</MudTh>
+                <MudTh>상태</MudTh>
                 <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
@@ -96,7 +111,36 @@ else
                         @(context.LastSeenAt is null ? "없음" : context.LastSeenAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
                     </MudText>
                 </MudTd>
+                <MudTd DataLabel="상태">
+                    @if (context.Disabled)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error">비활성</MudChip>
+                    }
+                    else if (_local && !context.HasPassword)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning">비밀번호 없음</MudChip>
+                    }
+                    else if (_local && context.MustChangePassword)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning">임시 비밀번호</MudChip>
+                    }
+                    else if (context.LockedUntil is { } until && until > DateTime.UtcNow)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning">잠김</MudChip>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">정상</MudText>
+                    }
+                </MudTd>
                 <MudTd Class="text-right">
+                    @if (_local)
+                    {
+                        <MudButton Size="Size.Small" OnClick="@(() => ResetPasswordAsync(context))">임시 비밀번호</MudButton>
+                    }
+                    <MudButton Size="Size.Small" OnClick="@(() => ToggleDisabledAsync(context))">
+                        @(context.Disabled ? "되살리기" : "비활성")
+                    </MudButton>
                     <MudButton Size="Size.Small" OnClick="@(() => OpenGrant(context))">역할 바꾸기</MudButton>
                     <MudButton Size="Size.Small" Color="Color.Error" OnClick="@(() => RevokeAsync(context))">거두기</MudButton>
                 </MudTd>
@@ -105,10 +149,28 @@ else
     </MudPaper>
 }
 
+@* 임시 비밀번호는 여기서 한 번만 보인다. 서버에는 해시만 남아 다시 볼 방법이 없다. *@
+<MudDialog @bind-Visible="_passwordOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">임시 비밀번호</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            <b>@_passwordUser</b> 에게 이 비밀번호를 전하세요. <b>이 창을 닫으면 다시 볼 수 없습니다</b> —
+            잃어버리면 다시 내주면 됩니다.
+        </MudText>
+        <MudTextField T="string" Value="@_passwordValue" ReadOnly="true" Variant="Variant.Outlined" Class="mono" />
+        <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2">
+            받은 사람은 첫 로그인에서 비밀번호를 바꿔야 하고, 바꾸기 전에는 다른 화면이 열리지 않습니다.
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="@(() => _passwordOpen = false)">닫기</MudButton>
+    </DialogActions>
+</MudDialog>
+
 <MudDialog @bind-Visible="_grantOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">@(_editing is null ? "역할 주기" : "역할 바꾸기")</MudText></TitleContent>
     <DialogContent>
-        <MudTextField @bind-Value="_username" Label="운영 웹 계정 이름" Immediate="true"
+        <MudTextField @bind-Value="_username" Label="@(_local ? "계정 이름" : "운영 웹 계정 이름")" Immediate="true"
                       Disabled="@(_editing is not null)" HelperText="로그인할 때 쓰는 이름 그대로. 대소문자는 가리지 않습니다." />
         <MudSelect T="string" @bind-Value="_role" Label="역할" Class="mt-4">
             @foreach (var r in _assignable)
@@ -130,8 +192,9 @@ else
     private List<MemberDto> _members = [];
     private MemberPolicyDto? _policy;
     private string[] _assignable = ["Viewer", "Labeler", "Engineer", "Admin"];
-    private bool _loading = true, _busy, _grantOpen;
+    private bool _loading = true, _busy, _grantOpen, _passwordOpen, _local;
     private string? _error;
+    private string _passwordUser = "", _passwordValue = "";
 
     private MemberDto? _editing;
     private string _username = "", _role = "Viewer", _note = "";
@@ -144,6 +207,10 @@ else
         _error = null;
         try
         {
+            // 자체 계정 모드에서만 비밀번호를 우리가 들고 있다 — 그 모드에서만 계정 관리 버튼을 보여 준다.
+            try { _local = (await Api.AuthModeAsync()).Mode.Equals("Local", StringComparison.OrdinalIgnoreCase); }
+            catch (MlopsApiException) { _local = false; }
+
             _members = await Api.MembersAsync();
             _policy = await Api.MemberPolicyAsync();
             if (_policy.AssignableRoles.Length > 0) _assignable = _policy.AssignableRoles;
@@ -186,6 +253,44 @@ else
         {
             await Api.RevokeMemberAsync(member.Id);
             Snackbar.Add($"{member.Username} 의 역할을 거두었습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task ResetPasswordAsync(MemberDto member)
+    {
+        var ok = await Dialogs.ShowMessageBox("임시 비밀번호 내주기",
+            $"{member.Username} 의 비밀번호를 새 임시 비밀번호로 바꿉니다. 지금 쓰던 비밀번호와 로그인해 둔 세션은 끊깁니다.",
+            yesText: "내주기", cancelText: "취소");
+        if (ok != true) return;
+
+        try
+        {
+            var issued = await Api.ResetMemberPasswordAsync(member.Id);
+            _passwordUser = issued.Username;
+            _passwordValue = issued.TemporaryPassword;
+            _passwordOpen = true;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private async Task ToggleDisabledAsync(MemberDto member)
+    {
+        var disable = !member.Disabled;
+        if (disable)
+        {
+            var ok = await Dialogs.ShowMessageBox("계정 비활성",
+                $"{member.Username} 을(를) 막습니다. 로그인해 둔 토큰도 다음 요청부터 막힙니다.",
+                yesText: "비활성", cancelText: "취소");
+            if (ok != true) return;
+        }
+
+        try
+        {
+            await Api.SetMemberDisabledAsync(member.Id, disable);
+            Snackbar.Add($"{member.Username} 을(를) {(disable ? "비활성했습니다" : "되살렸습니다")}", Severity.Success);
             await LoadAsync();
         }
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
