@@ -154,6 +154,43 @@ public sealed class TrainingJobService(
         return await CreateAsync(req, user, ct);
     }
 
+    /// <summary>
+    /// 끝난 작업을 지운다 — 로그와 아티팩트 파일까지 함께 간다.
+    ///
+    /// <para>진행 중인 작업은 막는다. 워커가 아직 이 id 로 보고하는 중이라, 지우면 그 보고가 404 로 죽고
+    /// 워커는 끝내지 못한 프로세스를 들고 남는다. 먼저 취소해서 끝난 뒤에 지운다.</para>
+    ///
+    /// <para>이 작업으로 만든 모델 버전이 있으면 막는다 — 그 버전이 <b>어느 데이터로 어떤 설정에서 나왔는지</b>
+    /// 는 이 행 하나에만 있다. 버전을 먼저 지우면 순서대로 풀린다.</para>
+    /// </summary>
+    public async Task DeleteAsync(Guid id, CurrentUser user, CancellationToken ct)
+    {
+        var job = await db.TrainingJobs.FirstOrDefaultAsync(j => j.Id == id, ct) ?? throw ApiException.NotFound("학습 작업");
+        if (!TrainingJobStateMachine.IsTerminal(job.State))
+            throw ApiException.Conflict(ErrorCodes.InvalidJobTransition,
+                $"진행 중인 작업({job.State})은 지울 수 없습니다. 먼저 취소하세요.");
+        if (!string.Equals(job.CreatedBy, user.Name, StringComparison.OrdinalIgnoreCase) && !user.IsAdmin)
+            throw ApiException.Forbidden("다른 사람의 작업 삭제는 Admin 권한이 필요합니다.");
+        if (await db.ModelVersions.AnyAsync(v => v.TrainingJobId == id, ct))
+            throw ApiException.Conflict(ErrorCodes.Validation,
+                "이 작업으로 만든 모델 버전이 있어 지울 수 없습니다. 버전을 먼저 지우세요.");
+
+        var artifacts = await db.JobArtifacts.Where(a => a.JobId == id).ToListAsync(ct);
+        db.JobArtifacts.RemoveRange(artifacts);
+        db.JobLogChunks.RemoveRange(db.JobLogChunks.Where(c => c.JobId == id));
+        db.TrainingJobs.Remove(job);
+        audit.Record(AuditService.Training, "JobDeleted", user.Name, id.ToString(),
+            new { state = job.State, script = job.Script, artifacts = artifacts.Count });
+        await db.SaveChangesAsync(ct);
+
+        // 작업 파일은 jobs/{작업id}/ 안에만 있어 다른 행과 나눠 쓰지 않는다. 파일이 남더라도 행은 이미 갔다.
+        foreach (var a in artifacts)
+        {
+            try { await storage.DeleteAsync(a.StorageKey, ct); }
+            catch (Exception ex) { logger.LogWarning(ex, "학습 아티팩트 삭제 실패 {Key}", a.StorageKey); }
+        }
+    }
+
     public async Task<JobLogPage> LogsAsync(Guid id, long fromSeq, int take, CancellationToken ct)
     {
         if (!await db.TrainingJobs.AnyAsync(j => j.Id == id, ct)) throw ApiException.NotFound("학습 작업");

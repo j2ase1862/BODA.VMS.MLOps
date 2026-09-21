@@ -379,6 +379,37 @@ dotnet user-secrets set "Jwt:Key" "<운영 웹과 같은 키>"
 데이터 임계치에 닿으면 사람 없이 도는 완전 자동 재학습은 넣지 않았습니다. 이 1차 템플릿이
 몇 사이클 돌아 후보 모델 품질과 데이터 품질 필터를 믿을 수 있게 된 뒤에 볼 일입니다.
 
+## 지우기
+
+만든 것은 지울 수 있습니다. 다만 **굳은 것이 무른 것을 붙잡습니다** — 붙잡힌 동안은 409 로 막히고,
+무엇이 붙잡고 있는지를 메시지가 말해 줍니다. 순서대로 풀면 끝까지 지워집니다.
+
+| 지우려는 것 | 막는 것 | 누가 |
+|---|---|---|
+| 사진 (수집 사진 화면) | 데이터셋 버전(스냅샷)에 들어간 사진 | Engineer |
+| 데이터셋 | 그 데이터셋에서 뜬 버전 | Engineer |
+| 데이터셋 버전 | 그 버전으로 만든 학습 작업 | Engineer |
+| 학습 작업 | 진행 중인 상태 · 그 작업이 낸 모델 버전 | Engineer (남의 작업은 Admin) |
+| 모델 버전 | Staging·Production 스테이지 · 활성 바인딩 | Engineer, Retired 는 Admin |
+| 모델 계열 | 버전·바인딩·학습 작업이 하나라도 있으면 | Engineer |
+
+막는 이유는 하나입니다 — **학습을 돌린 그 판이 나중에도 재현되어야 하기 때문**입니다.
+스냅샷에 굳은 사진을 지우면 그 버전은 더 이상 같은 데이터가 아니고, 작업을 지우면 그 작업이 낸
+모델이 어디서 나왔는지 물을 곳이 없어집니다.
+
+라인이 받아 갈 수 있는 버전(Staging·Production)은 스테이지를 먼저 내려야 지워집니다.
+그 강등은 승격과 같은 길을 지나므로 누가 언제 왜 내렸는지가 이력에 남습니다.
+한 번 라인에 나갔던 Retired 버전은 Admin 만 지웁니다.
+
+파일도 함께 갑니다. 다만 **내용 주소 저장소라 같은 파일을 여러 행이 나눠 씁니다** — 사진과 ONNX 는
+같은 해시를 쓰는 다른 행이 없을 때만 실제로 지워집니다. 학습 아티팩트는 작업 폴더 안에만 있어
+그런 확인이 필요 없습니다.
+
+**쓰던 것을 목록에서 치우는 것은 삭제가 아니라 보관**입니다 (모델 계열·데이터셋의 `isArchived`).
+지우는 것은 잘못 만든 것과 더 볼 일 없는 것을 위한 길입니다.
+
+자동 삭제(보존 정책)는 없습니다 — 아래 "남은 일" 을 보세요.
+
 ## API
 
 전체 목록은 개발 모드의 Swagger(`/swagger`)에 있습니다. 주요 경로만 적습니다.
@@ -387,6 +418,7 @@ dotnet user-secrets set "Jwt:Key" "<운영 웹과 같은 키>"
 |---|---|
 | `POST /api/models`, `POST /api/models/{id}/versions` | 모델 계열 생성, ONNX 업로드 |
 | `POST /api/model-versions/{id}/promote` | 스테이지 승격·강등 |
+| `DELETE /api/models/{id}`, `DELETE /api/model-versions/{id}` | 계열·버전 삭제 (위 "지우기" 의 제약) |
 | `GET /api/model-versions/{id}/artifact` | 아티팩트 다운로드 (ETag = sha256) |
 | `GET /api/models/{id}/resolve?stage=production` | 라인 PC 의 참조 해석 |
 | `PUT /api/recipes/{recipeId}/tools/{toolId}/model` | 바인딩 |
@@ -394,6 +426,7 @@ dotnet user-secrets set "Jwt:Key" "<운영 웹과 같은 키>"
 | `GET /api/recipes/{recipeId}/model-bindings/payload` | 동기화 페이로드 (VMS 프리페치) |
 | `POST /api/workers`, `POST /api/workers/register` | 워커 발급(Admin), 워커 등록 |
 | `POST /api/training-jobs` | 학습 작업 생성 |
+| `DELETE /api/training-jobs/{id}` | 끝난 작업 삭제 (로그·아티팩트 함께) |
 | `GET /api/training-jobs/next?wait=25` | 워커 long-poll |
 | `PATCH /api/training-jobs/{id}/progress` | 진행률·로그 보고 |
 | `POST /api/training-jobs/{id}/artifacts` | 아티팩트 업로드 → Candidate 생성 |
@@ -402,6 +435,8 @@ dotnet user-secrets set "Jwt:Key" "<운영 웹과 같은 키>"
 | `POST /api/sam/prepare` | 임베딩 미리 만들기 (사진을 열 때) |
 | `POST /api/sam/predict` | 클릭 점들 → 크기가 다른 폴리곤 후보들 |
 | `POST /api/images/line-ng` | 라인 PC 의 NG 이미지 수집 (출처·라인 고정) |
+| `POST /api/images/delete` | 사진 영구 삭제 (스냅샷에 든 사진은 거부) |
+| `DELETE /api/datasets/{id}`, `DELETE /api/dataset-versions/{id}` | 데이터셋·버전 삭제 |
 | `POST /api/datasets/{id}/prelabel` | 후보 모델을 돌려 초기 라벨·불확실도 채우기 (§5.4) |
 | `POST /api/datasets/{id}/prefill` | 바깥에서 만든 예측·불확실도를 그대로 넣기 |
 | `POST /api/line-clients` | 라인 PC 서비스 계정 발급 (Admin) · 화면은 /line-clients |
@@ -418,7 +453,7 @@ dotnet user-secrets set "Jwt:Key" "<운영 웹과 같은 키>"
 dotnet test BODA.VMS.MLOps.slnx
 ```
 
-305개가 GPU 없이 몇 초 만에 끝납니다. 규약 판별은 VMS 리포와 같은 스텁 ONNX 를 씁니다.
+350개가 GPU 없이 몇 초 만에 끝납니다. 규약 판별은 VMS 리포와 같은 스텁 ONNX 를 씁니다.
 
 한동안 전체를 돌리면 다섯 번에 한 번쯤 한 건이 흔들렸습니다. 매번 다른 시험이라 병렬 실행의
 자원 경합처럼 보였지만, 원인은 하나였습니다 — **사진을 읽은 뒤 파일 손잡이가 늦게 닫혀
@@ -436,6 +471,8 @@ E2E 테스트는 인메모리 서버에 실제 `JobRunner` 를 붙여 작업 제
 SAM 은 마스크에서 폴리곤을 뽑는 순수 부분(좌표 규약·윤곽 추적·확대·덩어리 선택)을 모델 없이 확인하고,
 모델 파일이 있는 PC 에서는 실제 추론까지 돌립니다 — 클릭한 자리에 폴리곤이 생기는지, 두 객체를 갈라 잡는지,
 후보가 크기 순으로 여러 개 나오는지, 배경 점이 실제로 듣는지, 가려져 조각난 물체에서 클릭한 조각이 나오는지.
+삭제는 `DeletionApiTests` 가 막는 순서를 그대로 밟습니다 — 붙잡힌 동안 409 인지, 풀면 지워지는지,
+파일이 실제로 없어지는지, 그리고 같은 해시를 나눠 쓰는 파일은 마지막 한 행이 갈 때까지 남는지.
 
 ## 남은 일
 
@@ -491,9 +528,9 @@ VMS 쪽 송신부는 닫혔습니다 (VMS PR #446 — 이미지 저장 설정의
 규약과 근거는 `docs/로컬 계정 로그인 설계 메모.md` 에 있습니다. 2단계(하이브리드 없이 두는 대신
 비밀번호 정책·2단계 인증·로컬 모드의 "로그인 유지")는 필요해질 때 봅니다.
 
-**보존 정책.** 오래된 이미지를 자동으로 지우는 규칙이 없습니다. 품질 지표는 재어 두었으니
-"흐린 것부터 골라 보고 사람이 지우는" 길은 열렸지만, 자동 삭제는 되돌릴 수 없어 넣지 않았습니다.
-무엇을 얼마나 오래 두는지는 운영이 정할 일입니다.
+**보존 정책.** 오래된 것을 **자동으로** 지우는 규칙이 없습니다. 사람이 지우는 길은 화면까지 열려 있고
+(위 "지우기"), 품질 지표로 "흐린 것부터 골라 보고 지우는" 것도 됩니다. 넣지 않은 것은 나이나 용량
+임계치로 사람 없이 도는 삭제입니다 — 되돌릴 수 없고, 무엇을 얼마나 오래 두는지는 운영이 정할 일입니다.
 
 **작은 것들.**
 - 데이터셋 내보내기를 매니페스트 기반으로 바꿔 바뀐 파일만 받기

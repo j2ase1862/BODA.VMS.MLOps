@@ -5,6 +5,7 @@
 @inject TrainingHubClient Hub
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
+@inject IDialogService Dialogs
 
 <PageTitle>학습 작업 · MLOps</PageTitle>
 
@@ -66,7 +67,19 @@
             <MudTd DataLabel="우선순위">@context.Priority</MudTd>
             <MudTd DataLabel="경과">@Display.Duration(context.StartedAt ?? context.AssignedAt, context.FinishedAt)</MudTd>
             <MudTd DataLabel="제출">@Display.Ago(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
-            <MudTd><MudButton Size="Size.Small" Href="@($"/training/{context.Id}")">상세</MudButton></MudTd>
+            <MudTd>
+                <MudButton Size="Size.Small" Href="@($"/training/{context.Id}")">상세</MudButton>
+                @* 끝난 작업만 지울 수 있다 — 진행 중인 것은 서버가 막는다 *@
+                @if (context.State is TrainingJobState.Succeeded or TrainingJobState.Failed or TrainingJobState.Cancelled)
+                {
+                    <AuthorizeView Roles="Engineer,Admin" Context="del">
+                        <MudTooltip Text="작업 기록 삭제">
+                            <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small"
+                                           Color="Color.Error" OnClick="@(() => DeleteAsync(context))" />
+                        </MudTooltip>
+                    </AuthorizeView>
+                }
+            </MudTd>
         </RowTemplate>
         <NoRecordsContent>
             <MudText Typo="Typo.body2" Class="pa-4">작업이 없습니다.</MudText>
@@ -118,6 +131,24 @@
     }
 
     private async Task OnStateChanged(TrainingJobState? state) { _state = state; await LoadAsync(); }
+
+    /// <summary>끝난 작업의 기록을 지운다. 결과 모델 버전이 있으면 서버가 막는다 (버전이 출처로 이 행을 가리킨다).</summary>
+    private async Task DeleteAsync(TrainingJobDto job)
+    {
+        var ok = await Dialogs.ShowMessageBox("학습 작업 삭제",
+            $"{job.Script.FileName()} 작업({Display.Ago(job.CreatedAt)} 제출)의 기록을 지웁니다. " +
+            "로그와 아티팩트 파일이 함께 사라집니다. 되돌릴 수 없습니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
+        try
+        {
+            await Api.DeleteJobAsync(job.Id);
+            _jobs.RemoveAll(j => j.Id == job.Id);
+            Snackbar.Add("작업을 지웠습니다", Severity.Success);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
 
     private Task OpenCreateAsync() { _createOpen = true; return Task.CompletedTask; }
 

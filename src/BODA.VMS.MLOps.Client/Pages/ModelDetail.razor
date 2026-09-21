@@ -3,6 +3,7 @@
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
+@inject IDialogService Dialogs
 
 <PageTitle>@(_model?.Name ?? "모델") · MLOps</PageTitle>
 
@@ -31,8 +32,18 @@ else
             }
         </div>
         <AuthorizeView Roles="Engineer,Admin">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
-                       OnClick="@(() => _uploadOpen = true)">버전 업로드</MudButton>
+            <div class="d-flex gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
+                           OnClick="@(() => _uploadOpen = true)">버전 업로드</MudButton>
+                @* 버전이 하나라도 있으면 서버가 막는다 — 그때는 버튼을 아예 보이지 않는다 *@
+                @if (!_loadingVersions && _versions.Count == 0)
+                {
+                    <MudTooltip Text="버전이 없는 계열만 지울 수 있습니다">
+                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error"
+                                       Disabled="@_busy" OnClick="DeleteModelAsync" />
+                    </MudTooltip>
+                }
+            </div>
         </AuthorizeView>
     </div>
 
@@ -87,6 +98,14 @@ else
                             <MudButton OnClick="@(() => OpenPromote(context))">스테이지</MudButton>
                         </AuthorizeView>
                     </MudButtonGroup>
+                    @* 묶음 안에 두면 MudButtonGroup 이 색을 덮어써 지우는 버튼이 나머지와 같아 보인다 *@
+                    <AuthorizeView Roles="Engineer,Admin" Context="del">
+                        <MudTooltip Text="버전 삭제">
+                            <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small"
+                                           Color="Color.Error" Disabled="@_busy"
+                                           OnClick="@(() => DeleteVersionAsync(context))" />
+                        </MudTooltip>
+                    </AuthorizeView>
                 </MudTd>
             </RowTemplate>
             <NoRecordsContent>
@@ -322,6 +341,7 @@ else
     private int? _uploadInputSize;
     private string? _uploadError;
 
+    private bool _busy;
     private bool _promoteOpen, _promotingBusy, _confirmLicense;
     private ModelVersionDto? _promoting;
     private ModelStage _targetStage = ModelStage.Staging;
@@ -407,6 +427,56 @@ else
         }
         catch (IOException ex) { _uploadError = $"파일을 읽지 못했습니다: {ex.Message}"; }
         finally { _uploading = false; }
+    }
+
+    /// <summary>
+    /// 버전을 지운다. Staging·Production 은 서버가 막으므로 여기서도 먼저 알려 준다 —
+    /// 확인창을 띄워 놓고 409 를 받는 것보다 낫다. Retired 는 Admin 이 아니면 서버가 403 을 낸다.
+    /// </summary>
+    private async Task DeleteVersionAsync(ModelVersionDto version)
+    {
+        if (version.Stage is ModelStage.Staging or ModelStage.Production)
+        {
+            Snackbar.Add($"{Display.StageText(version.Stage)} 버전은 지울 수 없습니다. [스테이지] 에서 먼저 내리세요.", Severity.Warning);
+            return;
+        }
+
+        var ok = await Dialogs.ShowMessageBox("모델 버전 삭제",
+            $"v{version.Number}({Display.Sha(version.Sha256)})을 지웁니다. ONNX 파일도 함께 사라지고, " +
+            "이 버전을 낸 학습 작업의 '결과 모델' 표시가 없어집니다. 되돌릴 수 없습니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
+        _busy = true;
+        try
+        {
+            await Api.DeleteModelVersionAsync(version.Id);
+            Snackbar.Add($"v{version.Number} 을(를) 지웠습니다", Severity.Success);
+            if (_detail?.Id == version.Id) _detailOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    /// <summary>계열 삭제 — 버전이 없을 때만 버튼이 보인다. 쓰던 계열을 치우는 것은 보관이지 삭제가 아니다.</summary>
+    private async Task DeleteModelAsync()
+    {
+        if (_model is null) return;
+        var ok = await Dialogs.ShowMessageBox("모델 계열 삭제",
+            $"'{_model.Name}' 계열을 지웁니다. 버전이 없는 계열만 지워지고, 학습 작업이나 레시피 바인딩이 걸려 있으면 막힙니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
+        _busy = true;
+        try
+        {
+            await Api.DeleteModelAsync(_model.Id);
+            Snackbar.Add($"'{_model.Name}' 계열을 지웠습니다", Severity.Success);
+            Nav.NavigateTo("/models");
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
     }
 
     private void OpenPromote(ModelVersionDto version)

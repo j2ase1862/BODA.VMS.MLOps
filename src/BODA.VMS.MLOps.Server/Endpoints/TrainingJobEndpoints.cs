@@ -61,6 +61,13 @@ public static class TrainingJobEndpoints
             return Results.Created($"/api/training-jobs/{dto.Id}", dto);
         }).RequireAuthorization(Policies.Engineer);
 
+        // 끝난 작업만 지워진다. 로그와 아티팩트가 함께 간다.
+        g.MapDelete("/{id:guid}", async (Guid id, TrainingJobService svc, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            await svc.DeleteAsync(id, CurrentUser.From(p), ct);
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Engineer);
+
         // ── 워커 프로토콜 ──
         g.MapPost("/{id:guid}/ack", async (Guid id, TrainingJobService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.AckAsync(id, WorkerEndpoints.RequireWorkerId(p), ct))).RequireAuthorization(Policies.Worker);
