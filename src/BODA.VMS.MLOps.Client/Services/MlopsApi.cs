@@ -6,6 +6,7 @@ using System.Text.Json;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Datasets;
 using BODA.VMS.MLOps.Contracts.Lines;
+using BODA.VMS.MLOps.Contracts.Members;
 using BODA.VMS.MLOps.Contracts.Models;
 using BODA.VMS.MLOps.Contracts.Pretrained;
 using BODA.VMS.MLOps.Contracts.Training;
@@ -327,6 +328,18 @@ public sealed class MlopsApi(HttpClient http)
         if (res.StatusCode == HttpStatusCode.NotFound) return null;
         return await ReadAsync<DevTokenResponse>(res);
     }
+
+    // ───────────── 사용자 역할 ─────────────
+
+    public Task<List<MemberDto>> MembersAsync() => GetAsync<List<MemberDto>>("/api/members");
+
+    public Task<MemberPolicyDto> MemberPolicyAsync() => GetAsync<MemberPolicyDto>("/api/members/policy");
+
+    public Task<MemberDto> GrantMemberAsync(GrantMemberRequest req) =>
+        SendJsonAsync<GrantMemberRequest, MemberDto>(HttpMethod.Put, "/api/members", req);
+
+    public Task RevokeMemberAsync(Guid id) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/members/{id}"));
 
     // ───────────── 하부 ─────────────
 

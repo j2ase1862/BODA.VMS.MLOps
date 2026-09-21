@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using BODA.VMS.MLOps.Server.Auth;
+using BODA.VMS.MLOps.Server.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -26,9 +27,13 @@ public static class AuthEndpoints
             return Results.Ok(new { token = issuer.Issue(req.User, roles, req.Hours), roles });
         }).AllowAnonymous();
 
-        g.MapGet("/me", (ClaimsPrincipal principal) =>
+        // 화면이 로그인 직후 한 번 부른다. 역할 표에 있는 사람이면 이때 마지막 접속 시각을 남긴다 —
+        // 요청마다 쓰면 목록 화면 한 번에 수십 번이 된다.
+        g.MapGet("/me", async (ClaimsPrincipal principal, MemberService members, CancellationToken ct) =>
         {
             var u = CurrentUser.From(principal);
+            if (u.WorkerId is null && u.LineId is null)
+                await members.TouchAsync(u.Name, principal.FindFirstValue("DisplayName"), ct);
             return Results.Ok(new { u.Name, roles = u.RolesSet.ToArray(), u.WorkerId });
         }).RequireAuthorization(Policies.Viewer);
 

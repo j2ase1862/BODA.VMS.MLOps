@@ -70,6 +70,7 @@ builder.Services.AddScoped<ModelRegistryService>();
 builder.Services.AddScoped<BindingService>();
 builder.Services.AddScoped<WorkerRegistryService>();
 builder.Services.AddScoped<LineClientService>();
+builder.Services.AddScoped<MemberService>();
 builder.Services.AddScoped<TrainingJobService>();
 builder.Services.AddScoped<PretrainedMirrorService>();
 builder.Services.AddScoped<DatasetVersionService>();
@@ -142,6 +143,9 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
     })
     .AddScheme<AuthenticationSchemeOptions, WorkerTokenAuthenticationHandler>(WorkerTokenAuthenticationHandler.SchemeName, null)
     .AddScheme<AuthenticationSchemeOptions, LineTokenAuthenticationHandler>(LineTokenAuthenticationHandler.SchemeName, null);
+// 운영 웹 토큰의 역할을 우리 역할로 바꾼다. 인가 정책이 돌기 전에 끼어들어야 한다.
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<IClaimsTransformation, MemberRoleClaimsTransformation>();
 builder.Services.AddAuthorization(o => o.AddMlopsPolicies());
 
 builder.Services.AddEndpointsApiExplorer();
@@ -206,6 +210,7 @@ api.MapPretrainedEndpoints();
 api.MapDatasetEndpoints();
 api.MapImageEndpoints();
 api.MapLineEndpoints();
+api.MapMemberEndpoints();
 api.MapSamEndpoints();
 api.MapMonitoringEndpoints();
 

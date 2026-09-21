@@ -57,6 +57,14 @@ YOLO 계열(AGPL)은 라이선스 필드 없이는 등록도 Production 승격�
 **작업 상태는 서버가 소유합니다.** 워커는 보고만 하고 전이는 `TrainingJobStateMachine` 이 검증합니다.
 새 상태나 전이를 넣을 때는 이 클래스와 그 테스트를 먼저 고치세요. 전이를 이 클래스 밖에서 직접 대입하지 마세요.
 
+**인증은 운영 웹이, 인가는 우리가 합니다.** 운영 웹의 역할은 `Admin`·`User` 둘뿐이라 우리 사다리와 맞지 않습니다.
+그대로 쓰면 운영 웹의 일반 사용자는 모든 화면에서 403 입니다. 그래서 `Members` 표가 계정마다 역할을 정하고
+`MemberRoleClaimsTransformation` 이 인가 전에 토큰의 역할을 바꿉니다 — **역할 판단을 이 클래스 밖에서 하지 마세요.**
+표에 없으면 `Auth:DefaultRole`(기본 Viewer), 운영 웹 `Auth:BootstrapWebRole` 을 달고 오면 Admin 입니다.
+그 부트스트랩이 없으면 표가 빈 새 서버에서 아무도 첫 역할을 줄 수 없습니다. 표에 줄이 있으면 그쪽이 이깁니다.
+우리가 발급한 토큰은 `ServiceTokenIssuer.SelfIssuedClaim` 이 붙어 변환을 건너뜁니다 — 개발 토큰의 역할이 곧 의도입니다.
+역할을 바꾸면 캐시를 즉시 버립니다(`MemberRoleClaimsTransformation.Invalidate`). 권한 회수가 늦으면 안 됩니다.
+
 **워커 토큰의 범위는 좁게 유지합니다.** 워커 역할은 `Viewer`·`Line` 정책에 넣지 않습니다.
 워커가 읽어야 하는 것은 데이터셋 export, 사전학습 파일, 스크립트뿐이고 각 엔드포인트에 `WorkerOrEngineer` 로 명시합니다.
 `WorkerScopeTests` 가 이 경계를 지킵니다.

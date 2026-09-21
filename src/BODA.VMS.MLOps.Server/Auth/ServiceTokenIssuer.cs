@@ -32,6 +32,12 @@ public sealed class ServiceTokenIssuer(IOptions<JwtOptions> jwt)
     /// null 이면 우리 자신의 audience 를 쓴다 (개발 토큰 등 우리가 받을 토큰).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 우리가 발급한 토큰이라는 표시. <see cref="MemberRoleClaimsTransformation"/> 이 이 표시를 보고
+    /// 역할 표를 적용하지 않는다 — 여기 실린 역할은 이미 우리 역할이고, 부르는 쪽이 고른 것이다.
+    /// </summary>
+    public const string SelfIssuedClaim = "mlops:self";
+
     public string Issue(string user, IEnumerable<string> roles, int hours = 1, string? audience = null)
     {
         var accepted = roles.Where(r => Roles.All.Contains(r, StringComparer.OrdinalIgnoreCase)).ToArray();
@@ -41,6 +47,7 @@ public sealed class ServiceTokenIssuer(IOptions<JwtOptions> jwt)
             new(JwtRegisteredClaimNames.Sub, user),
             new(ClaimTypes.Name, user),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
+            new(SelfIssuedClaim, "1"),
         };
         claims.AddRange(accepted.Select(r => new Claim(ClaimTypes.Role, r)));
 

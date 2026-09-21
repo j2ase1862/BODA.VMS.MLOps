@@ -11,6 +11,7 @@ public class MlopsDbContext(DbContextOptions<MlopsDbContext> options) : DbContex
     public DbSet<ModelBinding> ModelBindings => Set<ModelBinding>();
     public DbSet<Worker> Workers => Set<Worker>();
     public DbSet<LineClient> LineClients => Set<LineClient>();
+    public DbSet<Member> Members => Set<Member>();
     public DbSet<TrainingJob> TrainingJobs => Set<TrainingJob>();
     public DbSet<JobLogChunk> JobLogChunks => Set<JobLogChunk>();
     public DbSet<JobArtifact> JobArtifacts => Set<JobArtifact>();
@@ -98,6 +99,17 @@ public class MlopsDbContext(DbContextOptions<MlopsDbContext> options) : DbContex
             e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
             e.HasIndex(x => x.TokenHash).IsUnique();
             e.HasIndex(x => x.LineId);
+        });
+
+        b.Entity<Member>(e =>
+        {
+            e.HasKey(x => x.Id);
+            // 계정 이름은 소문자로 정규화해 넣는다 (Member.Normalize). 한 계정에 역할은 하나다.
+            e.Property(x => x.Username).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(20).IsRequired();
+            e.Property(x => x.DisplayName).HasMaxLength(200);
+            e.Property(x => x.Note).HasMaxLength(500);
+            e.HasIndex(x => x.Username).IsUnique();
         });
 
         b.Entity<TrainingJob>(e =>
