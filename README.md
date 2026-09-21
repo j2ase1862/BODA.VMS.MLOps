@@ -22,7 +22,7 @@ BODA.VMS.MLOps.slnx
 ├── src/BODA.VMS.MLOps.TrainWorker.Setup  워커 설치 패키지 (WiX 6 MSI, 솔루션 밖 — 따로 빌드)
 ├── tests/BODA.VMS.MLOps.Tests     xUnit 305개 — 규약·상태 머신·API·워커 프로토콜·E2E
 ├── scripts/                       학습 스크립트(VMS 리포와 동일 규약) + 진단·허용 목록·가짜 스크립트 + wheel 번들 생성
-└── docs/                          상위 설계 문서 3종 + 워커 설치 가이드
+└── docs/                          상위 설계 문서 3종 + 설치 메모 + manual/ (사용자 매뉴얼·설치 가이드 본문)
 ```
 
 외부 의존은 `VMS.Core.Contracts` NuGet 패키지 하나입니다. VMS 런타임과 공유하는 규약 계층으로,
@@ -48,13 +48,14 @@ BODA.VMS.MLOps.TrainWorker.exe diag       # venv 부트스트랩 + 자기진단�
 
 # 서버를 Windows 서비스로 상시 가동 (관리자 PowerShell; publish → 설치 폴더 → 서비스 BodaVmsMlops → 방화벽)
 .\scripts\install-server-service.ps1 -DataDir D:\BODA-MLOps -ProductionWebUrl http://<운영 웹>:5292
-#  Jwt 키는 운영 웹과 같은 값을 -JwtKey / MLOPS_JWT_KEY / user-secrets 로. 절차는 docs/서버 설치 가이드.md
+#  Jwt 키는 운영 웹과 같은 값을 -JwtKey / MLOPS_JWT_KEY / user-secrets 로.
+#  절차의 정본은 설치 가이드 문서(docs/manual/install.json) — docs/서버 설치 가이드.md 는 저장소용 메모
 
 # 워커 설치 패키지 (self-contained publish + 서비스 등록 + 마법사/무인 configure)
 dotnet build src/BODA.VMS.MLOps.TrainWorker.Setup -c Release
 #  → src/BODA.VMS.MLOps.TrainWorker.Setup/bin/Release/BODA-VMS-TrainWorker-<버전>.msi
 #  폐쇄망용: scripts/make-wheel-bundle.ps1 로 WheelBundle/ 을 채운 뒤 빌드 → *-offline.msi
-#  설치·운영 절차는 docs/워커 설치 가이드.md
+#  설치·운영 절차는 설치 가이드 문서(docs/manual/install.json) 4·5·9장
 ```
 
 서버는 시작할 때 `Jwt:Key` 가 32자 이상인지 확인하고, 없으면 부팅을 멈춥니다.

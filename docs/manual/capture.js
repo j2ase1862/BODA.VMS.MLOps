@@ -4,6 +4,9 @@
 //   dotnet run --project src/BODA.VMS.MLOps.Server --urls http://localhost:5310
 //   node docs/manual/capture.js
 //
+// 그림 이름을 주면 그것만 다시 찍는다 — 나머지는 지금 파일을 그대로 둔다:
+//   node docs/manual/capture.js 16_worker_register
+//
 // 로그인은 개발 토큰(Auth:EnableDevTokens)으로 한다. 운영 서버에서는 그 버튼이 없으므로
 // 이 스크립트도 돌지 않는다 — 매뉴얼 그림은 개발 서버에서 만든다.
 const { spawn } = require("child_process");
@@ -18,6 +21,10 @@ const SHOT = path.join(__dirname, "screenshots");
 const userDir = path.join(os.tmpdir(), "mlopsdoc_" + Date.now());
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 인자로 준 그림만 찍는다. 데이터가 그때그때 다르므로, 한 장만 고치려고 전부 다시 찍지 않는다.
+const ONLY = process.argv.slice(2);
+const want = (file) => ONLY.length === 0 || ONLY.includes(file);
 
 // 캡처할 화면. settle 은 그 화면이 데이터를 받아 그려질 때까지 기다리는 시간(ms).
 const PAGES = [
@@ -121,16 +128,51 @@ async function main() {
   console.log("  토큰 " + token + "…");
 
   for (const page of PAGES) {
+    if (!want(page.file)) continue;
     process.stdout.write(`${page.path}\n`);
     await client.send("Page.navigate", { url: BASE + page.path });
     await sleep(page.settle);
     await shoot(client, page.file);
   }
 
+  // 워커 등록 창 — 설치 가이드에서 토큰을 어디서 받는지 보여 준다. 눌러야 나오는 창이라 따로 찍는다.
+  // 이름만 채운 상태로 찍는다. [발급] 을 누르면 실제 워커가 하나 생기고 토큰이 그림에 남는다.
+  if (want("16_worker_register")) {
+    process.stdout.write("/workers (워커 등록 창)\n");
+    await client.send("Page.navigate", { url: BASE + "/workers" });
+    await sleep(2000);
+    const opened = await evaluate(client, `
+      (() => {
+        const b = Array.from(document.querySelectorAll('button'))
+                       .find(e => e.innerText.trim() === '워커 등록');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`);
+    if (opened) {
+      await sleep(900);
+      // Blazor 는 input 이벤트로 바인딩한다 — value 만 바꾸면 [발급] 이 잠긴 채로 찍힌다
+      await evaluate(client, `
+        (() => {
+          const f = document.querySelector('.mud-dialog input[type=text]');
+          if (!f) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(f, 'GPU-01');
+          f.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`);
+      await sleep(600);
+      await shoot(client, "16_worker_register");
+    } else {
+      console.log("  [워커 등록] 버튼을 찾지 못해 건너뜁니다 (Admin 으로 로그인했는지 확인)");
+    }
+  }
+
   // 데이터셋 상세와 라벨링 화면은 실제 데이터가 있어야 의미가 있다.
   // 상세는 라벨이 붙은 것이 보기 좋고, 라벨링 화면은 미라벨이 남아 있어야 캔버스에 사진이 뜬다 —
   // 다 라벨링된 데이터셋을 열면 "라벨링할 이미지가 없습니다" 만 나온다.
-  const picked = await evaluate(client, `
+  const needData = ["03_dataset_detail", "11_labeling_detection", "12_labeling_classification"].some(want);
+  const picked = !needData ? null : await evaluate(client, `
     (async () => {
       const token = localStorage.getItem('mlops.token');
       const res = await fetch('${BASE}/api/datasets?archived=false', { headers: { Authorization: 'Bearer ' + token } });
@@ -147,15 +189,16 @@ async function main() {
       };
     })()`);
 
-  if (picked?.detail) {
+  if (want("03_dataset_detail") && picked?.detail) {
     await client.send("Page.navigate", { url: `${BASE}/datasets/${picked.detail}` });
     await sleep(3000);
     await shoot(client, "03_dataset_detail");
   } else {
-    console.log("  데이터셋이 없어 상세 화면은 건너뜁니다");
+    if (needData) console.log("  데이터셋이 없어 상세 화면은 건너뜁니다");
   }
 
   for (const [key, file] of [["detection", "11_labeling_detection"], ["classification", "12_labeling_classification"]]) {
+    if (!want(file)) continue;
     if (!picked?.[key]) {
       console.log(`  ${key}: 미라벨 이미지가 없어 건너뜁니다`);
       continue;
@@ -168,44 +211,48 @@ async function main() {
   // 수집 사진은 기본이 "데이터셋에 안 담긴 것만" 이라 대개 몇 장만 남는다. 매뉴얼 그림은
   // 라인이 보낸 사진이 쌓인 모습이 보여야 하므로 그 체크를 풀고, 한 장 골라 [데이터셋에 담기]
   // 버튼이 나온 상태로 찍는다. 실패해도 기본 화면이라도 찍히도록 조용히 넘어간다.
-  await client.send("Page.navigate", { url: BASE + "/images" });
-  await sleep(3000);
-  await evaluate(client, `
-    (() => {
-      const label = Array.from(document.querySelectorAll('label, .mud-checkbox'))
-        .find(e => e.innerText && e.innerText.includes('안 담긴 것만'));
-      const box = label && label.querySelector('input[type=checkbox]');
-      if (box && box.checked) box.click();
-      return !!box;
-    })()`);
-  await sleep(2500);
-  await evaluate(client, `
-    (() => {
-      const tile = document.querySelector('img[loading=lazy]');
-      if (!tile) return false;
-      (tile.closest('.mud-paper') || tile.parentElement).click();
-      return true;
-    })()`);
-  await sleep(1200);
-  await shoot(client, "15_image_pool");
+  if (want("15_image_pool")) {
+    await client.send("Page.navigate", { url: BASE + "/images" });
+    await sleep(3000);
+    await evaluate(client, `
+      (() => {
+        const label = Array.from(document.querySelectorAll('label, .mud-checkbox'))
+          .find(e => e.innerText && e.innerText.includes('안 담긴 것만'));
+        const box = label && label.querySelector('input[type=checkbox]');
+        if (box && box.checked) box.click();
+        return !!box;
+      })()`);
+    await sleep(2500);
+    await evaluate(client, `
+      (() => {
+        const tile = document.querySelector('img[loading=lazy]');
+        if (!tile) return false;
+        (tile.closest('.mud-paper') || tile.parentElement).click();
+        return true;
+      })()`);
+    await sleep(1200);
+    await shoot(client, "15_image_pool");
+  }
 
   // 재학습 창은 눌러야 나온다. 학습에서 나온 버전이 라인에서 나빠져 있어야 버튼이 생기므로,
   // 없으면 조용히 건너뛴다 — 그림이 없으면 문서 생성기가 자리만 비운다.
-  await client.send("Page.navigate", { url: BASE + "/monitoring" });
-  await sleep(6000);
-  const retrain = await evaluate(client, `
-    (() => {
-      const b = Array.from(document.querySelectorAll('button'))
-                     .find(e => e.innerText.trim() === '재학습');
-      if (!b) return false;
-      b.click();
-      return true;
-    })()`);
-  if (retrain) {
-    await sleep(4000);
-    await shoot(client, "14_retrain");
-  } else {
-    console.log("  재학습을 권할 모델이 없어 그 그림은 건너뜁니다");
+  if (want("14_retrain")) {
+    await client.send("Page.navigate", { url: BASE + "/monitoring" });
+    await sleep(6000);
+    const retrain = await evaluate(client, `
+      (() => {
+        const b = Array.from(document.querySelectorAll('button'))
+                       .find(e => e.innerText.trim() === '재학습');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`);
+    if (retrain) {
+      await sleep(4000);
+      await shoot(client, "14_retrain");
+    } else {
+      console.log("  재학습을 권할 모델이 없어 그 그림은 건너뜁니다");
+    }
   }
 
   client.close();
