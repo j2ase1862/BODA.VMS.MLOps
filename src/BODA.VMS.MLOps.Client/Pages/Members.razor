@@ -1,0 +1,210 @@
+@page "/members"
+@attribute [Authorize(Roles = "Admin")]
+@using BODA.VMS.MLOps.Contracts.Members
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+<PageTitle>사용자 역할 · MLOps</PageTitle>
+
+<PageHeader Eyebrow="ADMINISTRATION" Title="사용자 역할">
+    <Lead>
+        로그인은 BODA VMS Web 이 확인하고, 그 사람이 MLOps 에서 무엇을 할 수 있는지는 여기가 정합니다.
+        운영 웹의 계정 이름을 올리고 역할을 붙이세요. 운영 웹 쪽 설정은 바뀌지 않습니다.
+    </Lead>
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PersonAdd"
+                   OnClick="@(() => OpenGrant(null))">역할 주기</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+@if (_policy is not null)
+{
+    <MudAlert Severity="Severity.Info" Class="mb-4" Icon="@Icons.Material.Filled.Info">
+        <MudText Typo="Typo.body2">
+            @if (string.IsNullOrWhiteSpace(_policy.DefaultRole))
+            {
+                <span>이 목록에 없는 계정은 <b>아무 화면도 열지 못합니다.</b></span>
+            }
+            else
+            {
+                <span>이 목록에 없는 계정은 <b>@_policy.DefaultRole</b> 로 들어옵니다.</span>
+            }
+            @if (!string.IsNullOrWhiteSpace(_policy.BootstrapWebRole))
+            {
+                <span>
+                    운영 웹에서 <b>@_policy.BootstrapWebRole</b> 인 계정은 목록에 없어도 관리자로 들어옵니다 —
+                    여기에 줄을 만들면 그쪽이 이깁니다.
+                </span>
+            }
+        </MudText>
+    </MudAlert>
+}
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (_members.Count == 0)
+{
+    <MudPaper Class="pa-8 d-flex flex-column align-center" Outlined="true">
+        <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" Size="Size.Large" Class="mud-text-secondary" />
+        <MudText Typo="Typo.body1" Class="mt-2">역할을 붙인 계정이 없습니다.</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mt-1">
+            라벨링을 맡길 사람부터 올리세요. 운영 웹에서 쓰는 계정 이름 그대로 넣으면 됩니다.
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Elevation="1">
+        <MudTable Items="@_members" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>계정</MudTh>
+                <MudTh>역할</MudTh>
+                <MudTh>메모</MudTh>
+                <MudTh>준 사람</MudTh>
+                <MudTh>마지막 접속</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="계정">
+                    <MudText Typo="Typo.body2"><b>@context.Username</b></MudText>
+                    @if (!string.IsNullOrWhiteSpace(context.DisplayName))
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.DisplayName</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="역할">
+                    <MudChip T="string" Size="Size.Small" Color="@ColorOf(context.Role)">@context.Role</MudChip>
+                </MudTd>
+                <MudTd DataLabel="메모">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.Note</MudText>
+                </MudTd>
+                <MudTd DataLabel="준 사람">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @context.GrantedBy · @context.GrantedAt.ToLocalTime().ToString("yyyy-MM-dd")
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="마지막 접속">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @(context.LastSeenAt is null ? "없음" : context.LastSeenAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))
+                    </MudText>
+                </MudTd>
+                <MudTd Class="text-right">
+                    <MudButton Size="Size.Small" OnClick="@(() => OpenGrant(context))">역할 바꾸기</MudButton>
+                    <MudButton Size="Size.Small" Color="Color.Error" OnClick="@(() => RevokeAsync(context))">거두기</MudButton>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+}
+
+<MudDialog @bind-Visible="_grantOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">@(_editing is null ? "역할 주기" : "역할 바꾸기")</MudText></TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_username" Label="운영 웹 계정 이름" Immediate="true"
+                      Disabled="@(_editing is not null)" HelperText="로그인할 때 쓰는 이름 그대로. 대소문자는 가리지 않습니다." />
+        <MudSelect T="string" @bind-Value="_role" Label="역할" Class="mt-4">
+            @foreach (var r in _assignable)
+            {
+                <MudSelectItem T="string" Value="@r">@r — @Explain(r)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_note" Label="메모 (선택)" Class="mt-4"
+                      HelperText="왜 이 역할을 주었는지. 나중에 정리할 때 도움이 됩니다." />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _grantOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(string.IsNullOrWhiteSpace(_username) || _busy)"
+                   OnClick="GrantAsync">저장</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<MemberDto> _members = [];
+    private MemberPolicyDto? _policy;
+    private string[] _assignable = ["Viewer", "Labeler", "Engineer", "Admin"];
+    private bool _loading = true, _busy, _grantOpen;
+    private string? _error;
+
+    private MemberDto? _editing;
+    private string _username = "", _role = "Viewer", _note = "";
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _members = await Api.MembersAsync();
+            _policy = await Api.MemberPolicyAsync();
+            if (_policy.AssignableRoles.Length > 0) _assignable = _policy.AssignableRoles;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private void OpenGrant(MemberDto? member)
+    {
+        _editing = member;
+        _username = member?.Username ?? "";
+        _role = member?.Role ?? "Viewer";
+        _note = member?.Note ?? "";
+        _grantOpen = true;
+    }
+
+    private async Task GrantAsync()
+    {
+        _busy = true;
+        try
+        {
+            await Api.GrantMemberAsync(new GrantMemberRequest(_username, _role, _editing?.DisplayName, _note));
+            Snackbar.Add($"{_username} → {_role}", Severity.Success);
+            _grantOpen = false;
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task RevokeAsync(MemberDto member)
+    {
+        var ok = await Dialogs.ShowMessageBox("역할 거두기",
+            $"{member.Username} 의 역할을 거둡니다. 다음 요청부터 바로 적용됩니다.",
+            yesText: "거두기", cancelText: "취소");
+        if (ok != true) return;
+
+        try
+        {
+            await Api.RevokeMemberAsync(member.Id);
+            Snackbar.Add($"{member.Username} 의 역할을 거두었습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private static Color ColorOf(string role) => role switch
+    {
+        "Admin" => Color.Primary,
+        "Engineer" => Color.Info,
+        "Labeler" => Color.Success,
+        _ => Color.Default,
+    };
+
+    private static string Explain(string role) => role switch
+    {
+        "Viewer" => "보기만",
+        "Labeler" => "라벨링까지",
+        "Engineer" => "데이터셋·학습·Staging 승격까지",
+        "Admin" => "Production 승격·계정 발급까지",
+        _ => "",
+    };
+}

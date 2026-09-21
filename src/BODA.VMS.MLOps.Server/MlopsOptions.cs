@@ -138,4 +138,28 @@ public sealed class AuthOptions
     public const string Section = "Auth";
     /// <summary>개발/테스트용 토큰 발급 엔드포인트 (/api/auth/dev-token). 운영은 반드시 false.</summary>
     public bool EnableDevTokens { get; set; }
+
+    /// <summary>
+    /// 역할 표(<c>Members</c>)에 없는 계정이 받는 역할. 운영 웹으로 로그인은 되지만 우리가 아직
+    /// 역할을 주지 않은 사람이다. 기본 <c>Viewer</c> — 보기만 하고 아무것도 바꾸지 못한다.
+    ///
+    /// <para>
+    /// 비워 두면 역할이 없어 모든 화면이 막힌다. 표에 올린 사람만 들어오게 하려면 그렇게 둔다.
+    /// </para>
+    /// </summary>
+    public string DefaultRole { get; set; } = Auth.Roles.Viewer;
+
+    /// <summary>
+    /// 이 역할을 달고 온 토큰은 표에 없어도 MLOps <c>Admin</c> 으로 인정한다. 운영 웹의 역할 이름이다.
+    ///
+    /// <para>
+    /// <b>없으면 아무도 첫 역할을 줄 수 없다.</b> 표가 비어 있는 새 서버에서 관리자가 들어와
+    /// 사람들에게 역할을 붙이려면 이 통로가 필요하다. 표에 그 계정의 줄이 있으면 그쪽이 이긴다 —
+    /// 운영 웹 관리자를 MLOps 에서는 Viewer 로 낮출 수 있다.
+    /// </para>
+    /// <para>
+    /// 사람을 다 올린 뒤 비워 두면 운영 웹 관리자라는 이유만으로는 못 들어온다.
+    /// </para>
+    /// </summary>
+    public string BootstrapWebRole { get; set; } = "Admin";
 }
