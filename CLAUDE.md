@@ -65,6 +65,14 @@ YOLO 계열(AGPL)은 라이선스 필드 없이는 등록도 Production 승격�
 우리가 발급한 토큰은 `ServiceTokenIssuer.SelfIssuedClaim` 이 붙어 변환을 건너뜁니다 — 개발 토큰의 역할이 곧 의도입니다.
 역할을 바꾸면 캐시를 즉시 버립니다(`MemberRoleClaimsTransformation.Invalidate`). 권한 회수가 늦으면 안 됩니다.
 
+**끊긴 토큰은 운영 웹에 물어봅니다.** 그쪽은 토큰의 세대(`tv`)를 DB 와 대조해 로그아웃·비밀번호 변경·
+계정 삭제 뒤의 토큰을 거부합니다. 우리는 서명과 만료만 보므로 물어보지 않으면 잘린 계정이 8시간 더 삽니다.
+`WebTokenRevocationClient` 가 받은 토큰을 그쪽 `/api/auth/me` 에 들려 보내 **401 일 때만** 끊습니다 —
+403·5xx·연결 실패는 통과입니다. 운영 웹이 죽어도 라벨링과 학습은 돌아야 합니다.
+`Auth:RevocationCheckSeconds` 가 곧 끊긴 토큰이 여기서 더 사는 시간입니다.
+`OnTokenValidated` 에서 원문을 꺼낼 때 **`JsonWebToken` 과 `JwtSecurityToken` 을 모두** 받으세요 —
+.NET 8 기본 핸들러는 전자라, 후자로만 캐스팅하면 검사가 조용히 꺼집니다.
+
 **워커 토큰의 범위는 좁게 유지합니다.** 워커 역할은 `Viewer`·`Line` 정책에 넣지 않습니다.
 워커가 읽어야 하는 것은 데이터셋 export, 사전학습 파일, 스크립트뿐이고 각 엔드포인트에 `WorkerOrEngineer` 로 명시합니다.
 `WorkerScopeTests` 가 이 경계를 지킵니다.
