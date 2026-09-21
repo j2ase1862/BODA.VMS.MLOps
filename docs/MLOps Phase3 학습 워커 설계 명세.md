@@ -148,7 +148,7 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 - CLI: `configure`(--server --token [--name --python --wheels --cache --gpu --cpu]) · `diag`(venv 부트스트랩 + 자기진단 출력).
 - 업데이트: 워커 MSI 독립 배포. 프로토콜 버전(`X-Worker-Protocol: 1`)으로 서버가 호환 검사, 불일치 시 `Disabled(업데이트 필요)`.
 - 올인원 형태(관리 서버 = 워커 PC): 같은 MSI 를 설치하고 서버 URL 을 `http://localhost:5310` 로.
-- 절차 문서: `docs/워커 설치 가이드.md`.
+- 절차 문서: 설치 가이드 (`docs/manual/install.json` 4·5·9장). `docs/워커 설치 가이드.md` 는 저장소용 메모.
 - 백업 대상 아님(캐시·작업 폴더는 재생성 가능). 아티팩트는 서버 스토리지에 있다.
 
 ---
