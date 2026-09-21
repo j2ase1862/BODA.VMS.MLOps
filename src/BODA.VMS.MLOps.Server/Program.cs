@@ -9,11 +9,13 @@ using BODA.VMS.MLOps.Server.Services;
 using BODA.VMS.MLOps.Server.Services.Monitoring;
 using BODA.VMS.MLOps.Server.Services.Sam;
 using BODA.VMS.MLOps.Server.Storage;
+using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
@@ -85,6 +87,8 @@ builder.Services.AddScoped<PrelabelService>();
 // 모니터링 (Phase 5). 운영 웹 주소가 없으면 스스로 꺼진 상태로 남는다.
 builder.Services.AddSingleton<ServiceTokenIssuer>();
 builder.Services.AddHttpClient<ProductionOutcomeClient>(http => http.Timeout = TimeSpan.FromSeconds(30));
+// 운영 웹에서 끊긴 토큰을 걸러낸다 (Auth:RevocationCheckSeconds).
+builder.Services.AddHttpClient<WebTokenRevocationClient>(http => http.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddScoped<ModelMonitorService>();
 
 // SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
@@ -138,6 +142,29 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
                     && ctx.Request.Cookies.TryGetValue(ImageCookie.Name, out var cookie))
                     ctx.Token = cookie;
                 return Task.CompletedTask;
+            },
+
+            // 서명과 만료는 통과했다. 남은 질문은 "운영 웹에서 아직 살아 있는 토큰인가" 다 —
+            // 그쪽은 로그아웃·비밀번호 변경·계정 삭제 때 세대를 올려 토큰을 끊는데,
+            // 우리가 확인하지 않으면 잘린 계정이 최대 8시간 더 돌아다닌다.
+            OnTokenValidated = async ctx =>
+            {
+                // 우리가 발급한 토큰(개발 토큰·서비스 토큰)은 운영 웹이 모른다 — 물어보면 무조건 401 이다.
+                if (ctx.Principal?.HasClaim(ServiceTokenIssuer.SelfIssuedClaim, "1") == true) return;
+
+                // .NET 8 의 기본 핸들러는 JsonWebToken 을 준다. JwtSecurityToken 으로만 받으면
+                // 캐스팅이 null 이 되어 검사가 조용히 꺼진다 — 둘 다 받는다.
+                var raw = ctx.SecurityToken switch
+                {
+                    JsonWebToken jwtToken => jwtToken.EncodedToken,
+                    JwtSecurityToken jst => jst.RawData,
+                    _ => null,
+                };
+                if (string.IsNullOrEmpty(raw)) return;
+
+                var revocation = ctx.HttpContext.RequestServices.GetRequiredService<WebTokenRevocationClient>();
+                if (!await revocation.IsStillValidAsync(raw, ctx.HttpContext.RequestAborted))
+                    ctx.Fail("운영 웹에서 끊긴 토큰입니다 (로그아웃·비밀번호 변경·관리자 조치).");
             }
         };
     })

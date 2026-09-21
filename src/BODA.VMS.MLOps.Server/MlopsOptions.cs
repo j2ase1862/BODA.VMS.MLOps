@@ -180,4 +180,15 @@ public sealed class AuthOptions
     /// </para>
     /// </summary>
     public string WebBaseUrl { get; set; } = "";
+
+    /// <summary>
+    /// 운영 웹에서 끊긴 토큰(로그아웃·비밀번호 변경·계정 삭제)을 여기서도 막기 위해, 받은 토큰을
+    /// 그쪽에 확인하고 그 결과를 몇 초 동안 기억할지. 0 이면 확인하지 않는다.
+    ///
+    /// <para>
+    /// 이 값이 곧 <b>끊긴 토큰이 여기서 더 사는 시간</b>이다. 확인을 안 하면 액세스 토큰 수명
+    /// (운영 웹 기본 8시간)만큼 살아 있다. 0 으로 두는 것은 운영 웹에 닿을 수 없는 구성일 때뿐이다.
+    /// </para>
+    /// </summary>
+    public int RevocationCheckSeconds { get; set; } = 60;
 }
