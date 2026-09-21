@@ -3,6 +3,7 @@
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
+@inject IDialogService Dialogs
 
 <PageTitle>수집 사진 · MLOps</PageTitle>
 
@@ -40,6 +41,11 @@
             <AuthorizeView Roles="Labeler,Engineer,Admin">
                 <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
                            StartIcon="@Icons.Material.Filled.PlaylistAdd" OnClick="OpenAddDialog">데이터셋에 담기</MudButton>
+            </AuthorizeView>
+            <AuthorizeView Roles="Engineer,Admin" Context="del">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                           StartIcon="@Icons.Material.Filled.DeleteOutline" Disabled="@_busy"
+                           OnClick="DeleteSelectedAsync">영구 삭제</MudButton>
             </AuthorizeView>
             <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _selectedIds.Clear())">선택 해제</MudButton>
         }
@@ -184,6 +190,29 @@ else
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); return; }
         _targetDatasetId ??= _datasets.FirstOrDefault()?.Id;
         _addOpen = true;
+    }
+
+    /// <summary>
+    /// 고른 사진을 저장소에서 지운다. 데이터셋 버전(스냅샷)에 들어간 사진이 하나라도 섞여 있으면
+    /// 서버가 전부 막는다 — 굳은 판이 재현되지 않기 때문이다.
+    /// </summary>
+    private async Task DeleteSelectedAsync()
+    {
+        var ok = await Dialogs.ShowMessageBox("사진 영구 삭제",
+            $"고른 {_selectedIds.Count}장을 저장소에서 지웁니다. 담겨 있던 데이터셋의 라벨도 함께 사라집니다. " +
+            "데이터셋 버전에 들어간 사진이 섞여 있으면 아무것도 지워지지 않습니다. 되돌릴 수 없습니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
+        _busy = true;
+        try
+        {
+            var deleted = await Api.DeleteImagesAsync(_selectedIds.ToArray());
+            Snackbar.Add($"{deleted}장을 지웠습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
     }
 
     private async Task AddSelectedAsync()

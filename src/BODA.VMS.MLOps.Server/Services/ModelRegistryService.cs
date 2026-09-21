@@ -78,6 +78,26 @@ public sealed class ModelRegistryService(
         return model.ToDto(count);
     }
 
+    /// <summary>
+    /// 모델 계열을 지운다. 버전·바인딩·학습 작업이 하나라도 걸려 있으면 막는다 —
+    /// 잘못 만든 계열을 치우는 길이지, 이력을 지우는 길이 아니다.
+    /// 쓰던 계열을 목록에서 치우려는 것이라면 삭제가 아니라 보관(<c>isArchived</c>)이다.
+    /// </summary>
+    public async Task DeleteModelAsync(Guid id, CurrentUser user, CancellationToken ct)
+    {
+        var model = await db.Models.FirstOrDefaultAsync(m => m.Id == id, ct) ?? throw ApiException.NotFound("모델");
+        if (await db.ModelVersions.AnyAsync(v => v.ModelId == id, ct))
+            throw ApiException.Conflict(ErrorCodes.Validation, "버전이 있는 모델 계열은 지울 수 없습니다. 버전을 먼저 지우거나 계열을 보관하세요.");
+        if (await db.ModelBindings.AnyAsync(b => b.ModelId == id, ct))
+            throw ApiException.Conflict(ErrorCodes.Validation, "레시피 바인딩 이력이 있어 지울 수 없습니다.");
+        if (await db.TrainingJobs.AnyAsync(j => j.ModelId == id, ct))
+            throw ApiException.Conflict(ErrorCodes.Validation, "이 계열로 만든 학습 작업이 있어 지울 수 없습니다. 작업을 먼저 지우세요.");
+
+        db.Models.Remove(model);
+        audit.Record(AuditService.Model, "Deleted", user.Name, id.ToString(), new { model.Name, model.TaskType });
+        await db.SaveChangesAsync(ct);
+    }
+
     // ───────────── Versions ─────────────
 
     public async Task<List<ModelVersionDto>> ListVersionsAsync(Guid modelId, CancellationToken ct)
@@ -180,6 +200,48 @@ public sealed class ModelRegistryService(
         finally
         {
             TempFileWriter.TryDelete(temp.TempPath);
+        }
+    }
+
+    /// <summary>
+    /// 버전을 지운다.
+    ///
+    /// <para><b>Staging·Production 은 지우지 못한다.</b> 라인이 지금 받아 갈 수 있는 것이라, 지우면
+    /// 레시피가 푸는 참조가 그 순간부터 404 가 된다. 스테이지를 먼저 내리게 한다 — 그 강등은
+    /// <see cref="PromoteAsync"/> 를 지나므로 누가 언제 왜 내렸는지가 이력에 남는다.</para>
+    ///
+    /// <para><b>Retired 는 Admin 만 지운다.</b> 한 번 라인에 나갔던 것이라 "그때 그 모델" 을 나중에 묻는 사람이 있다.</para>
+    ///
+    /// <para>아티팩트 파일은 <b>같은 자리를 쓰는 다른 버전이 없을 때만</b> 지운다. 경로가 내용 해시라
+    /// (<see cref="StorageKeys.Model"/>) 같은 ONNX 를 다른 계열에도 올렸다면 두 행이 한 파일을 나눠 쓴다.</para>
+    /// </summary>
+    public async Task DeleteVersionAsync(Guid versionId, CurrentUser user, CancellationToken ct)
+    {
+        var version = await db.ModelVersions.FirstOrDefaultAsync(v => v.Id == versionId, ct)
+                      ?? throw ApiException.NotFound("모델 버전");
+        if (version.Stage is ModelStage.Staging or ModelStage.Production)
+            throw ApiException.Conflict(ErrorCodes.InvalidStageTransition,
+                $"{version.Stage} 버전은 지울 수 없습니다. 스테이지를 먼저 내리세요.");
+        if (version.Stage == ModelStage.Retired && !user.IsAdmin)
+            throw ApiException.Forbidden("Retired 버전 삭제는 Admin 권한이 필요합니다.");
+        if (await db.ModelBindings.AnyAsync(b => b.IsActive && b.ModelVersionId == versionId, ct))
+            throw ApiException.Conflict(ErrorCodes.Validation,
+                "레시피 도구가 이 버전에 묶여 있어 지울 수 없습니다. 바인딩을 먼저 옮기세요.");
+
+        // 이 버전을 낸 작업의 결과 칸을 비운다 — 없는 버전을 가리킨 채 두면 화면이 빈 곳으로 데려간다.
+        foreach (var job in await db.TrainingJobs.Where(j => j.ResultModelVersionId == versionId).ToListAsync(ct))
+            job.ResultModelVersionId = null;
+
+        db.ModelStageHistories.RemoveRange(db.ModelStageHistories.Where(h => h.ModelVersionId == versionId));
+        db.ModelVersions.Remove(version);
+        audit.Record(AuditService.Model, "VersionDeleted", user.Name, versionId.ToString(),
+            new { version.ModelId, version.Number, stage = version.Stage, version.Sha256 });
+        await db.SaveChangesAsync(ct);
+
+        if (!await db.ModelVersions.AnyAsync(v => v.ArtifactKey == version.ArtifactKey, ct))
+        {
+            try { await storage.DeleteAsync(version.ArtifactKey, ct); }
+            catch (Exception ex) { logger.LogWarning(ex, "모델 아티팩트 삭제 실패 {Key}", version.ArtifactKey); }
         }
     }
 

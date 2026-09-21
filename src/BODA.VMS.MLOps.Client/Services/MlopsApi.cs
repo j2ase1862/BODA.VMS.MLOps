@@ -45,8 +45,12 @@ public sealed class MlopsApi(HttpClient http)
     public Task<ModelDto> ModelAsync(Guid id) => GetAsync<ModelDto>($"/api/models/{id}");
     public Task<ModelDto> CreateModelAsync(CreateModelRequest req) => PostAsync<CreateModelRequest, ModelDto>("/api/models", req);
     public Task<ModelDto> UpdateModelAsync(Guid id, UpdateModelRequest req) => SendJsonAsync<UpdateModelRequest, ModelDto>(HttpMethod.Patch, $"/api/models/{id}", req);
+    /// <summary>계열 삭제 — 버전·바인딩·작업이 걸려 있으면 409. 쓰던 계열을 치우는 것은 보관(UpdateModelAsync)이다.</summary>
+    public Task DeleteModelAsync(Guid id) => SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/models/{id}"));
     public Task<List<ModelVersionDto>> VersionsAsync(Guid modelId) => GetAsync<List<ModelVersionDto>>($"/api/models/{modelId}/versions");
     public Task<ModelVersionDto> VersionAsync(Guid id) => GetAsync<ModelVersionDto>($"/api/model-versions/{id}");
+    /// <summary>버전 삭제 — Staging·Production 은 409, Retired 는 Admin 만.</summary>
+    public Task DeleteModelVersionAsync(Guid id) => SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/model-versions/{id}"));
     public Task<ModelVersionDto> PromoteAsync(Guid versionId, PromoteRequest req) => PostAsync<PromoteRequest, ModelVersionDto>($"/api/model-versions/{versionId}/promote", req);
     /// <summary>라인 배포 이력 — 어느 라인이 어느 버전을 언제 받아 갔는지 (Engineer 이상).</summary>
     public Task<List<ModelDeliveryDto>> DeliveriesAsync(Guid modelId, Guid? versionId = null, int take = 100) =>
@@ -97,6 +101,8 @@ public sealed class MlopsApi(HttpClient http)
     public Task<TrainingJobDto> JobAsync(Guid id) => GetAsync<TrainingJobDto>($"/api/training-jobs/{id}");
     public Task<TrainingJobDto> CreateJobAsync(CreateTrainingJobRequest req) => PostAsync<CreateTrainingJobRequest, TrainingJobDto>("/api/training-jobs", req);
     public Task<TrainingJobDto> CancelJobAsync(Guid id, string? reason) => PostAsync<CancelJobRequest, TrainingJobDto>($"/api/training-jobs/{id}/cancel", new CancelJobRequest(reason));
+    /// <summary>끝난 작업 삭제 — 로그·아티팩트가 함께 간다. 결과 모델 버전이 있으면 409.</summary>
+    public Task DeleteJobAsync(Guid id) => SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/training-jobs/{id}"));
     public Task<TrainingJobDto> RetryJobAsync(Guid id) => PostAsync<object?, TrainingJobDto>($"/api/training-jobs/{id}/retry", null);
     public Task<JobLogPage> JobLogsAsync(Guid id, long from = 0, int take = 500) => GetAsync<JobLogPage>($"/api/training-jobs/{id}/logs?from={from}&take={take}");
     public Task<List<JobArtifactDto>> JobArtifactsAsync(Guid id) => GetAsync<List<JobArtifactDto>>($"/api/training-jobs/{id}/artifacts");
@@ -186,8 +192,11 @@ public sealed class MlopsApi(HttpClient http)
         SendAsync(new HttpRequestMessage(HttpMethod.Post, "/api/images/tags")
         { Content = JsonContent.Create(new TagImagesRequest(imageIds, add, remove), options: Json) });
 
-    public Task<object> DeleteImagesAsync(Guid[] imageIds) =>
-        PostAsync<DeleteImagesRequest, object>("/api/images/delete", new DeleteImagesRequest(imageIds));
+    private sealed record DeletedResponse(int Deleted);
+
+    /// <summary>풀에서 영구 삭제 — 데이터셋 버전(스냅샷)에 들어간 사진이 섞여 있으면 409 로 전부 막힌다.</summary>
+    public async Task<int> DeleteImagesAsync(Guid[] imageIds) =>
+        (await PostAsync<DeleteImagesRequest, DeletedResponse>("/api/images/delete", new DeleteImagesRequest(imageIds))).Deleted;
 
     public Task<List<DuplicateGroupDto>> DuplicatesAsync(int take = 500) =>
         GetAsync<List<DuplicateGroupDto>>($"/api/images/duplicates?take={take}");

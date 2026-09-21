@@ -32,6 +32,13 @@ public static class ModelEndpoints
         models.MapPatch("/{id:guid}", async (Guid id, UpdateModelRequest req, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.UpdateModelAsync(id, req, CurrentUser.From(p), ct))).RequireAuthorization(Policies.Engineer);
 
+        // 잘못 만든 계열을 치우는 길. 버전·바인딩·작업이 걸려 있으면 서비스가 409 로 막는다.
+        models.MapDelete("/{id:guid}", async (Guid id, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            await svc.DeleteModelAsync(id, CurrentUser.From(p), ct);
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Engineer);
+
         models.MapGet("/{id:guid}/versions", async (Guid id, ModelRegistryService svc, CancellationToken ct) =>
             Results.Ok(await svc.ListVersionsAsync(id, ct))).RequireAuthorization(Policies.Viewer);
 
@@ -66,6 +73,13 @@ public static class ModelEndpoints
             return Results.File(stream, "application/octet-stream", $"{v.Sha256}.onnx", enableRangeProcessing: true,
                 entityTag: new EntityTagHeaderValue($"\"{v.Sha256}\""));
         }).RequireAuthorization(Policies.Line);
+
+        // Candidate 는 Engineer, Retired 는 Admin. Staging·Production 은 스테이지를 내린 뒤에야 지워진다.
+        versions.MapDelete("/{id:guid}", async (Guid id, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            await svc.DeleteVersionAsync(id, CurrentUser.From(p), ct);
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Engineer);
 
         versions.MapPost("/{id:guid}/promote", async (Guid id, PromoteRequest req, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.PromoteAsync(id, req, CurrentUser.From(p), ct))).RequireAuthorization(Policies.Engineer);

@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>데이터셋 버전 · MLOps</PageTitle>
 
@@ -45,7 +46,15 @@
             <MudTd DataLabel="크기">@Display.Size(context.SizeBytes)</MudTd>
             <MudTd DataLabel="매니페스트 해시"><span class="mono">@Display.Sha(context.ManifestHash)</span></MudTd>
             <MudTd DataLabel="등록">@Display.When(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
-            <MudTd><MudButton Size="Size.Small" Href="@context.ExportUrl" Target="_blank">다운로드</MudButton></MudTd>
+            <MudTd>
+                <MudButton Size="Size.Small" Href="@context.ExportUrl" Target="_blank">다운로드</MudButton>
+                <AuthorizeView Roles="Engineer,Admin" Context="del">
+                    <MudTooltip Text="버전 삭제">
+                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small"
+                                       Color="Color.Error" OnClick="@(() => DeleteAsync(context))" />
+                    </MudTooltip>
+                </AuthorizeView>
+            </MudTd>
         </RowTemplate>
         <NoRecordsContent>
             <MudText Typo="Typo.body2" Class="pa-4">등록된 데이터셋 버전이 없습니다.</MudText>
@@ -134,6 +143,27 @@
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
         finally { _loading = false; }
+    }
+
+    /// <summary>
+    /// 버전을 지운다. 이 버전으로 만든 학습 작업이 있으면 서버가 막는다 —
+    /// 작업의 재현성 기록이 가리키는 대상이기 때문이다.
+    /// </summary>
+    private async Task DeleteAsync(DatasetVersionDto version)
+    {
+        var ok = await Dialogs.ShowMessageBox("데이터셋 버전 삭제",
+            $"'{version.Name}' 버전({Display.Sha(version.ManifestHash)})을 지웁니다. " +
+            "내보내기 zip 과 매니페스트 파일이 함께 사라지고, 이 버전으로 돌린 작업이 있으면 지워지지 않습니다. 되돌릴 수 없습니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
+        try
+        {
+            await Api.DeleteDatasetVersionAsync(version.Id);
+            Snackbar.Add($"'{version.Name}' 버전을 지웠습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
     }
 
     private async Task UploadAsync()

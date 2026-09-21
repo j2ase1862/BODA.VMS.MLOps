@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>데이터셋 · MLOps</PageTitle>
 
@@ -75,6 +76,13 @@ else
                                        Disabled="@(stats is null || stats.Unlabeled == 0)"
                                        Href="@($"/datasets/{d.Id}/label")">라벨링</MudButton>
                         </AuthorizeView>
+                        <MudSpacer />
+                        <AuthorizeView Roles="Engineer,Admin" Context="del">
+                            <MudTooltip Text="데이터셋 삭제">
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small"
+                                               Color="Color.Error" OnClick="@(() => DeleteAsync(d))" />
+                            </MudTooltip>
+                        </AuthorizeView>
                     </div>
                 </MudPaper>
             </MudItem>
@@ -134,6 +142,30 @@ else
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
         finally { _loading = false; }
+    }
+
+    /// <summary>
+    /// 데이터셋을 지운다. 사진은 풀에 남고 이 데이터셋에서 붙인 라벨만 사라진다 —
+    /// 확인 문구에서 그 구분을 분명히 해야 사람이 "사진이 다 날아가나" 로 읽지 않는다.
+    /// </summary>
+    private async Task DeleteAsync(DatasetDto dataset)
+    {
+        var images = dataset.Stats?.ImageCount ?? 0;
+        var what = images == 0
+            ? "담긴 사진이 없습니다."
+            : $"담긴 사진 {images}장은 수집 사진에 그대로 남고, 이 데이터셋에서 붙인 라벨만 사라집니다.";
+        var ok = await Dialogs.ShowMessageBox("데이터셋 삭제",
+            $"'{dataset.Name}' 을(를) 지웁니다. {what} 되돌릴 수 없습니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
+        try
+        {
+            await Api.DeleteDatasetAsync(dataset.Id);
+            Snackbar.Add($"'{dataset.Name}' 을(를) 지웠습니다", Severity.Success);
+            await LoadAsync();
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
     }
 
     private void OpenCreate()
