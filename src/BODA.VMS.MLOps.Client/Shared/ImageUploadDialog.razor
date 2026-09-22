@@ -92,6 +92,20 @@
             </MudAlert>
         }
 
+        @* 같은 사진이 합쳐졌을 때. "10장을 올렸는데 1장밖에 없다" 는 설명 없이는 고장으로 보인다. *@
+        @if (_collapsed > 0)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-3" Dense="true">
+                <MudText Typo="Typo.body2">
+                    <strong>고른 파일 중 @(_collapsed)장은 내용이 같은 사진이었습니다.</strong>
+                </MudText>
+                <MudText Typo="Typo.caption">
+                    파일 이름이 달라도 내용이 같으면 한 장으로 둡니다. 같은 사진이 여러 장 들어가면
+                    학습이 그쪽으로 치우칩니다. 서로 다른 사진인데 합쳐졌다면 파일이 실제로 같은 것인지 확인해 보세요.
+                </MudText>
+            </MudAlert>
+        }
+
         @* 한 장이라도 실패하면 대화상자를 닫지 않는다. 닫고 스낵바로만 알리면
            "올렸는데 아무 일도 없다" 로 끝난다 — 실제로 그렇게 끝난 적이 있다. *@
         @if (_failures.Count > 0)
@@ -137,6 +151,7 @@
     private IReadOnlyList<IBrowserFile> _files = [];
     private readonly List<string> _rejected = [];
     private readonly List<string> _failures = [];
+    private int _collapsed;
     private List<DatasetDto> _datasets = [];
     private Guid? _targetDatasetId;
     private bool _uploading, _addToDataset = true;
@@ -212,6 +227,7 @@
         _error = null;
         _failures.Clear();
         _rejected.Clear();
+        _collapsed = 0;
 
         var ok = new List<IBrowserFile>();
         foreach (var f in files)
@@ -228,6 +244,7 @@
         _error = null;
         _rejected.Clear();
         _failures.Clear();
+        _collapsed = 0;
         return VisibleChanged.InvokeAsync(false);
     }
 
@@ -244,8 +261,10 @@
         {
             var tags = _tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var uploaded = new List<Guid>();
-            var created = 0;
-            var duplicates = 0;
+            var seen = new HashSet<Guid>();
+            var created = 0;      // 새로 들어온 사진
+            var collapsed = 0;    // 이번에 고른 것끼리 내용이 같아 한 장으로 합쳐진 것
+            var existing = 0;     // 전에 이미 올라와 있던 사진
 
             const int batchSize = 10;
             for (int i = 0; i < _files.Count; i += batchSize)
@@ -259,9 +278,17 @@
                 {
                     var result = await Api.UploadImagesAsync(streams, ImageSource.Manual,
                         string.IsNullOrWhiteSpace(_lineId) ? null : _lineId, tags);
-                    uploaded.AddRange(result.Results.Select(r => r.Image.Id));
-                    created += result.Created;
-                    duplicates += result.Duplicates;
+                    foreach (var r in result.Results)
+                    {
+                        uploaded.Add(r.Image.Id);
+                        // 저장은 내용 해시로 한 벌만 한다. 그래서 "안 만들어졌다" 에는 두 가지가 섞인다 —
+                        // 이번에 함께 고른 다른 파일과 내용이 같은 것과, 전에 이미 올라와 있던 것.
+                        // 10장을 골랐는데 1장이 된 이유는 앞쪽이고, 그 둘을 한 말로 묶으면 설명이 되지 않는다.
+                        if (r.Created) created++;
+                        else if (!seen.Add(r.Image.Id)) collapsed++;
+                        else existing++;
+                        seen.Add(r.Image.Id);
+                    }
                     _failures.AddRange(result.Errors);
                 }
                 finally
@@ -282,18 +309,21 @@
             // 올라간 것이 있으면 화면을 먼저 되살린다 — 실패가 섞여 있어도 성공한 몫은 이미 들어갔다.
             if (uploaded.Count > 0) await OnUploaded.InvokeAsync(uploaded.Count);
 
+            _collapsed = collapsed;
+
             // 빠진 것이 하나라도 있으면 닫지 않는다 — 닫는 순간 무엇이 빠졌는지 읽을 곳이 없어진다.
             // 실패(서버가 거부)와 제외(형식이 안 맞아 보내지도 않음)를 모두 센다.
-            if (_failures.Count > 0 || _rejected.Count > 0)
+            // 고른 것끼리 합쳐진 경우도 마찬가지다: "10장을 올렸는데 1장" 은 설명 없이는 고장으로 보인다.
+            if (_failures.Count > 0 || _rejected.Count > 0 || collapsed > 0)
             {
                 _files = [];
-                if (uploaded.Count > 0) Snackbar.Add(Summary(created, duplicates, added), Severity.Warning);
+                if (uploaded.Count > 0) Snackbar.Add(Summary(created, collapsed, existing, added), Severity.Warning);
                 else if (_failures.Count == 0)
                     _error = "올릴 수 있는 사진이 없습니다. 받는 형식은 jpg · png · bmp · webp · gif 입니다.";
                 return;
             }
 
-            Snackbar.Add(Summary(created, duplicates, added), Severity.Success);
+            Snackbar.Add(Summary(created, collapsed, existing, added), Severity.Success);
             _files = [];
             _rejected.Clear();
             await VisibleChanged.InvokeAsync(false);
@@ -307,11 +337,12 @@
     /// 무슨 일이 있었는지 한 줄로. 이미 있던 사진과 데이터셋에 담긴 수를 따로 말한다 —
     /// "10장 처리했습니다" 만 보면 같은 사진을 다시 올린 것인지 알 수 없다.
     /// </summary>
-    private string Summary(int created, int duplicates, int added)
+    private string Summary(int created, int collapsed, int existing, int added)
     {
         var parts = new List<string>();
         if (created > 0) parts.Add($"{created}장 올렸습니다");
-        if (duplicates > 0) parts.Add($"이미 있던 사진 {duplicates}장");
+        if (collapsed > 0) parts.Add($"같은 사진 {collapsed}장은 한 장으로 합쳤습니다");
+        if (existing > 0) parts.Add($"이미 있던 사진 {existing}장");
         if (added > 0) parts.Add($"데이터셋에 {added}장 담음");
         var skipped = _failures.Count + _rejected.Count;
         if (skipped > 0) parts.Add($"빠진 사진 {skipped}장");
