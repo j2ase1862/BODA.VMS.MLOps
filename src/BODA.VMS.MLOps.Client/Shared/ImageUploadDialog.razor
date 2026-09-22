@@ -3,27 +3,35 @@
 
    DatasetId 를 주면 "올린 뒤 이 데이터셋에 담기" 체크 하나로 끝나고,
    주지 않으면(수집 사진 화면) 담을 데이터셋을 고르게 한다 — 안 고르면 풀에만 쌓인다. *@
+@implements IAsyncDisposable
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
+@inject IJSRuntime JS
 
 <MudDialog Visible="Visible" VisibleChanged="VisibleChanged"
            Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">사진 올리기</MudText></TitleContent>
     <DialogContent>
-        @* 끌어다 놓기는 실제 <input type=file> 을 이 영역 위에 투명하게 덮어서 받는다.
-           Hidden="false" 가 아니면 입력이 숨겨져 드롭을 받지 못한다. *@
+      <div @ref="_dropRoot">
+        @* 상자 위에는 실제 <input type=file> 이 투명하게 덮여 있어 눌러서 고르기가 된다.
+           끌어다 놓기는 그 상자만이 아니라 <b>대화상자 전체</b>가 받는다 (js/upload-drop.js) —
+           빈 자리에 놓아 아무 일도 안 일어나는 것이 "올렸는데 안 된다" 의 실제 원인이었다. *@
         <MudFileUpload T="IReadOnlyList<IBrowserFile>" FilesChanged="OnFilesPicked"
                        Accept="@Accept" MaximumFileCount="500" Hidden="false"
                        InputClass="absolute mud-width-full mud-height-full overflow-hidden z-10"
                        InputStyle="opacity:0" Disabled="@_uploading"
                        @ondrop="@ClearDrag" @ondragenter="@SetDrag" @ondragleave="@ClearDrag" @ondragend="@ClearDrag">
             <ActivatorContent>
-                <MudPaper Outlined="true" Class="@($"pa-6 d-flex flex-column align-center justify-center {_dragClass}")"
+                <MudPaper Outlined="true" Class="@($"mlops-drop-zone pa-6 d-flex flex-column align-center justify-center {_dragClass}")"
                           Style="min-height:150px; cursor:pointer">
                     <MudIcon Icon="@Icons.Material.Filled.CloudUpload" Size="Size.Large" Class="mud-text-secondary" />
                     <MudText Typo="Typo.body1" Class="mt-2">
-                        @(_files.Count == 0 ? "여기로 끌어다 놓거나 눌러서 고르세요" : $"{_files.Count}장 선택됨")
+                        @(_files.Count == 0 ? "끌어다 놓거나 눌러서 고르세요" : $"{_files.Count}장 선택됨")
                     </MudText>
+                    @if (_files.Count == 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">이 창 안이면 어디에 놓아도 됩니다</MudText>
+                    }
                     <MudText Typo="Typo.caption" Class="mud-text-secondary">
                         jpg · png · bmp · webp · gif · 한 번에 500장까지 · 장당 64MB
                     </MudText>
@@ -98,6 +106,7 @@
                 </div>
             </MudAlert>
         }
+      </div>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="CloseAsync" Disabled="@_uploading">닫기</MudButton>
@@ -121,6 +130,10 @@
     /// <summary>올라간 장수. 화면은 이걸 받아 목록을 다시 읽는다.</summary>
     [Parameter] public EventCallback<int> OnUploaded { get; set; }
 
+    private ElementReference _dropRoot;
+    private IJSObjectReference? _dropModule;
+    private IJSObjectReference? _dropHandle;
+
     private IReadOnlyList<IBrowserFile> _files = [];
     private readonly List<string> _rejected = [];
     private readonly List<string> _failures = [];
@@ -133,6 +146,49 @@
 
     private void SetDrag() => _dragClass = "mud-border-primary";
     private void ClearDrag() => _dragClass = "";
+
+    /// <summary>
+    /// 대화상자가 열릴 때만 드롭을 붙이고 닫힐 때 뗀다. 창 전체에 듣는 처리라
+    /// 떼지 않으면 닫힌 뒤에도 남아 다른 화면의 끌어다 놓기를 가로챈다.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible && _dropHandle is null)
+        {
+            try
+            {
+                _dropModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/upload-drop.js");
+                _dropHandle = await _dropModule.InvokeAsync<IJSObjectReference>("attach", _dropRoot);
+            }
+            catch (JSException)
+            {
+                // 붙이지 못해도 점선 상자 위의 끌어다 놓기와 눌러서 고르기는 그대로 된다
+            }
+        }
+        else if (!Visible && _dropHandle is not null)
+        {
+            await DetachDropAsync();
+        }
+    }
+
+    private async Task DetachDropAsync()
+    {
+        if (_dropHandle is null) return;
+        try { await _dropHandle.InvokeVoidAsync("detach"); } catch (JSException) { }
+        catch (JSDisconnectedException) { }
+        await _dropHandle.DisposeAsync();
+        _dropHandle = null;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await DetachDropAsync();
+        if (_dropModule is not null)
+        {
+            try { await _dropModule.DisposeAsync(); } catch (JSDisconnectedException) { }
+            _dropModule = null;
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
