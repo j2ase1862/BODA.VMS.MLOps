@@ -537,6 +537,81 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
             .ImageId.Should().BeNull();
     }
 
+    /// <summary>
+    /// 마지막 한 장까지 끝내도 앞뒤로 오갈 수 있어야 한다. 남은 일만 따라가면
+    /// 다 라벨링한 순간 화면이 막다른 길이 된다 (라벨을 되돌아가 고칠 수 없다).
+    /// </summary>
+    [Fact]
+    public async Task Label_queue_walks_every_image_even_after_all_are_labeled()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("자리표", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var ids = (await UploadAsync(eng,
+            ("w1.png", MakePng(64, 64, SKColors.Silver, 401)),
+            ("w2.png", MakePng(64, 64, SKColors.Sienna, 402)),
+            ("w3.png", MakePng(64, 64, SKColors.Teal, 403)))).Results.Select(r => r.Image.Id).ToArray();
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest(ids), Json);
+
+        // 지금 이미지가 없으면 다음은 첫 장이다 — [라벨링 시작] 이 들어오는 자리.
+        var start = await eng.GetFromJsonAsync<LabelQueueDto>($"/api/datasets/{dataset.Id}/label-queue", Json);
+        start!.Total.Should().Be(3);
+        start.Labeled.Should().Be(0);
+        start.Previous.Should().BeNull();
+        start.Next.Should().NotBeNull();
+        start.NextToLabel.Should().NotBeNull();
+
+        var first = start.Next!.Value;
+        var order = new List<Guid> { first };
+        for (var at = first; ;)
+        {
+            var q = await eng.GetFromJsonAsync<LabelQueueDto>($"/api/datasets/{dataset.Id}/label-queue?current={at}", Json);
+            q!.Position.Should().Be(order.Count);
+            if (q.Next is not { } n) break;
+            order.Add(n);
+            at = n;
+        }
+        order.Should().BeEquivalentTo(ids, "목록의 사진을 하나도 빠뜨리지 않고 지나야 한다");
+
+        foreach (var id in ids)
+            await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{id}/labels",
+                new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.2, 0.2)], true), Json);
+
+        // 다 끝냈으니 남은 일은 없지만, 앞뒤로 오가는 길은 그대로 있어야 한다.
+        var last = await eng.GetFromJsonAsync<LabelQueueDto>(
+            $"/api/datasets/{dataset.Id}/label-queue?current={order[^1]}", Json);
+        last!.NextToLabel.Should().BeNull();
+        last.Labeled.Should().Be(3);
+        last.Next.Should().BeNull();
+        last.Previous.Should().Be(order[^2]);
+
+        var middle = await eng.GetFromJsonAsync<LabelQueueDto>(
+            $"/api/datasets/{dataset.Id}/label-queue?current={order[1]}", Json);
+        middle!.Previous.Should().Be(order[0]);
+        middle.Next.Should().Be(order[2]);
+
+        // 다 라벨링한 데이터셋에 다시 들어와도 첫 장으로 갈 길이 있어야 한다.
+        var again = await eng.GetFromJsonAsync<LabelQueueDto>($"/api/datasets/{dataset.Id}/label-queue", Json);
+        again!.NextToLabel.Should().BeNull();
+        again.Next.Should().Be(order[0]);
+    }
+
+    /// <summary>사진이 하나도 없는 데이터셋은 갈 곳이 없다 — 그때만 화면이 오류를 낸다.</summary>
+    [Fact]
+    public async Task Label_queue_of_an_empty_dataset_has_nowhere_to_go()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("빈 자리표", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+
+        var q = await eng.GetFromJsonAsync<LabelQueueDto>($"/api/datasets/{dataset.Id}/label-queue", Json);
+        q!.Total.Should().Be(0);
+        q.Next.Should().BeNull();
+        q.NextToLabel.Should().BeNull();
+    }
+
     [Fact]
     public async Task Viewer_can_look_but_not_label()
     {

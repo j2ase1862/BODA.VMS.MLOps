@@ -105,6 +105,14 @@ public static class DatasetEndpoints
             Results.Ok(new NextImageDto(await svc.NextToLabelAsync(id, after, CurrentUser.From(p), ct))))
             .RequireAuthorization(Policies.Labeler);
 
+        // 라벨링 화면의 자리표 — 앞뒤로 넘길 이미지와 남은 일을 한 번에 준다.
+        g.MapGet("/{id:guid}/label-queue", async (Guid id, Guid? current,
+            LabelingService svc, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            var q = await svc.QueueAsync(id, current, CurrentUser.From(p), ct);
+            return Results.Ok(new LabelQueueDto(q.Total, q.Labeled, q.Position, q.Previous, q.Next, q.NextToLabel));
+        }).RequireAuthorization(Policies.Labeler);
+
         // 후보 모델의 추론 결과를 초기 라벨로 채운다 (개발 문서 §5.4 Active Learning).
         // 부르는 쪽은 보통 워커의 사전 라벨링 작업이다. 사람이 이미 손댄 이미지는 건드리지 않는다.
         g.MapPost("/{id:guid}/prefill", async (Guid id, PrefillRequest req,
