@@ -71,6 +71,12 @@ public sealed class SamAssistService : IDisposable
     private volatile string? _loadFailure;
     private DateTimeOffset _loadFailedAt;
 
+    /// <summary>
+    /// 인코더를 실제로 돌린 횟수. 캐시가 듣는지를 <b>시계 없이</b> 확인하려고 둔다 —
+    /// "두 번째가 더 빨랐다" 로 재면 PC 가 바쁠 때 시험이 흔들린다.
+    /// </summary>
+    private long _encodeCount;
+
     private readonly object _cacheLock = new();
     private readonly Dictionary<string, CachedEmbedding> _cache = [];
     private readonly List<string> _cacheOrder = [];
@@ -101,6 +107,9 @@ public sealed class SamAssistService : IDisposable
 
     /// <summary>후보를 여러 개 낼 수 있는 디코더인가 (모델을 올린 뒤에만 알 수 있다)</summary>
     public bool MultiMask => _multiMask;
+
+    /// <summary>인코더를 실제로 돌린 횟수. 같은 사진을 다시 물으면 늘지 않아야 한다.</summary>
+    public long EncodeCount => Interlocked.Read(ref _encodeCount);
 
     public (bool Available, bool Ready, string? Message) Status()
     {
@@ -425,6 +434,7 @@ public sealed class SamAssistService : IDisposable
 
             var started = _clock.GetTimestamp();
             var result = await Task.Run(() => Encode(encoder, memory), ct);
+            Interlocked.Increment(ref _encodeCount);
             _logger.LogDebug("SAM 임베딩 {Key} {Elapsed:0} ms", cacheKey,
                 _clock.GetElapsedTime(started).TotalMilliseconds);
 
