@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using BODA.VMS.MLOps.Contracts.Datasets;
+using BODA.VMS.MLOps.Server.Services.Sam;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 using static BODA.VMS.MLOps.Tests.Server.MlopsApiFactory;
 
@@ -203,17 +205,17 @@ public class SamInferenceTests : IClassFixture<SamEnabledFactory>
         var image = (await upload.Content.ReadFromJsonAsync<ImageUploadBatchDto>(Json))!.Results[0].Image;
 
         var request = new SamPredictRequest(image.Id, [new SamPointDto(0.55, 0.52)]);
+        var sam = _f.Services.GetRequiredService<SamAssistService>();
 
-        var first = System.Diagnostics.Stopwatch.StartNew();
+        var before = sam.EncodeCount;
         (await eng.PostAsJsonAsync("/api/sam/predict", request, Json)).EnsureSuccessStatusCode();
-        first.Stop();
-
-        var second = System.Diagnostics.Stopwatch.StartNew();
+        var afterFirst = sam.EncodeCount;
         (await eng.PostAsJsonAsync("/api/sam/predict", request, Json)).EnsureSuccessStatusCode();
-        second.Stop();
 
-        // 두 번째는 인코더를 건너뛰므로 확실히 빨라야 한다. 캐시가 빠지면 클릭마다 수백 ms 가 붙는다.
-        second.ElapsedMilliseconds.Should().BeLessThan(Math.Max(80, first.ElapsedMilliseconds / 2));
+        // 캐시가 빠지면 클릭마다 인코더가 다시 돌아 수백 ms 가 붙는다.
+        // 걸린 시간으로 재면 PC 가 바쁠 때 흔들리므로, 인코더가 몇 번 돌았는지로 본다.
+        (afterFirst - before).Should().Be(1, "처음 묻는 사진이라 인코더가 한 번 돈다");
+        sam.EncodeCount.Should().Be(afterFirst, "같은 사진을 다시 물으면 인코더를 건너뛴다");
     }
 
     [Fact]
