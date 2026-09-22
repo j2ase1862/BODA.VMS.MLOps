@@ -194,6 +194,41 @@ public sealed class LabelingService(
         return candidates.Count > 0 ? candidates[0].Id : null;
     }
 
+    public sealed record LabelQueue(int Total, int Labeled, int Position, Guid? Previous, Guid? Next, Guid? NextToLabel);
+
+    /// <summary>
+    /// 라벨링 화면이 딛고 설 자리표. 앞뒤 이미지는 <b>라벨 상태와 무관하게</b> 목록 순서로 준다 —
+    /// 다 라벨링한 뒤에도 되돌아가 고칠 수 있어야 하기 때문이다.
+    /// 순서는 데이터셋 화면의 사진 목록과 같다 (올라온 순서의 역순).
+    /// </summary>
+    public async Task<LabelQueue> QueueAsync(Guid datasetId, Guid? currentImageId, CurrentUser user, CancellationToken ct)
+    {
+        var memberIds = await db.DatasetImages.AsNoTracking().Where(m => m.DatasetId == datasetId)
+            .Select(m => m.ImageId).ToListAsync(ct);
+        if (memberIds.Count == 0) return new LabelQueue(0, 0, 0, null, null, null);
+
+        // 같은 순간에 올라온 사진들은 CreatedAt 이 같다 — Id 로 한 번 더 갈라야 순서가 흔들리지 않는다.
+        var ordered = await db.Images.AsNoTracking().Where(i => memberIds.Contains(i.Id))
+            .OrderByDescending(i => i.CreatedAt).ThenBy(i => i.Id)
+            .Select(i => i.Id).ToListAsync(ct);
+
+        // 데이터셋에서 빠진 뒤에도 상태 행은 남으므로, 지금 담겨 있는 것만 센다.
+        var inDataset = ordered.ToHashSet();
+        var states = await db.ImageLabelStates.AsNoTracking().Where(s => s.DatasetId == datasetId).ToListAsync(ct);
+        var labeled = states.Count(s => inDataset.Contains(s.ImageId)
+                                        && s.Status is LabelStatus.Labeled or LabelStatus.Reviewed);
+
+        int index = currentImageId is { } id ? ordered.IndexOf(id) : -1;
+        var previous = index > 0 ? ordered[index - 1] : (Guid?)null;
+        // 지금 이미지가 없으면(라벨링 화면에 막 들어왔으면) 다음은 첫 장이다.
+        var next = index < 0 ? ordered[0]
+            : index < ordered.Count - 1 ? ordered[index + 1] : (Guid?)null;
+
+        return new LabelQueue(
+            ordered.Count, labeled, index + 1, previous, next,
+            await NextToLabelAsync(datasetId, currentImageId, user, ct));
+    }
+
     /// <summary>후보 모델의 추론 결과를 초기 라벨로 채워 넣는다 (개발 문서 §5.4 Active Learning)</summary>
     public async Task<int> PrefillAsync(Guid datasetId, IReadOnlyDictionary<Guid, IReadOnlyList<LabelAnnotation>> predictions,
         IReadOnlyDictionary<Guid, double>? uncertainty, CurrentUser user, CancellationToken ct)

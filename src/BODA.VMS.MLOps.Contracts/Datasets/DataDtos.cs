@@ -97,6 +97,19 @@ public sealed record ReviewRequest(bool Approved);
 
 public sealed record NextImageDto(Guid? ImageId);
 
+/// <summary>
+/// 라벨링 화면이 한 번에 받아 가는 자리표. 앞뒤로 넘길 이미지와 남은 일이 함께 있어야
+/// "다음이 없다" 가 끝난 것인지 막힌 것인지 화면이 말할 수 있다.
+/// </summary>
+/// <param name="Total">데이터셋에 담긴 이미지 수</param>
+/// <param name="Labeled">Labeled·Reviewed 인 이미지 수</param>
+/// <param name="Position">지금 이미지가 목록에서 몇 번째인지 (1부터, 모르면 0)</param>
+/// <param name="Previous">목록 순서로 앞 이미지 (라벨 상태와 무관)</param>
+/// <param name="Next">목록 순서로 뒤 이미지 (라벨 상태와 무관)</param>
+/// <param name="NextToLabel">아직 라벨이 남은 다음 이미지 — 없으면 다 끝난 것이다</param>
+public sealed record LabelQueueDto(
+    int Total, int Labeled, int Position, Guid? Previous, Guid? Next, Guid? NextToLabel);
+
 // ───────────── Active Learning ─────────────
 
 /// <summary>후보 모델이 한 장에 대해 내놓은 것. 사람이 손댄 이미지에는 채우지 않는다.</summary>

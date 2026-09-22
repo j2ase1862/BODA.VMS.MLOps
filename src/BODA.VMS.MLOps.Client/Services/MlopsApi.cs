@@ -221,6 +221,9 @@ public sealed class MlopsApi(HttpClient http)
     public Task<NextImageDto> NextToLabelAsync(Guid datasetId, Guid? after) =>
         GetAsync<NextImageDto>($"/api/datasets/{datasetId}/next-to-label{(after is null ? "" : $"?after={after}")}");
 
+    public Task<LabelQueueDto> LabelQueueAsync(Guid datasetId, Guid? current) =>
+        GetAsync<LabelQueueDto>($"/api/datasets/{datasetId}/label-queue{(current is null ? "" : $"?current={current}")}");
+
     /// <summary>후보 모델로 미라벨 이미지를 훑어 초기 라벨과 불확실도를 채운다 (§5.4 Active Learning)</summary>
     public Task<PrelabelResultDto> PrelabelAsync(Guid datasetId, PrelabelRequest req) =>
         PostAsync<PrelabelRequest, PrelabelResultDto>($"/api/datasets/{datasetId}/prelabel", req);

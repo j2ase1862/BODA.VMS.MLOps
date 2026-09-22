@@ -204,9 +204,12 @@ public sealed class ImagePoolService(
         var total = await query.CountAsync(ct);
 
         // 흐린 것부터 볼 때도 지표가 없는 것은 뒤로 보낸다 — null 이 0 으로 정렬되면 맨 앞을 차지한다.
+        // 한 번에 올린 사진들은 CreatedAt 이 같으므로 Id 로 한 번 더 가른다. 갈라 두지 않으면
+        // 쪽을 넘길 때 순서가 흔들려 같은 사진이 두 번 나오거나 빠지고, 라벨링 화면의 자리표와도 어긋난다.
         var ordered = q.BlurriestFirst
-            ? query.OrderBy(i => i.Sharpness == null).ThenBy(i => i.Sharpness).ThenByDescending(i => i.CreatedAt)
-            : query.OrderByDescending(i => i.CreatedAt);
+            ? query.OrderBy(i => i.Sharpness == null).ThenBy(i => i.Sharpness)
+                   .ThenByDescending(i => i.CreatedAt).ThenBy(i => i.Id)
+            : query.OrderByDescending(i => i.CreatedAt).ThenBy(i => i.Id);
 
         var items = await ordered
             .Skip(Math.Max(0, q.Skip)).Take(Math.Clamp(q.Take, 1, 500)).ToListAsync(ct);
