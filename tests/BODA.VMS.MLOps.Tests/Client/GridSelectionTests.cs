@@ -4,8 +4,10 @@ using FluentAssertions;
 namespace BODA.VMS.MLOps.Tests.Client;
 
 /// <summary>
-/// 사진 격자에서 고르는 법 — <b>파일 탐색기와 같다</b>. 수집 사진과 데이터셋 상세가 같은 것을
-/// 쓰므로 여기가 두 화면의 계약이다.
+/// 사진 격자에서 고르는 법. 수집 사진과 데이터셋 상세가 같은 것을 쓰므로 여기가 두 화면의 계약이다.
+///
+/// <para>Shift+클릭·Ctrl+A·Esc 는 탐색기와 같지만 <b>그냥 클릭은 쌓는다</b> —
+/// 사진을 골라 담는 화면이라 하나씩 눌러 모으는 것이 기본 동작이다.</para>
 /// </summary>
 public class GridSelectionTests
 {
@@ -22,28 +24,28 @@ public class GridSelectionTests
     private static void CtrlShiftClick(GridSelection s, Guid id) => s.Click(id, shift: true, ctrl: true, Grid);
 
     [Fact]
-    public void Plain_click_keeps_only_that_one()
+    public void Plain_click_accumulates_and_keeps_the_others()
     {
         var s = New();
         Click(s, Grid[0]);
         Click(s, Grid[3]);
 
-        s.Selected.Should().BeEquivalentTo([Grid[3]], "탐색기와 같다 — 그냥 클릭은 나머지를 해제한다");
+        s.Selected.Should().BeEquivalentTo([Grid[0], Grid[3]], "골라 담는 격자라 그냥 클릭은 쌓인다");
     }
 
-    /// <summary>탐색기는 고른 것을 다시 눌러도 풀지 않는다. 푸는 것은 Ctrl+클릭이나 Esc 다.</summary>
     [Fact]
-    public void Clicking_the_selected_one_again_keeps_it()
+    public void Clicking_the_selected_one_again_removes_it()
     {
         var s = New();
         Click(s, Grid[2]);
         Click(s, Grid[2]);
 
-        s.Selected.Should().BeEquivalentTo([Grid[2]]);
+        s.Selected.Should().BeEmpty();
     }
 
+    /// <summary>Ctrl+클릭도 같은 토글이다 — 탐색기 버릇으로 눌러도 기대대로 된다.</summary>
     [Fact]
-    public void Ctrl_click_adds_and_removes_one_at_a_time()
+    public void Ctrl_click_behaves_the_same_as_a_plain_click()
     {
         var s = New();
         Click(s, Grid[0]);
@@ -52,7 +54,7 @@ public class GridSelectionTests
         s.Selected.Should().BeEquivalentTo([Grid[0], Grid[3], Grid[5]]);
 
         CtrlClick(s, Grid[3]);
-        s.Selected.Should().BeEquivalentTo([Grid[0], Grid[5]], "Ctrl+클릭은 고른 것을 뺀다");
+        s.Selected.Should().BeEquivalentTo([Grid[0], Grid[5]]);
     }
 
     [Fact]
@@ -77,10 +79,10 @@ public class GridSelectionTests
 
     /// <summary>
     /// 범위를 잡아 놓고 끝을 다시 집을 수 있어야 한다 — 기준(anchor)은 Shift+클릭으로 움직이지 않는다.
-    /// 그리고 <b>갈아 끼운다</b>: 넓혔다가 줄이면 실제로 줄어야 한다.
+    /// 넓혔다가 줄이면 실제로 줄어야 한다.
     /// </summary>
     [Fact]
-    public void Shift_click_replaces_the_range_so_it_can_shrink()
+    public void Shift_click_again_re_takes_the_range_so_it_can_shrink()
     {
         var s = New();
         Click(s, Grid[1]);
@@ -89,10 +91,26 @@ public class GridSelectionTests
 
         ShiftClick(s, Grid[3]);
         s.Selected.Should().BeEquivalentTo([Grid[1], Grid[2], Grid[3]],
-            "범위를 줄이면 앞서 고른 것이 남지 않고 실제로 줄어야 한다");
+            "범위를 줄이면 앞서 집은 것이 남지 않고 실제로 줄어야 한다");
     }
 
-    /// <summary>Ctrl+Shift+클릭은 갈아 끼우지 않고 더한다 — 떨어진 두 덩어리를 고를 때 쓴다.</summary>
+    /// <summary>
+    /// 범위를 다시 집을 때 걷어내는 것은 <b>직전 범위뿐</b>이다. 손으로 하나씩 골라 둔 것까지
+    /// 쓸어 가면 "쌓아 두고 범위를 한 번 더" 가 안 된다.
+    /// </summary>
+    [Fact]
+    public void Re_taking_a_range_keeps_what_was_picked_by_hand()
+    {
+        var s = New();
+        Click(s, Grid[7]);          // 손으로 하나
+        Click(s, Grid[1]);          // 기준
+        ShiftClick(s, Grid[5]);     // 1~5
+        ShiftClick(s, Grid[3]);     // 1~3 으로 줄인다
+
+        s.Selected.Should().BeEquivalentTo([Grid[1], Grid[2], Grid[3], Grid[7]]);
+    }
+
+    /// <summary>Ctrl+Shift+클릭은 앞 범위를 걷어내지 않는다 — 떨어진 두 덩어리를 고를 때 쓴다.</summary>
     [Fact]
     public void Ctrl_shift_click_adds_a_second_range()
     {
@@ -100,8 +118,8 @@ public class GridSelectionTests
         Click(s, Grid[0]);
         ShiftClick(s, Grid[1]);      // 0~1
 
-        CtrlClick(s, Grid[5]);       // 기준을 5 로 옮기면서 더한다
-        CtrlShiftClick(s, Grid[7]);  // 5~7 을 더한다
+        CtrlClick(s, Grid[5]);       // 기준을 5 로 옮긴다
+        CtrlShiftClick(s, Grid[7]);  // 5~7 을 얹는다 (0~1 은 그대로)
 
         s.Selected.Should().BeEquivalentTo([Grid[0], Grid[1], Grid[5], Grid[6], Grid[7]]);
     }
@@ -123,7 +141,8 @@ public class GridSelectionTests
         s.Count.Should().Be(8);
 
         Click(s, Grid[0]);
-        s.Selected.Should().BeEquivalentTo([Grid[0]], "전부 고른 뒤 그냥 클릭하면 하나만 남는다");
+        s.Selected.Should().NotContain(Grid[0], "전부 고른 뒤 다시 누르면 그 한 장이 빠진다");
+        s.Count.Should().Be(7);
     }
 
     [Fact]
