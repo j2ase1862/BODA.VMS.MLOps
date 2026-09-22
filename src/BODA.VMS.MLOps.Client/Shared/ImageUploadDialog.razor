@@ -62,6 +62,42 @@
         {
             <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert>
         }
+
+        @* 끌어다 놓기는 파일 고르개의 accept 를 지나지 않는다 — 브라우저가 거르지 않으므로 여기서 거른다.
+           지우지 않고 보여 준다: 무엇이 빠졌는지 모른 채 "몇 장 올라갔다" 만 보면 사람이 알아채지 못한다. *@
+        @if (_rejected.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-3" Dense="true">
+                <MudText Typo="Typo.body2">
+                    받을 수 없는 형식 @(_rejected.Count)개는 빼고 올립니다 (jpg · png · bmp · webp · gif 만 받습니다).
+                </MudText>
+                <div style="max-height:96px; overflow-y:auto">
+                    @foreach (var name in _rejected.Take(20))
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block">@name</MudText>
+                    }
+                    @if (_rejected.Count > 20)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block">… 그리고 @(_rejected.Count - 20)개 더</MudText>
+                    }
+                </div>
+            </MudAlert>
+        }
+
+        @* 한 장이라도 실패하면 대화상자를 닫지 않는다. 닫고 스낵바로만 알리면
+           "올렸는데 아무 일도 없다" 로 끝난다 — 실제로 그렇게 끝난 적이 있다. *@
+        @if (_failures.Count > 0)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3" Dense="true">
+                <MudText Typo="Typo.body2"><strong>@(_failures.Count)장이 올라가지 못했습니다.</strong></MudText>
+                <div style="max-height:120px; overflow-y:auto">
+                    @foreach (var f in _failures)
+                    {
+                        <MudText Typo="Typo.caption" Class="d-block">@f</MudText>
+                    }
+                </div>
+            </MudAlert>
+        }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="CloseAsync" Disabled="@_uploading">닫기</MudButton>
@@ -72,7 +108,8 @@
 
 @code {
     /// <summary>서버가 받는 확장자 (ImageProcessor.IsSupportedExtension 과 같아야 한다)</summary>
-    private const string Accept = ".jpg,.jpeg,.png,.bmp,.webp,.gif";
+    private static readonly string[] Extensions = [".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"];
+    private static readonly string Accept = string.Join(",", Extensions);
 
     [Parameter] public bool Visible { get; set; }
     [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
@@ -85,6 +122,8 @@
     [Parameter] public EventCallback<int> OnUploaded { get; set; }
 
     private IReadOnlyList<IBrowserFile> _files = [];
+    private readonly List<string> _rejected = [];
+    private readonly List<string> _failures = [];
     private List<DatasetDto> _datasets = [];
     private Guid? _targetDatasetId;
     private bool _uploading, _addToDataset = true;
@@ -105,17 +144,34 @@
         }
     }
 
+    /// <summary>
+    /// 고른(또는 끌어다 놓은) 파일을 받는다.
+    ///
+    /// <para><c>accept</c> 는 <b>파일 고르개에만</b> 듣는다 — 끌어다 놓은 파일은 브라우저가 거르지 않는다.
+    /// 거르지 않고 보내면 서버가 한 장씩 400 으로 돌려주고, 사람에게는 "아무 일도 안 일어났다" 로만 보인다.</para>
+    /// </summary>
     private void OnFilesPicked(IReadOnlyList<IBrowserFile> files)
     {
         ClearDrag();
-        _files = files;
         _error = null;
+        _failures.Clear();
+        _rejected.Clear();
+
+        var ok = new List<IBrowserFile>();
+        foreach (var f in files)
+        {
+            if (Extensions.Contains(Path.GetExtension(f.Name), StringComparer.OrdinalIgnoreCase)) ok.Add(f);
+            else _rejected.Add(f.Name);
+        }
+        _files = ok;
     }
 
     private Task CloseAsync()
     {
         _files = [];
         _error = null;
+        _rejected.Clear();
+        _failures.Clear();
         return VisibleChanged.InvokeAsync(false);
     }
 
@@ -127,11 +183,13 @@
     {
         _uploading = true;
         _error = null;
+        _failures.Clear();
         try
         {
             var tags = _tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var uploaded = new List<Guid>();
-            var errors = new List<string>();
+            var created = 0;
+            var duplicates = 0;
 
             const int batchSize = 10;
             for (int i = 0; i < _files.Count; i += batchSize)
@@ -146,7 +204,9 @@
                     var result = await Api.UploadImagesAsync(streams, ImageSource.Manual,
                         string.IsNullOrWhiteSpace(_lineId) ? null : _lineId, tags);
                     uploaded.AddRange(result.Results.Select(r => r.Image.Id));
-                    errors.AddRange(result.Errors);
+                    created += result.Created;
+                    duplicates += result.Duplicates;
+                    _failures.AddRange(result.Errors);
                 }
                 finally
                 {
@@ -155,18 +215,50 @@
             }
 
             var target = DatasetId is { } id ? (_addToDataset ? id : (Guid?)null) : _targetDatasetId;
+            var added = 0;
             if (target is { } datasetId && uploaded.Count > 0)
-                await Api.AddImagesAsync(datasetId, uploaded.Distinct().ToArray(), DatasetSplit.Train);
+            {
+                var ids = uploaded.Distinct().ToArray();
+                await Api.AddImagesAsync(datasetId, ids, DatasetSplit.Train);
+                added = ids.Length;
+            }
 
-            Snackbar.Add($"{uploaded.Count}장 처리했습니다", Severity.Success);
-            foreach (var e in errors.Take(5)) Snackbar.Add(e, Severity.Warning);
+            // 올라간 것이 있으면 화면을 먼저 되살린다 — 실패가 섞여 있어도 성공한 몫은 이미 들어갔다.
+            if (uploaded.Count > 0) await OnUploaded.InvokeAsync(uploaded.Count);
 
+            // 빠진 것이 하나라도 있으면 닫지 않는다 — 닫는 순간 무엇이 빠졌는지 읽을 곳이 없어진다.
+            // 실패(서버가 거부)와 제외(형식이 안 맞아 보내지도 않음)를 모두 센다.
+            if (_failures.Count > 0 || _rejected.Count > 0)
+            {
+                _files = [];
+                if (uploaded.Count > 0) Snackbar.Add(Summary(created, duplicates, added), Severity.Warning);
+                else if (_failures.Count == 0)
+                    _error = "올릴 수 있는 사진이 없습니다. 받는 형식은 jpg · png · bmp · webp · gif 입니다.";
+                return;
+            }
+
+            Snackbar.Add(Summary(created, duplicates, added), Severity.Success);
             _files = [];
+            _rejected.Clear();
             await VisibleChanged.InvokeAsync(false);
-            await OnUploaded.InvokeAsync(uploaded.Count);
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
         catch (IOException ex) { _error = $"파일을 읽지 못했습니다: {ex.Message}"; }
         finally { _uploading = false; _progress = ""; }
+    }
+
+    /// <summary>
+    /// 무슨 일이 있었는지 한 줄로. 이미 있던 사진과 데이터셋에 담긴 수를 따로 말한다 —
+    /// "10장 처리했습니다" 만 보면 같은 사진을 다시 올린 것인지 알 수 없다.
+    /// </summary>
+    private string Summary(int created, int duplicates, int added)
+    {
+        var parts = new List<string>();
+        if (created > 0) parts.Add($"{created}장 올렸습니다");
+        if (duplicates > 0) parts.Add($"이미 있던 사진 {duplicates}장");
+        if (added > 0) parts.Add($"데이터셋에 {added}장 담음");
+        var skipped = _failures.Count + _rejected.Count;
+        if (skipped > 0) parts.Add($"빠진 사진 {skipped}장");
+        return parts.Count == 0 ? "올라간 사진이 없습니다" : string.Join(" · ", parts);
     }
 }
