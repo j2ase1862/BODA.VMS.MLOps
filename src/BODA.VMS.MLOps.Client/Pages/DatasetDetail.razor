@@ -94,6 +94,10 @@ else
                         }
                     </MudMenu>
                 </AuthorizeView>
+                <AuthorizeView Roles="Labeler,Engineer,Admin" Context="crop">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.Crop" OnClick="@(() => _cropOpen = true)">ROI 로 자르기</MudButton>
+                </AuthorizeView>
                 <AuthorizeView Roles="Engineer,Admin" Context="eng">
                     <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" OnClick="RemoveSelectedAsync">데이터셋에서 빼기</MudButton>
                 </AuthorizeView>
@@ -205,6 +209,9 @@ else
 <ImageUploadDialog @bind-Visible="_uploadOpen" DatasetId="Id" DatasetName="@_dataset?.Name"
                    OnUploaded="OnUploadedAsync" />
 
+<RoiCropDialog @bind-Visible="_cropOpen" ImageIds="@_selectedIds.ToArray()"
+               DatasetId="Id" DatasetName="@_dataset?.Name" OnCropped="OnCroppedAsync" />
+
 @* ── 사전 라벨링 (Active Learning) ── *@
 <MudDialog @bind-Visible="_prelabelOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">모델로 미리 채우기</MudText></TitleContent>
@@ -312,7 +319,7 @@ else
     private LabelStatus? _status;
     private string _search = "";
 
-    private bool _uploadOpen;
+    private bool _uploadOpen, _cropOpen;
 
     private bool _snapshotOpen, _snapshotting, _reviewedOnly, _includeUnlabeled;
     private string _snapshotName = "";
@@ -375,6 +382,15 @@ else
     /// <summary>올리기가 끝나면 통계와 격자를 다시 읽는다 (담기까지는 컴포넌트가 했다)</summary>
     private async Task OnUploadedAsync(int _)
     {
+        _dataset = await Api.DatasetAsync(Id);
+        await LoadImagesAsync();
+    }
+
+    private async Task OnCroppedAsync(int _)
+    {
+        // 자른 사진이 새로 담겼으므로 선택은 의미를 잃는다 — 들고 있으면
+        // 다음에 누르는 [분할 지정]·[빼기] 가 원본에 걸린다.
+        _selectedIds.Clear();
         _dataset = await Api.DatasetAsync(Id);
         await LoadImagesAsync();
     }

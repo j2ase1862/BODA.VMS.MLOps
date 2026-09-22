@@ -104,6 +104,124 @@ public sealed class ImagePoolService(
         }
     }
 
+    public sealed record CropOutcome(Guid SourceImageId, string SourceFileName, Image? Image, bool Created, string? Error);
+
+    /// <summary>
+    /// 고른 사진들을 같은 자리(ROI)로 잘라 새 사진으로 담는다.
+    ///
+    /// <para><b>원본은 그대로 둔다.</b> 자른 것이 원본을 대신하는 것이 아니라 나란히 쌓인다 —
+    /// ROI 를 잘못 잡았을 때 되돌릴 데가 있어야 하고, 무엇을 지울지는 사람이 정한다.</para>
+    ///
+    /// <para>출처·라인·검사 이력·태그는 <b>원본에서 물려받는다</b>. 라인 NG 사진을 잘랐다면
+    /// 그것은 여전히 그 라인의 그 검사에서 나온 사진이다 — 끊으면 나중에 사고를 되짚을 때
+    /// 자른 사진만 출처 없이 떠 있게 된다.</para>
+    ///
+    /// <para>한 장씩 독립적으로 처리하고 실패한 것만 이유를 돌려준다. 열 장 중 한 장이
+    /// 깨졌다고 나머지 아홉 장을 버릴 이유가 없다 (업로드와 같은 규칙).</para>
+    /// </summary>
+    public async Task<List<CropOutcome>> CropAsync(
+        Guid[] imageIds, double x, double y, double w, double h,
+        CurrentUser user, CancellationToken ct)
+    {
+        if (imageIds.Length == 0)
+            throw ApiException.BadRequest(ErrorCodes.Validation, "자를 사진을 고르세요.");
+        if (imageIds.Length > options.Value.MaxCropImages)
+            throw ApiException.BadRequest(ErrorCodes.Validation,
+                $"한 번에 {options.Value.MaxCropImages}장까지 자를 수 있습니다. 나눠서 하세요.");
+
+        // 좌표 규약은 어디서나 0~1 정규화다 (README "라벨 좌표"). 여기만 픽셀로 받으면
+        // 해상도가 다른 사진에 같은 ROI 를 못 쓴다 — 이 기능의 핵심이 그것이다.
+        if (double.IsNaN(x) || double.IsNaN(y) || double.IsNaN(w) || double.IsNaN(h))
+            throw ApiException.BadRequest(ErrorCodes.Validation, "자를 영역이 올바르지 않습니다.");
+        if (w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > 1.0001 || y + h > 1.0001)
+            throw ApiException.BadRequest(ErrorCodes.Validation,
+                "자를 영역은 사진 안의 0~1 범위여야 합니다.");
+
+        var images = await db.Images.AsNoTracking().Where(i => imageIds.Contains(i.Id)).ToListAsync(ct);
+        var byId = images.ToDictionary(i => i.Id);
+        var roiJson = Mapping.ToJson(new[] { x, y, w, h });
+        var results = new List<CropOutcome>(imageIds.Length);
+
+        foreach (var id in imageIds)
+        {
+            if (!byId.TryGetValue(id, out var source))
+            {
+                results.Add(new CropOutcome(id, "", null, false, "사진을 찾을 수 없습니다."));
+                continue;
+            }
+            try
+            {
+                results.Add(await CropOneAsync(source, x, y, w, h, roiJson, user, ct));
+            }
+            catch (ApiException ex)
+            {
+                results.Add(new CropOutcome(id, source.FileName, null, false, ex.Message));
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "ROI 자르기 실패 {ImageId}", id);
+                results.Add(new CropOutcome(id, source.FileName, null, false, "자르지 못했습니다."));
+            }
+        }
+
+        audit.Record(AuditService.Dataset, "ImagesCropped", user.Name, null,
+            new { requested = imageIds.Length, created = results.Count(r => r.Created), roi = new[] { x, y, w, h } });
+        await db.SaveChangesAsync(ct);
+        return results;
+    }
+
+    private async Task<CropOutcome> CropOneAsync(Image source, double x, double y, double w, double h,
+        string roiJson, CurrentUser user, CancellationToken ct)
+    {
+        // 잘라낸 변이 한 화소도 안 되면 만들 것이 없다. 사진마다 해상도가 달라
+        // 같은 ROI 라도 어떤 사진에서는 너무 작을 수 있으므로 장마다 본다.
+        if ((int)Math.Round(w * source.Width) < 1 || (int)Math.Round(h * source.Height) < 1)
+            return new CropOutcome(source.Id, source.FileName, null, false,
+                $"이 사진({source.Width}×{source.Height})에서는 자를 영역이 1화소보다 작습니다.");
+
+        var (localPath, scratch) = await LocalCopyAsync(source.StorageKey, ct);
+        try
+        {
+            if (processor.Crop(localPath, x, y, w, h, lossless: true) is not { } bytes)
+                return new CropOutcome(source.Id, source.FileName, null, false, "사진을 읽지 못했습니다.");
+
+            var name = $"{Path.GetFileNameWithoutExtension(source.FileName)}_roi.png";
+            using var stream = new MemoryStream(bytes);
+            var result = await UploadAsync(stream, name, source.Source, source.LineId, source.InspectionId,
+                Mapping.Json(source.TagsJson, Array.Empty<string>()), source.CapturedAt, user, ct);
+
+            // 같은 ROI 로 같은 사진을 두 번 자르면 내용이 같아 한 벌로 합쳐진다 (내용 주소 저장).
+            // 그때 온 것은 먼저 만들어진 행이므로 출처를 덮어쓰지 않는다.
+            if (result.Created)
+            {
+                var tracked = await db.Images.FirstAsync(i => i.Id == result.Image.Id, ct);
+                tracked.SourceImageId = source.Id;
+                tracked.RoiJson = roiJson;
+                await db.SaveChangesAsync(ct);
+            }
+            return new CropOutcome(source.Id, source.FileName, result.Image, result.Created, null);
+        }
+        finally
+        {
+            if (scratch) TempFileWriter.TryDelete(localPath);
+        }
+    }
+
+    /// <summary>
+    /// 저장소가 로컬이면 그 파일을 그대로 쓰고, 아니면 임시 파일로 받아 온다.
+    /// SkiaSharp 에 경로를 넘겨야 해서(스트림 디코드는 큰 사진에서 메모리를 두 배로 쓴다) 필요한 단계다.
+    /// </summary>
+    private async Task<(string Path, bool Scratch)> LocalCopyAsync(string key, CancellationToken ct)
+    {
+        if (storage.LocalPath(key) is { } local && File.Exists(local)) return (local, false);
+
+        var temp = storage.CreateTempPath(".bin");
+        await using (var target = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        await using (var reader = storage.OpenRead(key))
+            await reader.CopyToAsync(target, ct);
+        return (temp, true);
+    }
+
     /// <summary>
     /// 거의 같은 사진을 찾는다. dHash 는 앞자리가 같아도 뒷자리가 다를 수 있어 인덱스로 좁힐 수 없으므로,
     /// 최근 것부터 정해진 개수만 비교한다. 전수 비교는 풀이 커지면 감당이 안 된다.
@@ -260,6 +378,12 @@ public sealed class ImagePoolService(
     /// </summary>
     public async Task<int> DeleteAsync(Guid[] imageIds, CurrentUser user, CancellationToken ct)
     {
+        // 자른 사진은 원본을 붙잡지 않는다 — 그 자체로 온전한 학습 재료다.
+        // 대신 끊어진 연결을 남기지 않게 지우기 전에 풀어 준다.
+        foreach (var child in await db.Images.Where(i => i.SourceImageId != null
+                                                        && imageIds.Contains(i.SourceImageId.Value)).ToListAsync(ct))
+            child.SourceImageId = null;
+
         var images = await db.Images.Where(i => imageIds.Contains(i.Id)).ToListAsync(ct);
         if (images.Count == 0) return 0;
 

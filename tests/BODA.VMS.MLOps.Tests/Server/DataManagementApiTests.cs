@@ -612,6 +612,102 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         q.NextToLabel.Should().BeNull();
     }
 
+    /// <summary>
+    /// ROI 자르기 — 고른 사진을 같은 자리로 잘라 새 사진으로 담는다. 원본은 그대로 남고,
+    /// 출처(라인·검사 이력·태그)는 원본에서 물려받는다.
+    /// </summary>
+    [Fact]
+    public async Task Crop_makes_new_images_and_keeps_the_originals()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("자르기", TaskType.Anomaly, ["good", "defect"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var ids = (await UploadAsync(eng,
+            ("c1.png", MakePng(400, 300, SKColors.Orange, 501)),
+            ("c2.png", MakePng(400, 300, SKColors.Purple, 502)))).Results.Select(r => r.Image.Id).ToArray();
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest(ids, ["라인1"]), Json);
+
+        var res = await (await eng.PostAsJsonAsync("/api/images/crop",
+            new CropImagesRequest(ids, 0.25, 0.25, 0.5, 0.5, dataset.Id, DatasetSplit.Train), Json))
+            .Content.ReadFromJsonAsync<CropImagesResultDto>(Json);
+
+        res!.Created.Should().Be(2);
+        res.Failed.Should().Be(0);
+        res.AddedToDataset.Should().Be(2, "자른 사진이 데이터셋에 담겨야 한다");
+
+        foreach (var r in res.Results)
+        {
+            var crop = r.Image!;
+            crop.Width.Should().Be(200, "0.5 폭이면 400 의 절반이다");
+            crop.Height.Should().Be(150);
+            crop.SourceImageId.Should().Be(r.SourceImageId, "어디서 잘랐는지 남아야 한다");
+            crop.Roi.Should().Equal(0.25, 0.25, 0.5, 0.5);
+            crop.Tags.Should().Contain("라인1", "출처 표시는 원본에서 물려받는다");
+            crop.FileName.Should().EndWith("_roi.png");
+        }
+
+        // 원본은 그대로 남는다 — 자른 것이 원본을 대신하지 않는다.
+        var pool = await eng.GetFromJsonAsync<ImagePageDto>("/api/images?take=100", Json);
+        pool!.Items.Select(i => i.Id).Should().Contain(ids);
+
+        // 같은 자리를 다시 자르면 내용이 같아 한 벌로 합쳐진다 (내용 주소 저장).
+        var again = await (await eng.PostAsJsonAsync("/api/images/crop",
+            new CropImagesRequest(ids, 0.25, 0.25, 0.5, 0.5), Json))
+            .Content.ReadFromJsonAsync<CropImagesResultDto>(Json);
+        again!.Created.Should().Be(0);
+        again.Merged.Should().Be(2);
+    }
+
+    /// <summary>자를 자리는 0~1 정규화라 사진 밖을 가리키면 거부한다.</summary>
+    [Theory]
+    [InlineData(0.0, 0.0, 0.0, 0.5)]   // 폭이 0
+    [InlineData(0.5, 0.0, 0.8, 0.5)]   // 오른쪽으로 넘침
+    [InlineData(-0.1, 0.0, 0.5, 0.5)]  // 왼쪽으로 넘침
+    public async Task Crop_rejects_a_region_outside_the_image(double x, double y, double w, double h)
+    {
+        var eng = await _f.EngineerAsync();
+        var ids = (await UploadAsync(eng, ("c3.png", MakePng(64, 64, SKColors.Teal, 503))))
+            .Results.Select(r => r.Image.Id).ToArray();
+
+        (await eng.PostAsJsonAsync("/api/images/crop", new CropImagesRequest(ids, x, y, w, h), Json))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>원본을 지워도 자른 사진은 남는다 — 그 자체로 온전한 학습 재료다.</summary>
+    [Fact]
+    public async Task Deleting_the_original_unlinks_the_crop_but_keeps_it()
+    {
+        var eng = await _f.EngineerAsync();
+        var ids = (await UploadAsync(eng, ("c4.png", MakePng(200, 200, SKColors.Maroon, 504))))
+            .Results.Select(r => r.Image.Id).ToArray();
+
+        var res = await (await eng.PostAsJsonAsync("/api/images/crop",
+            new CropImagesRequest(ids, 0.1, 0.1, 0.4, 0.4), Json))
+            .Content.ReadFromJsonAsync<CropImagesResultDto>(Json);
+        var cropId = res!.Results[0].Image!.Id;
+
+        (await eng.PostAsJsonAsync("/api/images/delete", new DeleteImagesRequest(ids), Json))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var crop = await eng.GetFromJsonAsync<ImageDto>($"/api/images/{cropId}", Json);
+        crop!.SourceImageId.Should().BeNull("원본이 사라졌으면 끊어진 연결을 남기지 않는다");
+        crop.Roi.Should().NotBeNull("어느 자리를 잘랐는지는 그대로 남는다");
+    }
+
+    /// <summary>자르기는 Labeler 부터 할 수 있다 — 원본을 건드리지 않으므로 담기와 같은 무게다.</summary>
+    [Fact]
+    public async Task Viewer_cannot_crop()
+    {
+        var eng = await _f.EngineerAsync();
+        var ids = (await UploadAsync(eng, ("c5.png", MakePng(64, 64, SKColors.Navy, 505))))
+            .Results.Select(r => r.Image.Id).ToArray();
+
+        var viewer = await _f.ViewerAsync();
+        (await viewer.PostAsJsonAsync("/api/images/crop", new CropImagesRequest(ids, 0.1, 0.1, 0.5, 0.5), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     [Fact]
     public async Task Viewer_can_look_but_not_label()
     {

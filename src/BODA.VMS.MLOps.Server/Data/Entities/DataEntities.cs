@@ -46,6 +46,15 @@ public class Image
     public string? PerceptualHash { get; set; }
 
     /// <summary>
+    /// ROI 로 잘라 만든 사진이면 그 원본. 원본이 지워지면 null 로 풀린다 —
+    /// 자른 사진은 그 자체로 온전한 학습 재료라 원본을 붙잡지 않는다.
+    /// </summary>
+    public Guid? SourceImageId { get; set; }
+
+    /// <summary>잘라낸 자리 (원본 기준 정규화 x,y,w,h). 자른 사진에만 있다.</summary>
+    public string? RoiJson { get; set; }
+
+    /// <summary>
     /// 라플라시안 분산 — 클수록 또렷하다. 축소본(긴 변 2048 이하) 기준이라
     /// <b>절대값에 뜻이 없다</b>. 같은 라인·같은 배율의 사진들 사이에서 상대적으로 낮은 것을 찾는 용도다.
     /// 옛 이미지는 null (이 값이 생기기 전에 올라온 것).

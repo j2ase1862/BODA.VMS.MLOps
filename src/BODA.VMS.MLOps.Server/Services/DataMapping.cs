@@ -27,7 +27,9 @@ public static class DataMapping
             i.Sharpness is { } sharp && i.MeanLuma is { } luma
                 && i.ClippedDarkRatio is { } dark && i.ClippedBrightRatio is { } bright
                 ? new ImageQualityDto(sharp, luma, dark, bright)
-                : null);
+                : null,
+            i.SourceImageId,
+            i.RoiJson is null ? null : Mapping.Json(i.RoiJson, Array.Empty<double>()));
 
     public static string ImageUrl(Guid imageId, string variant) => $"/api/images/{imageId}/{variant}";
 
