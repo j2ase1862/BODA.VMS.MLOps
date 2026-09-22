@@ -226,3 +226,17 @@ html, body {
 .log-console .lvl-Error, .log-console .lvl-Stderr { color: #ff8a80; }
 .log-console .lvl-Warn { color: #ffd479; }
 .log-console .lvl-Info { color: #9cdcfe; }
+
+/* ───────────── 사진 올리기: 끌어다 놓는 중 ─────────────
+   대화상자 전체가 드롭을 받는다 (js/upload-drop.js). 어디에 놓아도 된다는 것이
+   보여야 사람이 점선 상자를 조준하다 빈 자리에 떨어뜨리는 일이 없다. */
+
+.mud-dialog.mlops-drop-over {
+    outline: 2px dashed var(--mud-palette-primary);
+    outline-offset: -6px;
+}
+
+.mud-dialog.mlops-drop-over .mlops-drop-zone {
+    border-color: var(--mud-palette-primary);
+    background: var(--mud-palette-action-default-hover);
+}
