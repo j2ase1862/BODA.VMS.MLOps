@@ -1,8 +1,10 @@
 @page "/datasets/{Id:guid}"
 @attribute [Authorize]
+@implements IAsyncDisposable
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>@(_dataset?.Name ?? "데이터셋") · MLOps</PageTitle>
 
@@ -83,9 +85,9 @@ else
                           OnKeyUp="OnSearchKeyAsync" Style="min-width:200px" />
             <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => LoadImagesAsync())">조회</MudButton>
             <MudSpacer />
-            @if (_selectedIds.Count > 0)
+            @if (_selection.Count > 0)
             {
-                <MudText Typo="Typo.body2">@(_selectedIds.Count)장 선택</MudText>
+                <MudText Typo="Typo.body2">@(_selection.Count)장 선택</MudText>
                 <AuthorizeView Roles="Labeler,Engineer,Admin">
                     <MudMenu Label="분할 지정" Variant="Variant.Outlined" Size="Size.Small">
                         @foreach (var split in Enum.GetValues<DatasetSplit>())
@@ -101,7 +103,19 @@ else
                 <AuthorizeView Roles="Engineer,Admin" Context="eng">
                     <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" OnClick="RemoveSelectedAsync">데이터셋에서 빼기</MudButton>
                 </AuthorizeView>
-                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => { _selectedIds.Clear(); })">선택 해제</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text"
+                           Disabled="@(_selection.Count == _images.Count)" OnClick="SelectAll">전부 선택</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearSelection">선택 해제</MudButton>
+            }
+            else if (_images.Count > 0)
+            {
+                @* 하나도 안 고른 상태에서도 전부 고를 길이 있어야 한다. 예전에는 이 줄이 통째로 없어
+                   사진이 많을 때 한 장씩 눌러야 했다. *@
+                <MudButton Size="Size.Small" Variant="Variant.Text"
+                           StartIcon="@Icons.Material.Filled.SelectAll" OnClick="SelectAll">전부 선택</MudButton>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Shift+클릭으로 사이를 한꺼번에 · Ctrl+A 전부 · Esc 해제
+                </MudText>
             }
             <AuthorizeView Roles="Engineer,Admin" Context="eng2">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.CallSplit"
@@ -123,13 +137,15 @@ else
     }
     else
     {
-        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px">
+        @* Shift+클릭은 브라우저의 글자 끌어 고르기와 겹친다. 끄지 않으면 파일 이름들이
+           파랗게 칠해져 격자가 지저분해진다. *@
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px; user-select:none">
             @foreach (var image in _images)
             {
-                var selected = _selectedIds.Contains(image.Id);
+                var selected = _selection.Contains(image.Id);
                 <MudPaper Elevation="@(selected ? 6 : 1)" Class="pa-1"
                           Style="@($"position:relative; cursor:pointer; outline:{(selected ? "3px solid var(--mud-palette-primary)" : "none")}")"
-                          @onclick="@(() => Toggle(image.Id))">
+                          @onclick="@(e => OnCardClick(image.Id, e))">
                     <div style="position:relative">
                         <img src="@image.ThumbnailUrl" alt="@image.FileName" loading="lazy"
                              style="width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:3px; display:block" />
@@ -209,7 +225,7 @@ else
 <ImageUploadDialog @bind-Visible="_uploadOpen" DatasetId="Id" DatasetName="@_dataset?.Name"
                    OnUploaded="OnUploadedAsync" />
 
-<RoiCropDialog @bind-Visible="_cropOpen" ImageIds="@_selectedIds.ToArray()"
+<RoiCropDialog @bind-Visible="_cropOpen" ImageIds="@_selection.ToArray()"
                DatasetId="Id" DatasetName="@_dataset?.Name" OnCropped="OnCroppedAsync" />
 
 @* ── 사전 라벨링 (Active Learning) ── *@
@@ -311,7 +327,9 @@ else
 
     private DatasetDto? _dataset;
     private List<ImageDto> _images = [];
-    private readonly HashSet<Guid> _selectedIds = [];
+    private readonly GridSelection _selection = new();
+    private IJSObjectReference? _keys;
+    private DotNetObjectReference<DatasetDetail>? _self;
     private int _total;
     private bool _loadingImages;
     private string? _error;
@@ -324,6 +342,23 @@ else
     private bool _snapshotOpen, _snapshotting, _reviewedOnly, _includeUnlabeled;
     private string _snapshotName = "";
     private string? _snapshotError;
+
+    /// <summary>격자 단축키를 듣는 범위 이름. 화면마다 하나씩 등록하고 나갈 때 뗀다.</summary>
+    private const string KeyScope = "dataset-detail";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            _self = DotNetObjectReference.Create(this);
+            _keys = await JS.InvokeAsync<IJSObjectReference>("import", "./js/grid-keys.js");
+            await _keys.InvokeVoidAsync("register", KeyScope, _self);
+        }
+        // 단축키는 편의다 — 못 붙어도 화면은 그대로 써야 한다.
+        catch (JSException) { }
+        catch (JSDisconnectedException) { }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -345,7 +380,10 @@ else
                 skip: append ? _images.Count : 0, take: 60);
             _images = append ? [.. _images, .. page.Items] : page.Items.ToList();
             _total = page.Total;
-            if (!append) _selectedIds.Clear();
+            // 다시 읽으면 걸러져 사라진 사진이 생긴다. 안 보이는 것을 고른 채로 두면
+            // 다음에 누르는 [분할 지정]·[빼기] 가 화면에 없는 사진에 걸린다.
+            if (append) _selection.KeepOnly(_images.Select(i => i.Id).ToHashSet());
+            else _selection.Clear();
             _error = null;
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
@@ -374,9 +412,37 @@ else
         if (e.Key == "Enter") await LoadImagesAsync();
     }
 
-    private void Toggle(Guid imageId)
+    /// <summary>
+    /// 격자에서 사진을 눌렀을 때. Shift+클릭의 범위는 <b>화면에 보이는 순서</b>로 셈한다 —
+    /// 사람이 "A 부터 H 까지" 라고 할 때 뜻하는 것이 그 순서다.
+    /// </summary>
+    private void OnCardClick(Guid imageId, MouseEventArgs e) =>
+        _selection.Click(imageId, e.ShiftKey, _images.Select(i => i.Id).ToList());
+
+    [JSInvokable]
+    public Task SelectAll()
     {
-        if (!_selectedIds.Add(imageId)) _selectedIds.Remove(imageId);
+        _selection.SelectAll(_images.Select(i => i.Id).ToList());
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task ClearSelection()
+    {
+        _selection.Clear();
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_keys is not null)
+        {
+            try { await _keys.InvokeVoidAsync("unregister", KeyScope); await _keys.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+        }
+        _self?.Dispose();
     }
 
     /// <summary>올리기가 끝나면 통계와 격자를 다시 읽는다 (담기까지는 컴포넌트가 했다)</summary>
@@ -390,7 +456,7 @@ else
     {
         // 자른 사진이 새로 담겼으므로 선택은 의미를 잃는다 — 들고 있으면
         // 다음에 누르는 [분할 지정]·[빼기] 가 원본에 걸린다.
-        _selectedIds.Clear();
+        _selection.Clear();
         _dataset = await Api.DatasetAsync(Id);
         await LoadImagesAsync();
     }
@@ -399,8 +465,8 @@ else
     {
         try
         {
-            await Api.SetSplitAsync(Id, _selectedIds.ToArray(), split);
-            Snackbar.Add($"{_selectedIds.Count}장을 {Display.SplitText(split)} 으로 옮겼습니다", Severity.Success);
+            await Api.SetSplitAsync(Id, _selection.ToArray(), split);
+            Snackbar.Add($"{_selection.Count}장을 {Display.SplitText(split)} 으로 옮겼습니다", Severity.Success);
             _dataset = await Api.DatasetAsync(Id);
             await LoadImagesAsync();
         }
@@ -411,7 +477,7 @@ else
     {
         try
         {
-            await Api.RemoveImagesAsync(Id, _selectedIds.ToArray());
+            await Api.RemoveImagesAsync(Id, _selection.ToArray());
             Snackbar.Add("데이터셋에서 뺐습니다. 이미지는 풀에 남아 있습니다.", Severity.Success);
             _dataset = await Api.DatasetAsync(Id);
             await LoadImagesAsync();
