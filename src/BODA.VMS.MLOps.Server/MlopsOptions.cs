@@ -26,6 +26,12 @@ public sealed class MlopsOptions
     /// <summary>사전 라벨링(Active Learning)을 한 번에 받을 이미지 수 상한. 그보다 많으면 나눠 보낸다.</summary>
     public int MaxPrefillImages { get; set; } = 2000;
 
+    /// <summary>
+    /// ROI 자르기를 한 번에 받을 이미지 수 상한. 자르기는 장마다 원본을 통째로 디코드하므로
+    /// 올리기(한 번에 500장)보다 무겁다. 요청 하나가 서버를 오래 붙잡지 않게 여기서 끊는다.
+    /// </summary>
+    public int MaxCropImages { get; set; } = 500;
+
     public int HeartbeatSec { get; set; } = 30;
     /// <summary>하트비트 3회 소실 → Offline + WorkerLost (Phase 3 §3)</summary>
     public int HeartbeatLostSec { get; set; } = 90;

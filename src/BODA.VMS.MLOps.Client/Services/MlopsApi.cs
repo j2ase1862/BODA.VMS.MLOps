@@ -195,6 +195,9 @@ public sealed class MlopsApi(HttpClient http)
     private sealed record DeletedResponse(int Deleted);
 
     /// <summary>풀에서 영구 삭제 — 데이터셋 버전(스냅샷)에 들어간 사진이 섞여 있으면 409 로 전부 막힌다.</summary>
+    public Task<CropImagesResultDto> CropImagesAsync(CropImagesRequest request) =>
+        PostAsync<CropImagesRequest, CropImagesResultDto>("/api/images/crop", request);
+
     public async Task<int> DeleteImagesAsync(Guid[] imageIds) =>
         (await PostAsync<DeleteImagesRequest, DeletedResponse>("/api/images/delete", new DeleteImagesRequest(imageIds))).Deleted;
 

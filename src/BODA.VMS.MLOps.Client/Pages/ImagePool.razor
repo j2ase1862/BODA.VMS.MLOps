@@ -48,6 +48,10 @@
                 <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
                            StartIcon="@Icons.Material.Filled.PlaylistAdd" OnClick="OpenAddDialog">데이터셋에 담기</MudButton>
             </AuthorizeView>
+            <AuthorizeView Roles="Labeler,Engineer,Admin" Context="crop">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.Crop" OnClick="@(() => _cropOpen = true)">ROI 로 자르기</MudButton>
+            </AuthorizeView>
             <AuthorizeView Roles="Engineer,Admin" Context="del">
                 <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
                            StartIcon="@Icons.Material.Filled.DeleteOutline" Disabled="@_busy"
@@ -125,6 +129,8 @@ else
 
 <ImageUploadDialog @bind-Visible="_uploadOpen" OnUploaded="OnUploadedAsync" />
 
+<RoiCropDialog @bind-Visible="_cropOpen" ImageIds="@_selectedIds.ToArray()" OnCropped="OnCroppedAsync" />
+
 <MudDialog @bind-Visible="_addOpen" Options="@(new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
     <TitleContent><MudText Typo="Typo.h6">데이터셋에 담기</MudText></TitleContent>
     <DialogContent>
@@ -160,7 +166,7 @@ else
     private bool _onlyUnassigned = true;
     private string _tag = "", _search = "";
     private int _total;
-    private bool _loading, _busy, _addOpen, _uploadOpen;
+    private bool _loading, _busy, _addOpen, _uploadOpen, _cropOpen;
     private Guid? _targetDatasetId;
     private DatasetSplit _targetSplit = DatasetSplit.Train;
     private string? _error;
@@ -198,6 +204,17 @@ else
         if (count > 0 && _source is not null) _source = null;
         await LoadAsync();
     }
+    /// <summary>
+    /// 자른 사진은 출처를 원본에서 물려받으므로, 라인 NG 사진을 잘랐으면 거르개를 그대로 두어도 보인다.
+    /// 다만 [데이터셋에 안 담긴 것만] 이 켜져 있고 바로 담았으면 안 보이므로 그것만 풀어 준다.
+    /// </summary>
+    private async Task OnCroppedAsync(int count)
+    {
+        if (count > 0 && _onlyUnassigned) _onlyUnassigned = false;
+        _selectedIds.Clear();
+        await LoadAsync();
+    }
+
     private Task OnSourceChanged(ImageSource? v) { _source = v; return LoadAsync(); }
     private Task OnUnassignedChanged(bool v) { _onlyUnassigned = v; return LoadAsync(); }
     private async Task OnSearchKeyAsync(KeyboardEventArgs e) { if (e.Key == "Enter") await LoadAsync(); }

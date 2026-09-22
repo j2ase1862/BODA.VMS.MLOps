@@ -89,10 +89,14 @@ public sealed class ImageProcessor(ILogger<ImageProcessor> logger)
     }
 
     /// <summary>
-    /// OCR 학습은 텍스트 영역만 잘라 쓴다. 정규화 사각형을 원본에서 잘라 JPEG 으로 낸다.
-    /// 잘라낼 수 없으면 null.
+    /// 정규화 사각형을 원본에서 잘라 낸다. 잘라낼 수 없으면 null.
+    ///
+    /// <para><paramref name="lossless"/> 는 잘라낸 것이 <b>새 원본</b>이 될 때 켠다 (ROI 자르기).
+    /// JPEG 으로 다시 굽으면 매끈한 가공면에 블록 무늬가 생기는데, 이상탐지는 그 무늬까지
+    /// "정상의 모습" 으로 배우거나 이상으로 집는다. OCR 내보내기는 학습 직전의 임시 산출물이라
+    /// 그대로 JPEG 이다.</para>
     /// </summary>
-    public byte[]? Crop(string sourcePath, double x, double y, double w, double h)
+    public byte[]? Crop(string sourcePath, double x, double y, double w, double h, bool lossless = false)
     {
         try
         {
@@ -111,7 +115,9 @@ public sealed class ImageProcessor(ILogger<ImageProcessor> logger)
             using var cropped = new SKBitmap(rect.Width, rect.Height);
             if (!bitmap.ExtractSubset(cropped, rect)) return null;
             using var image = SKImage.FromBitmap(cropped);
-            using var data = image.Encode(SKEncodedImageFormat.Jpeg, 92);
+            using var data = lossless
+                ? image.Encode(SKEncodedImageFormat.Png, 100)
+                : image.Encode(SKEncodedImageFormat.Jpeg, 92);
             return data.ToArray();
         }
         catch (Exception ex)

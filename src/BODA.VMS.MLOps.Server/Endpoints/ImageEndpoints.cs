@@ -136,6 +136,30 @@ public static class ImageEndpoints
             return Results.NoContent();
         }).RequireAuthorization(Policies.Labeler);
 
+        // ROI 자르기 — 고른 사진을 같은 자리로 잘라 새 사진으로 담는다.
+        // 원본은 그대로 두므로 Engineer 가 아니라 Labeler 부터 할 수 있다 (담기와 같은 무게).
+        g.MapPost("/crop", async (CropImagesRequest req, ImagePoolService pool, DatasetService datasets,
+            ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            var user = CurrentUser.From(p);
+            var outcomes = await pool.CropAsync(req.ImageIds, req.X, req.Y, req.W, req.H, user, ct);
+
+            // 데이터셋에 담는 것은 자르기가 끝난 뒤 한 번에 한다 — 장마다 담으면
+            // 중간에 실패했을 때 절반만 담긴 데이터셋이 남는다.
+            var made = outcomes.Where(o => o.Image is not null).Select(o => o.Image!.Id).Distinct().ToArray();
+            int addedToDataset = 0;
+            if (req.DatasetId is { } datasetId && made.Length > 0)
+                addedToDataset = await datasets.AddImagesAsync(datasetId, made, req.Split, user, ct);
+
+            return Results.Ok(new CropImagesResultDto(
+                outcomes.Select(o => new CropResultDto(
+                    o.SourceImageId, o.SourceFileName, o.Image?.ToDto(), o.Created, o.Error)).ToList(),
+                Created: outcomes.Count(o => o.Created),
+                Merged: outcomes.Count(o => o is { Image: not null, Created: false }),
+                Failed: outcomes.Count(o => o.Error is not null),
+                AddedToDataset: addedToDataset));
+        }).RequireAuthorization(Policies.Labeler);
+
         g.MapPost("/delete", async (DeleteImagesRequest req, ImagePoolService pool, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(new { deleted = await pool.DeleteAsync(req.ImageIds, CurrentUser.From(p), ct) }))
             .RequireAuthorization(Policies.Engineer);

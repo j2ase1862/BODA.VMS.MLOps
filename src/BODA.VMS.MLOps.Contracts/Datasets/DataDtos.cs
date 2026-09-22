@@ -34,7 +34,11 @@ public sealed record ImageDto(
     /// 흐림·노출 지표. 사람이 걸러 볼 후보를 좁히는 데 쓴다 — 이 값으로 자동으로 버리지 않는다.
     /// 이 값이 생기기 전에 올라온 이미지는 null 이다.
     /// </summary>
-    ImageQualityDto? Quality = null);
+    ImageQualityDto? Quality = null,
+    /// <summary>ROI 로 잘라 만든 사진이면 그 원본. 원본이 지워졌으면 null 이다.</summary>
+    Guid? SourceImageId = null,
+    /// <summary>잘라낸 자리 (원본 기준 정규화 x,y,w,h). 자른 사진에만 있다.</summary>
+    double[]? Roi = null);
 
 /// <summary>
 /// 이미지 한 장의 품질 지표.
@@ -63,6 +67,24 @@ public sealed record ImageUploadResultDto(ImageDto Image, bool Created, string? 
 public sealed record ImageUploadBatchDto(IReadOnlyList<ImageUploadResultDto> Results, int Created, int Duplicates, string[] Errors);
 
 public sealed record TagImagesRequest(Guid[] ImageIds, string[]? Add = null, string[]? Remove = null);
+
+/// <summary>
+/// 고른 사진들을 같은 자리로 잘라 새 사진으로 담는다.
+/// 좌표는 어디서나 그렇듯 0~1 정규화라, 해상도가 다른 사진에도 같은 ROI 를 쓸 수 있다.
+/// </summary>
+/// <param name="DatasetId">잘라낸 사진을 바로 담을 데이터셋. 없으면 수집 사진에만 쌓인다.</param>
+public sealed record CropImagesRequest(
+    Guid[] ImageIds, double X, double Y, double W, double H,
+    Guid? DatasetId = null, DatasetSplit Split = DatasetSplit.Train);
+
+/// <summary>사진 한 장의 자르기 결과. 실패한 장만 <paramref name="Error"/> 가 찬다.</summary>
+public sealed record CropResultDto(Guid SourceImageId, string SourceFileName, ImageDto? Image, bool Created, string? Error);
+
+/// <param name="Created">새로 만들어진 장수</param>
+/// <param name="Merged">잘라낸 결과가 이미 있던 사진과 같아 한 벌로 합쳐진 장수</param>
+/// <param name="AddedToDataset">데이터셋에 새로 담긴 장수</param>
+public sealed record CropImagesResultDto(
+    IReadOnlyList<CropResultDto> Results, int Created, int Merged, int Failed, int AddedToDataset);
 
 public sealed record DeleteImagesRequest(Guid[] ImageIds);
 

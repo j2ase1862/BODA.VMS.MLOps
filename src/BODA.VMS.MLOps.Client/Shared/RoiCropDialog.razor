@@ -1,0 +1,345 @@
+@* ROI 자르기. 한 장에서 자를 자리를 정하고 고른 사진 전부에 같은 자리를 적용한다.
+
+   같은 치구에서 같은 구도로 찍는 검사 사진이 전제다 — 그래서 한 장에서 정한 자리가
+   나머지에도 맞는다. 좌표는 어디서나 그렇듯 0~1 정규화라 해상도가 달라도 쓸 수 있다.
+
+   왜 필요한가: 원본이 2448×2048 인데 분류·이상탐지 학습의 기본 입력은 224 다.
+   11배로 줄이면 작은 이물은 한 화소도 남지 않는다. 검사할 자리만 잘라 두면 살아남는다.
+
+   박스 그리기는 label-canvas.js 를 그대로 쓴다. 확대·이동·정규화 좌표가 이미 그 안에 있고,
+   두 벌로 두면 한쪽이 조용히 낡는다 (팔레트가 그랬다). *@
+@implements IAsyncDisposable
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<MudDialog Visible="Visible" VisibleChanged="VisibleChanged"
+           Options="new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">ROI 로 자르기</MudText></TitleContent>
+    <DialogContent>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@_error</MudAlert>
+        }
+
+        @if (_result is null)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
+                아래 사진에서 <b>검사할 자리</b>를 끌어서 그리세요. 같은 자리로 고른 사진
+                @(_imageIds.Length)장을 모두 자릅니다. 원본은 지우지 않고 그대로 둡니다.
+            </MudText>
+
+            <div class="d-flex align-center gap-2 mb-2 flex-wrap">
+                <MudIconButton Icon="@Icons.Material.Filled.ZoomIn" Size="Size.Small"
+                               OnClick="@(() => ZoomAsync(1.25))" aria-label="확대" />
+                <MudIconButton Icon="@Icons.Material.Filled.ZoomOut" Size="Size.Small"
+                               OnClick="@(() => ZoomAsync(0.8))" aria-label="축소" />
+                <MudIconButton Icon="@Icons.Material.Filled.FitScreen" Size="Size.Small"
+                               OnClick="FitAsync" aria-label="맞춤" />
+                <MudSpacer />
+                @if (_roi is { } roi && _preview is not null)
+                {
+                    @* 잘린 뒤의 화소 크기를 미리 보여 준다 — 224 로 줄일 때 살아남을지를
+                       사람이 여기서 판단한다. 너무 작으면 경고까지 띄운다. *@
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        자른 크기 약 @(PixelW(roi))×@(PixelH(roi)) (원본 @(_preview.Width)×@(_preview.Height))
+                    </MudText>
+                }
+            </div>
+
+            <canvas id="@CanvasId" style="width:100%; height:min(56vh, 560px); min-height:320px;
+                    border:1px solid var(--line); touch-action:none;"></canvas>
+
+            @if (_roi is null)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+                    아직 자를 자리를 그리지 않았습니다. 사진 위에서 끌어 사각형을 그리세요.
+                </MudAlert>
+            }
+            else if (_roi is { } small && PixelW(small) < 64 && PixelH(small) < 64)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                    자른 크기가 너무 작습니다 (@(PixelW(small))×@(PixelH(small))). 학습 입력으로 쓰기 어렵습니다.
+                </MudAlert>
+            }
+
+            @if (DatasetId is { } dsId)
+            {
+                <MudCheckBox T="bool" @bind-Value="_addToDataset" Class="mt-3" Dense="true"
+                             Label="@($"자른 뒤 '{DatasetName ?? "이 데이터셋"}' 에 담기")" />
+            }
+            else
+            {
+                <MudSelect T="Guid?" @bind-Value="_targetDatasetId" Label="담을 데이터셋 (선택)" Class="mt-3"
+                           Dense="true" Clearable="true" AnchorOrigin="Origin.BottomCenter">
+                    @foreach (var d in _datasets)
+                    {
+                        <MudSelectItem T="Guid?" Value="@d.Id">@d.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+
+            @if ((DatasetId is not null && _addToDataset) || _targetDatasetId is not null)
+            {
+                <MudSelect T="DatasetSplit" @bind-Value="_split" Label="분할" Dense="true" Class="mt-2"
+                           AnchorOrigin="Origin.BottomCenter">
+                    @foreach (var s in Enum.GetValues<DatasetSplit>())
+                    {
+                        <MudSelectItem T="DatasetSplit" Value="@s">@Display.SplitText(s)</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+        }
+        else
+        {
+            @* 결과. 합쳐진 것과 실패한 것을 갈라서 말한다 — "몇 장 처리했습니다" 하나로 뭉치면
+               아무것도 안 만들어졌을 때조차 성공처럼 보인다 (올리기에서 겪은 일이다). *@
+            <MudAlert Severity="@(_result.Failed > 0 ? Severity.Warning : Severity.Success)">
+                @($"{_result.Created}장을 잘라 담았습니다.")
+                @if (_result.AddedToDataset > 0) { @($" 데이터셋에 {_result.AddedToDataset}장 담았습니다.") }
+            </MudAlert>
+
+            @if (_result.Merged > 0)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+                    @($"{_result.Merged}장은 잘라낸 결과가 이미 있던 사진과 완전히 같아 한 벌로 합쳐졌습니다.")
+                    같은 자리를 두 번 자르면 이렇게 됩니다 — 새로 늘지 않은 것이 정상입니다.
+                </MudAlert>
+            }
+
+            @if (_result.Failed > 0)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">
+                    @($"{_result.Failed}장은 자르지 못했습니다:")
+                    <ul class="mt-1 mb-0">
+                        @foreach (var f in _result.Results.Where(r => r.Error is not null).Take(10))
+                        {
+                            <li>@f.SourceFileName — @f.Error</li>
+                        }
+                    </ul>
+                </MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseAsync" Disabled="@_working">닫기</MudButton>
+        @if (_result is null)
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="CropAsync"
+                       Disabled="@(_working || _roi is null)">
+                @(_working ? "자르는 중…" : $"{_imageIds.Length}장 자르기")
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    /// <summary>자를 사진들. 첫 장이 ROI 를 정하는 미리보기가 된다.</summary>
+    [Parameter] public IReadOnlyList<Guid> ImageIds { get; set; } = [];
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>데이터셋 상세에서 열었으면 그 데이터셋. 수집 사진에서 열었으면 null.</summary>
+    [Parameter] public Guid? DatasetId { get; set; }
+    [Parameter] public string? DatasetName { get; set; }
+
+    /// <summary>자르기가 끝난 뒤 목록을 다시 읽게 알린다. 인자는 새로 만들어진 장수.</summary>
+    [Parameter] public EventCallback<int> OnCropped { get; set; }
+
+    private string CanvasId => $"roi-canvas-{_instance}";
+    private readonly Guid _instance = Guid.NewGuid();
+
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<RoiCropDialog>? _self;
+    private bool _canvasReady;
+    private bool _opened;
+
+    private Guid[] _imageIds = [];
+    private ImageDto? _preview;
+    private double[]? _roi;
+    private bool _working;
+    private string? _error;
+    private CropImagesResultDto? _result;
+
+    private List<DatasetDto> _datasets = [];
+    private Guid? _targetDatasetId;
+    private bool _addToDataset = true;
+    private DatasetSplit _split = DatasetSplit.Train;
+
+    private int PixelW(double[] roi) => _preview is null ? 0 : (int)Math.Round(roi[2] * _preview.Width);
+    private int PixelH(double[] roi) => _preview is null ? 0 : (int)Math.Round(roi[3] * _preview.Height);
+
+    protected override void OnInitialized() => _self = DotNetObjectReference.Create(this);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_opened)
+        {
+            _opened = true;
+            await OpenAsync();
+        }
+        else if (!Visible && _opened)
+        {
+            _opened = false;
+            await TeardownCanvasAsync();
+        }
+    }
+
+    private async Task OpenAsync()
+    {
+        _error = null;
+        _result = null;
+        _roi = null;
+        _working = false;
+        _imageIds = ImageIds.ToArray();
+
+        if (_imageIds.Length == 0) { _error = "자를 사진을 먼저 고르세요."; return; }
+
+        try
+        {
+            _preview = await Api.ImageAsync(_imageIds[0]);
+            if (DatasetId is null)
+            {
+                try { _datasets = await Api.DatasetListAsync(); }
+                catch (MlopsApiException) { _datasets = []; }
+            }
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!Visible || _preview is null || _result is not null) return;
+        if (_canvasReady) return;
+
+        _module ??= await LoadModuleAsync();
+        if (_module is null) return;
+
+        try
+        {
+            // 박스 하나만 쓰는 모드. 클래스는 화면에 나오지 않지만 캔버스가 이름을 요구한다.
+            await _module.InvokeVoidAsync("create", CanvasId, _self, new
+            {
+                mode = "box",
+                classes = new[] { RoiClass },
+                readOnly = false,
+                samShape = "box",
+            });
+            await _module.InvokeVoidAsync("setActiveClass", CanvasId, RoiClass);
+            await _module.InvokeVoidAsync("loadImage", CanvasId, _preview.ViewUrl);
+            _canvasReady = true;
+        }
+        catch (JSException ex) { _error = $"미리보기를 열지 못했습니다: {ex.Message}"; }
+    }
+
+    private const string RoiClass = "ROI";
+
+    private async Task<IJSObjectReference?> LoadModuleAsync()
+    {
+        try { return await JS.InvokeAsync<IJSObjectReference>("import", "./js/label-canvas.js"); }
+        catch (JSException ex) { _error = $"캔버스를 불러오지 못했습니다: {ex.Message}"; return null; }
+    }
+
+    private async Task ZoomAsync(double factor)
+    {
+        if (_module is not null && _canvasReady) await _module.InvokeVoidAsync("zoom", CanvasId, factor);
+    }
+
+    private async Task FitAsync()
+    {
+        if (_module is not null && _canvasReady) await _module.InvokeVoidAsync("fit", CanvasId);
+    }
+
+    // ───────────── 캔버스 → Blazor ─────────────
+    // label-canvas.js 가 부르는 것을 모두 받아 둔다. 하나라도 없으면 그 쪽에서 예외가 나고,
+    // 캔버스는 그 뒤로 조용해진다.
+
+    /// <summary>
+    /// 자를 자리는 <b>하나</b>다. 캔버스는 여러 개를 그릴 수 있으므로 마지막 것만 남기고
+    /// 나머지를 지운다 — 사람이 다시 그리면 앞의 것이 사라지는 편이 예상에 맞는다.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnAnnotationsChanged(JsAnnotation[] annotations)
+    {
+        var boxes = annotations.Where(a => a is { X: not null, Y: not null, W: not null, H: not null }).ToArray();
+        if (boxes.Length == 0) { _roi = null; StateHasChanged(); return; }
+
+        var last = boxes[^1];
+        _roi = [last.X!.Value, last.Y!.Value, last.W!.Value, last.H!.Value];
+
+        if (boxes.Length > 1 && _module is not null)
+            await _module.InvokeVoidAsync("setAnnotations", CanvasId, new[]
+            {
+                new { shape = "box", className = RoiClass, x = _roi[0], y = _roi[1], w = _roi[2], h = _roi[3] },
+            });
+
+        StateHasChanged();
+    }
+
+    [JSInvokable] public Task OnSelectionChanged(int index) => Task.CompletedTask;
+    [JSInvokable] public Task OnClassChanged(string className) => Task.CompletedTask;
+    [JSInvokable] public Task OnNavigateRequested(int direction) => Task.CompletedTask;
+    [JSInvokable] public Task OnTextRequested(int index) => Task.CompletedTask;
+    [JSInvokable] public Task OnSamPointsRequested(int seq, JsSamPoint[] points) => Task.CompletedTask;
+    [JSInvokable] public Task OnSamIndexChanged(int index, int count) => Task.CompletedTask;
+
+    public sealed record JsSamPoint(double X, double Y, bool Foreground);
+
+    public sealed record JsAnnotation(string Shape, string ClassName, double? X, double? Y, double? W, double? H,
+        double[][]? Points, string? Text);
+
+    // ───────────── 자르기 ─────────────
+
+    private async Task CropAsync()
+    {
+        if (_roi is not { } roi) return;
+        _working = true;
+        _error = null;
+        try
+        {
+            var target = DatasetId is { } id ? (_addToDataset ? id : null) : _targetDatasetId;
+            _result = await Api.CropImagesAsync(new CropImagesRequest(
+                _imageIds, roi[0], roi[1], roi[2], roi[3], target, _split));
+
+            await TeardownCanvasAsync();
+            if (_result.Created > 0) await OnCropped.InvokeAsync(_result.Created);
+
+            // 하나라도 빠졌으면 창을 닫지 않는다 — 이유를 읽고 나가야 한다.
+            if (_result is { Failed: 0, Merged: 0 })
+            {
+                Snackbar.Add($"{_result.Created}장을 잘라 담았습니다", Severity.Success);
+                await CloseAsync();
+            }
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _working = false; }
+    }
+
+    private async Task CloseAsync()
+    {
+        await TeardownCanvasAsync();
+        _opened = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+
+    private async Task TeardownCanvasAsync()
+    {
+        if (_module is null || !_canvasReady) return;
+        _canvasReady = false;
+        try { await _module.InvokeVoidAsync("destroy", CanvasId); }
+        catch (JSException) { }
+        catch (JSDisconnectedException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await TeardownCanvasAsync();
+        if (_module is not null)
+        {
+            try { await _module.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+        }
+        _self?.Dispose();
+    }
+}
