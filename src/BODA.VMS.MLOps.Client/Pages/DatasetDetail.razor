@@ -114,7 +114,7 @@ else
                 <MudButton Size="Size.Small" Variant="Variant.Text"
                            StartIcon="@Icons.Material.Filled.SelectAll" OnClick="SelectAll">전부 선택</MudButton>
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                    Shift+클릭으로 사이를 한꺼번에 · Ctrl+A 전부 · Esc 해제
+                    Ctrl+클릭으로 하나씩 · Shift+클릭으로 사이를 한꺼번에 · Ctrl+A 전부 · Esc 해제
                 </MudText>
             }
             <AuthorizeView Roles="Engineer,Admin" Context="eng2">
@@ -417,7 +417,7 @@ else
     /// 사람이 "A 부터 H 까지" 라고 할 때 뜻하는 것이 그 순서다.
     /// </summary>
     private void OnCardClick(Guid imageId, MouseEventArgs e) =>
-        _selection.Click(imageId, e.ShiftKey, _images.Select(i => i.Id).ToList());
+        _selection.Click(imageId, e.ShiftKey, e.CtrlKey || e.MetaKey, _images.Select(i => i.Id).ToList());
 
     [JSInvokable]
     public Task SelectAll()
