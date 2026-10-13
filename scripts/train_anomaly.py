@@ -20,10 +20,17 @@ stdout 프로토콜:
     [ERROR] message
 
 사전 준비:
-    pip install anomalib torch torchvision onnx
+    pip install "anomalib[core]>=1.1,<2" "pandas<3" "matplotlib<3.10" python-dotenv torch torchvision onnx
+      (anomalib 1.x 는 pandas 3 · matplotlib 3.10 과 맞지 않고, 모델 패키지 import 에 python-dotenv 가 필요하다.
+       NumPy 2 에서 imgaug 가 import 되도록 하는 처리는 스크립트가 한다)
 
-    또는 anomalib 없이 간이 학습:
-    pip install torch torchvision scikit-learn onnx
+    또는 anomalib 없이 간이 학습 (--backend simple, anomalib 이 없으면 자동):
+    pip install torch torchvision opencv-python onnx
+
+출력 ONNX 규약 (두 경로 같음 — VMS AnomalyTool 이 그대로 읽는다):
+    입력 input[1,3,S,S] (VMS 가 리사이즈 · ImageNet 정규화한 RGB) →
+    출력 anomaly_map[1,1,S,S] · pred_score[1]. 점수는 학습 때 정한 임계값이 0.5 가 되도록 정규화돼 있다.
+    메타데이터 model_format=anomaly · method · imgsz · threshold · backbone.
 
 사용 예:
     python train_anomaly.py --dataset ./data --output ./output
@@ -93,21 +100,35 @@ def main():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--imgsz", type=int, default=224, help="Input image size")
     parser.add_argument("--export_onnx", action="store_true")
+    parser.add_argument("--backend", default="auto", choices=["auto", "anomalib", "simple"],
+                        help="auto: anomalib 이 있으면 anomalib, 없으면 간이 PatchCore · anomalib · simple: 강제")
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
+
+    # 사내 SSL 검사(프록시 CA) 환경에서 사전학습 가중치 다운로드(timm · Hugging Face · torchvision)가
+    # CERTIFICATE_VERIFY_FAILED 로 실패하는 경우 대응: truststore 가 있으면 OS 인증서 저장소를 쓴다 (train_dfine.py 와 같음).
+    try:
+        import truststore  # type: ignore
+        truststore.inject_into_ssl()
+    except Exception:  # noqa: BLE001
+        pass
 
     train_dir = os.path.join(args.dataset, "train", "good")
     if not os.path.exists(train_dir):
         print(f"[ERROR] train/good 폴더를 찾을 수 없습니다: {train_dir}", flush=True)
         sys.exit(1)
 
-    # anomalib 사용 시도
-    try:
-        train_with_anomalib(args)
-        return
-    except ImportError:
-        print("anomalib 미설치. 간이 PatchCore로 전환합니다.", flush=True)
+    # anomalib 사용 시도 (--backend simple 이면 건너뜀)
+    if args.backend != "simple":
+        try:
+            train_with_anomalib(args)
+            return
+        except ImportError as e:
+            if args.backend == "anomalib":
+                print(f"[ERROR] anomalib 을 불러올 수 없습니다: {e}", flush=True)
+                sys.exit(1)
+            print(f"anomalib 을 불러올 수 없어 간이 PatchCore 로 전환합니다 ({e}).", flush=True)
 
     # 간이 PatchCore (scikit-learn + torchvision 특징 추출)
     try:
@@ -119,9 +140,13 @@ def main():
 
 def train_with_anomalib(args):
     """anomalib 라이브러리를 사용한 학습"""
+    _numpy2_compat_for_imgaug()
     from anomalib.data import Folder
-    from anomalib.models import Patchcore, FastFlow, EfficientAd
+    # anomalib 1.x 클래스 이름: Patchcore · Fastflow · EfficientAd (FastFlow 아님 — 틀린 이름이면 ImportError 로
+    # anomalib 경로 전체가 간이 경로로 넘어가 버린다)
+    from anomalib.models import Patchcore, Fastflow, EfficientAd
     from anomalib.engine import Engine
+    _windows_safe_engine()
     from anomalib.deploy import ExportType
 
     print("[PROGRESS] 0", flush=True)
@@ -137,21 +162,27 @@ def train_with_anomalib(args):
             model = Patchcore()
     elif args.method == "fastflow":
         try:
-            model = FastFlow(backbone=args.backbone)
+            model = Fastflow(backbone=args.backbone)
         except TypeError:
-            model = FastFlow()
+            model = Fastflow()
     else:  # efficient_ad
         model = EfficientAd()
 
     # 데이터 모듈
     datamodule = Folder(
+        name=os.path.basename(os.path.normpath(args.dataset)) or "dataset",
         root=args.dataset,
         normal_dir="train/good",
         abnormal_dir="test/defect" if os.path.exists(os.path.join(args.dataset, "test", "defect")) else None,
         normal_test_dir="test/good" if os.path.exists(os.path.join(args.dataset, "test", "good")) else None,
+        task="classification",          # 불량 마스크 없이 이미지 단위 정상/불량 — 기본값(segmentation)은 mask_dir 를 요구
         image_size=(args.imgsz, args.imgsz),
+        # VMS AnomalyTool 전처리와 같게 — OpenCV 선형 보간(앤티에일리어싱 없음) 정사각 리사이즈 + ImageNet 정규화.
+        # 학습과 추론의 전처리가 다르면 정상 이미지도 점수가 뜬다.
+        transform=_vms_like_transform(args.imgsz),
         train_batch_size=args.batch_size,
         eval_batch_size=args.batch_size,
+        num_workers=0,                   # Windows 에서 DataLoader 다중 프로세스는 스크립트 재실행 문제를 일으킨다
     )
 
     print("[EPOCH] 1/1", flush=True)
@@ -187,194 +218,299 @@ def train_with_anomalib(args):
 
     print("[PROGRESS] 85", flush=True)
 
-    # ONNX 변환
+    # ONNX 변환 — anomalib 의 engine.export 는 전처리(크기 조정 · 정규화)를 모델 안에 넣는데 ① VMS 는 정규화한 텐서를
+    # 넣으므로 정규화가 두 번 되고 ② anomalib 1.x 의 내보내기 변환이 torchvision 0.21 과 맞지 않아 NotImplementedError 가 난다.
+    # 학습된 PatchCore 본체만 내보내고, 출력 규약은 간이 경로와 같다 — anomaly_map [1,1,S,S] · pred_score [1],
+    # anomalib 이 시험(검증) 단계에서 정한 이미지 임계값이 0.5 가 되도록 나눈다 (AnomalyTool 기본 임계값 0.5).
     if args.export_onnx:
-        engine.export(
-            model=model,
-            export_type=ExportType.ONNX,
-        )
+        import torch
+        net = model.model.eval().cpu()
+        thr = None
+        try:
+            thr = float(model.image_threshold.value.detach().cpu())
+        except Exception:  # noqa: BLE001
+            pass
+        if not thr or thr <= 0 or thr != thr:
+            print("[WARN] anomalib 임계값을 얻지 못해 점수를 정규화하지 않습니다 — VisionSetup 에서 임계값 보정(Calibrate)을 하세요.", flush=True)
+            scale = 1.0
+        else:
+            scale = 0.5 / thr
+            print(f"Threshold(raw)={thr:.4f} → 정규화 점수 임계값 0.5 (scale={scale:.6f})", flush=True)
 
-        # ONNX 파일 찾기
-        for root, dirs, files in os.walk(args.output):
-            for f in files:
-                if f.endswith(".onnx"):
-                    onnx_path = os.path.join(root, f)
-                    print(f"[ONNX] {onnx_path}", flush=True)
-                    break
+        class AnomalibOnnx(torch.nn.Module):
+            def __init__(self, core, k):
+                super().__init__()
+                self.core = core
+                self.register_buffer("scale", torch.tensor(float(k)))
+
+            def forward(self, x):
+                out = self.core(x)
+                return out["anomaly_map"] * self.scale, out["pred_score"].reshape(-1) * self.scale
+
+        onnx_path = os.path.join(args.output, "anomaly.onnx")
+        torch.onnx.export(AnomalibOnnx(net, scale).eval(), torch.zeros(1, 3, args.imgsz, args.imgsz), onnx_path,
+                          input_names=["input"], output_names=["anomaly_map", "pred_score"], opset_version=14)
+        try:
+            import onnx
+            m = onnx.load(onnx_path)
+            for k, v in {"model_format": "anomaly", "method": args.method, "imgsz": str(args.imgsz),
+                         "threshold": "0.5" if scale != 1.0 else "", "backbone": args.backbone}.items():
+                p = m.metadata_props.add()
+                p.key, p.value = k, v
+            onnx.save(m, onnx_path)
+        except Exception as ex:  # noqa: BLE001
+            print(f"[WARN] ONNX 메타데이터 기록 실패 (모델은 정상): {ex}", flush=True)
+        print(f"[ONNX] {onnx_path}", flush=True)
 
     print("[PROGRESS] 100", flush=True)
     print("[DONE]", flush=True)
 
 
-def train_simple_patchcore(args):
-    """간이 PatchCore 구현 (anomalib 없이)"""
-    import torch
+def _vms_like_transform(imgsz):
+    """anomalib 데이터 변환 — VMS AnomalyTool 의 cv2 선형 리사이즈(앤티에일리어싱 없음) + ImageNet 정규화와 같게."""
+    from torchvision.transforms import v2
+    return v2.Compose([
+        v2.Resize((imgsz, imgsz), antialias=False),
+        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+
+def _windows_safe_engine():
+    """anomalib 1.x Engine.fit 은 결과 폴더에 v0 · v1 … 버전 폴더를 만들고 latest 심볼릭 링크를 건다.
+    Windows 는 관리자 권한 · 개발자 모드 없이는 링크를 못 만들어 WinError 1314 로 학습이 멈춘다 (학습 워커 서비스 계정 포함).
+    버전 폴더 대신 <root>/latest 일반 폴더를 쓰게 한다 — 버전 폴더를 끈 경우 anomalib 이 원래 쓰는 경로와 같다."""
+    import anomalib.engine.engine as anomalib_engine
+    from pathlib import Path
+
+    def plain_dir(root_dir):
+        path = Path(root_dir).resolve() / "latest"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    anomalib_engine.create_versioned_dir = plain_dir
+
+    # 시험 이미지마다 결과 그림을 <결과>/images/<데이터셋 절대 경로…> 로 저장하는 콜백은 끌 설정이 없다 —
+    # 경로가 깊으면 Windows 경로 길이 제한(WinError 206)으로 학습이 멈추고, VMS 는 그 그림을 쓰지 않는다.
+    from lightning.pytorch.callbacks import Callback
+    anomalib_engine._VisualizationCallback = lambda *a, **k: Callback()
+
+
+def _numpy2_compat_for_imgaug():
+    """anomalib 1.x 는 데이터 모듈을 불러올 때 imgaug 를 import 하는데, imgaug 0.4 는 NumPy 2 에서 지워진
+    np.sctypes 를 모듈 로드 시점에 읽는다 (AttributeError). PatchCore 학습 경로는 imgaug 증강을 쓰지 않으므로
+    그 이름만 채워 import 를 통과시킨다. NumPy 1.x 에서는 아무것도 하지 않는다."""
     import numpy as np
-    from torchvision import transforms, models
-    from torch.utils.data import DataLoader
-    from torchvision.datasets import ImageFolder
-    from sklearn.neighbors import NearestNeighbors
+    if "sctypes" in np.__dict__:
+        return
+    np.sctypes = {
+        "int": [np.int8, np.int16, np.int32, np.int64],
+        "uint": [np.uint8, np.uint16, np.uint32, np.uint64],
+        "float": [np.float16, np.float32, np.float64],
+        "complex": [np.complex64, np.complex128],
+        "others": [bool, object, bytes, str, np.void],
+    }
+
+
+def _list_images(folder):
+    exts = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(exts))
+
+
+def _load_vms_tensor(path, imgsz):
+    """VMS AnomalyTool 과 똑같은 전처리 — OpenCV 선형 보간 정사각 리사이즈 → BGR→RGB → /255 → ImageNet 정규화.
+    학습과 추론의 전처리가 다르면 정상 이미지도 점수가 뜬다."""
+    import cv2
+    import numpy as np
+    import torch
+    img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"이미지를 읽을 수 없습니다: {path}")
+    img = cv2.resize(img, (imgsz, imgsz), interpolation=cv2.INTER_LINEAR)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    img = (img - np.array([0.485, 0.456, 0.406], np.float32)) / np.array([0.229, 0.224, 0.225], np.float32)
+    return torch.from_numpy(img.transpose(2, 0, 1).copy())
+
+
+def train_simple_patchcore(args):
+    """간이 PatchCore (anomalib 없이) — 패치 단위 특징 메모리 뱅크 + 최근접 거리.
+
+    ImageNet 사전학습 백본의 layer2 · layer3 특징을 같은 격자로 맞춰 이어 붙이고(3×3 평균으로 주변 맥락),
+    정상 이미지의 모든 패치 특징 중 대표(그리디 코어셋)만 메모리 뱅크로 둔다. 시험 패치의 이상도 = 뱅크까지의
+    최근접 거리, 이미지 점수 = 이상 맵의 최댓값. 메모리 뱅크를 ONNX 안에 상수로 넣어 출력이 anomaly_map
+    [1,1,H,W] · pred_score [1] 이 되게 내보내므로 VMS AnomalyTool 이 그대로 읽는다(별도 파일 없음).
+    점수는 정상 검증 이미지로 정한 임계값이 0.5 가 되도록 나눠 둔다 — AnomalyTool 기본 임계값 0.5 와 맞춘다.
+    """
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from torchvision import models
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}", flush=True)
     print("[PROGRESS] 0", flush=True)
-    print(f"[CONFIG] backbone={args.backbone} coreset={args.coreset_ratio}", flush=True)
+    print(f"[CONFIG] backend=simple backbone={args.backbone} coreset={args.coreset_ratio} imgsz={args.imgsz}", flush=True)
 
-    # 백본 선택 (중간층 hook 방식)
     backbone_map = {
         "resnet18": models.resnet18,
         "resnet50": models.resnet50,
         "wide_resnet50_2": models.wide_resnet50_2,
     }
-    backbone_ctor = backbone_map.get(args.backbone, models.resnet18)
-    backbone = backbone_ctor(weights="DEFAULT")
-    backbone.eval()
-    backbone = backbone.to(device)
+    backbone = backbone_map.get(args.backbone, models.resnet18)(weights="DEFAULT").eval().to(device)
 
-    # hook으로 중간 특징 추출
-    features = []
-    def hook_fn(module, input, output):
-        features.append(output.detach().cpu())
+    class PatchEmbedder(torch.nn.Module):
+        """입력 [B,3,S,S] → 패치 특징 [B,C,S/8,S/8] (layer2 해상도)."""
+        def __init__(self, net):
+            super().__init__()
+            self.stem = torch.nn.Sequential(net.conv1, net.bn1, net.relu, net.maxpool, net.layer1)
+            self.layer2, self.layer3 = net.layer2, net.layer3
 
-    backbone.layer2.register_forward_hook(hook_fn)
-    backbone.layer3.register_forward_hook(hook_fn)
+        def forward(self, x):
+            f2 = self.layer2(self.stem(x))
+            f3 = self.layer3(f2)
+            f3 = F.interpolate(f3, size=f2.shape[-2:], mode="bilinear", align_corners=False)
+            f = torch.cat([f2, f3], dim=1)
+            return F.avg_pool2d(f, kernel_size=3, stride=1, padding=1)
 
-    transform = transforms.Compose([
-        transforms.Resize((args.imgsz, args.imgsz)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
+    embedder = PatchEmbedder(backbone).eval().to(device)
 
-    # 정상 이미지 특징 추출
-    train_dir = os.path.join(args.dataset, "train")
-    train_dataset = ImageFolder(train_dir, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False)
+    train_files = _list_images(os.path.join(args.dataset, "train", "good"))
+    val_files = _list_images(os.path.join(args.dataset, "test", "good"))
+    if not val_files:
+        # 정상 검증 이미지가 따로 없으면 학습 이미지의 20 % 를 떼어 임계값 산출에 쓴다 (뱅크에 넣은 이미지로 재면 점수가 0 에 붙는다)
+        n_val = max(1, len(train_files) // 5) if len(train_files) >= 5 else 0
+        val_files, train_files = train_files[:n_val], train_files[n_val:]
+    if not train_files:
+        print("[ERROR] train/good 에 이미지가 없습니다.", flush=True)
+        sys.exit(1)
+    print(f"Train {len(train_files)} · Val(normal) {len(val_files)}", flush=True)
 
-    all_features = []
-    total_batches = len(train_loader)
+    def embed(files, start, span):
+        out = []
+        with torch.no_grad():
+            for i in range(0, len(files), args.batch_size):
+                batch = torch.stack([_load_vms_tensor(p, args.imgsz) for p in files[i:i + args.batch_size]]).to(device)
+                f = embedder(batch)                                  # [B,C,h,w]
+                out.append(f.permute(0, 2, 3, 1).reshape(-1, f.shape[1]))
+                print(f"[PROGRESS] {start + span * min(1.0, (i + args.batch_size) / len(files)):.1f}", flush=True)
+        return torch.cat(out, dim=0)
 
     print("[EPOCH] 1/1", flush=True)
+    patches = embed(train_files, 0, 50)                              # [N·h·w, C]
+    print(f"Patches: {patches.shape[0]} × {patches.shape[1]}", flush=True)
 
-    with torch.no_grad():
-        for idx, (images, _) in enumerate(train_loader):
-            features.clear()
-            images = images.to(device)
-            backbone(images)
+    # 그리디 코어셋 (k-center) — 정상 패치 분포를 고르게 덮는 대표만 남긴다
+    ratio = max(0.01, min(1.0, float(args.coreset_ratio)))
+    n_keep = max(1, int(patches.shape[0] * ratio))
+    if n_keep < patches.shape[0]:
+        torch.manual_seed(0)
+        proj = torch.nn.functional.normalize(torch.randn(patches.shape[1], 128, device=device), dim=0)
+        low = patches @ proj                                         # 거리 계산용 저차원 투영 (anomalib 과 같은 근사)
+        selected = [int(torch.randint(0, low.shape[0], (1,)).item())]
+        min_d = torch.cdist(low, low[selected[-1]].unsqueeze(0)).squeeze(1)
+        for k in range(1, n_keep):
+            idx = int(torch.argmax(min_d).item())
+            selected.append(idx)
+            min_d = torch.minimum(min_d, torch.cdist(low, low[idx].unsqueeze(0)).squeeze(1))
+            if k % max(1, n_keep // 10) == 0:
+                print(f"[PROGRESS] {50 + 20 * k / n_keep:.1f}", flush=True)
+        bank = patches[selected]
+    else:
+        bank = patches
+    print(f"Coreset: {patches.shape[0]} → {bank.shape[0]} (ratio={ratio:.2f})", flush=True)
 
-            # 멀티스케일 특징 결합
-            for feat in features:
-                b, c, h, w = feat.shape
-                feat_resized = torch.nn.functional.adaptive_avg_pool2d(feat, (7, 7))
-                feat_flat = feat_resized.reshape(b, -1)
-                all_features.append(feat_flat.numpy())
+    class PatchCoreOnnx(torch.nn.Module):
+        """입력 [1,3,S,S] → anomaly_map [1,1,S,S] · pred_score [1] (임계값 = 0.5 로 정규화)."""
+        def __init__(self, emb, memory, scale, imgsz):
+            super().__init__()
+            self.emb = emb
+            self.register_buffer("bank", memory)
+            self.register_buffer("bank_sq", (memory * memory).sum(dim=1))
+            self.register_buffer("scale", torch.tensor(float(scale)))
+            self.imgsz = imgsz
+            sigma, ks = 4.0, 33                                      # anomalib 과 같은 가우시안 평활
+            ax = torch.arange(ks, dtype=torch.float32) - ks // 2
+            g = torch.exp(-(ax ** 2) / (2 * sigma ** 2))
+            g = g / g.sum()
+            self.register_buffer("gauss", (g[:, None] * g[None, :])[None, None])
+            self.pad = ks // 2
 
-            progress = (idx + 1) / total_batches * 70
-            print(f"[PROGRESS] {progress:.1f}", flush=True)
+        def forward(self, x):
+            f = self.emb(x)                                          # [1,C,h,w]
+            h, w = f.shape[-2], f.shape[-1]
+            q = f.permute(0, 2, 3, 1).reshape(-1, f.shape[1])        # [h·w,C]
+            d2 = (q * q).sum(dim=1, keepdim=True) - 2 * q @ self.bank.t() + self.bank_sq[None, :]
+            d = torch.sqrt(torch.clamp(d2.min(dim=1).values, min=0.0))
+            amap = d.reshape(1, 1, h, w)
+            amap = F.interpolate(amap, size=(self.imgsz, self.imgsz), mode="bilinear", align_corners=False)
+            amap = F.conv2d(amap, self.gauss, padding=self.pad) * self.scale
+            score = amap.amax(dim=(1, 2, 3))                         # [1]
+            return amap, score
 
-    feature_matrix = np.concatenate(all_features, axis=0)
+    raw = PatchCoreOnnx(embedder, bank, 1.0, args.imgsz).eval().to(device)
+
+    def scores(files):
+        out = []
+        with torch.no_grad():
+            for p in files:
+                _, s = raw(_load_vms_tensor(p, args.imgsz)[None].to(device))
+                out.append(float(s.item()))
+        return np.array(out)
 
     print("[PROGRESS] 75", flush=True)
+    if len(val_files) > 0:
+        val_scores = scores(val_files)
+        raw_thr = float(val_scores.mean() + 3 * val_scores.std()) if len(val_scores) > 1 else float(val_scores.max() * 1.2)
+    else:
+        val_scores = scores(train_files)
+        raw_thr = float(val_scores.max() * 1.5)                      # 검증 이미지가 없을 때의 보수적 근사
+        print("[WARN] 정상 검증 이미지가 없어 학습 이미지 점수로 임계값을 근사합니다 — VisionSetup 에서 임계값 보정(Calibrate)을 권장합니다.", flush=True)
+    raw_thr = max(raw_thr, 1e-6)
+    scale = 0.5 / raw_thr
+    print(f"Threshold(raw)={raw_thr:.4f} → 정규화 점수 임계값 0.5 (scale={scale:.6f})", flush=True)
 
-    # Coreset 서브샘플링 (PatchCore greedy approximation: 무작위 샘플로 근사)
-    coreset_ratio = max(0.01, min(1.0, float(args.coreset_ratio)))
-    if coreset_ratio < 1.0:
-        n_total = feature_matrix.shape[0]
-        n_keep = max(1, int(n_total * coreset_ratio))
-        rng = np.random.default_rng(42)
-        idx = rng.choice(n_total, size=n_keep, replace=False)
-        feature_matrix = feature_matrix[idx]
-        print(f"Coreset: {n_total} → {n_keep} samples (ratio={coreset_ratio:.2f})", flush=True)
+    defect_files = _list_images(os.path.join(args.dataset, "test", "defect"))
+    acc = 1.0
+    summary = {"method": "simple_patchcore", "backbone": args.backbone, "imgsz": args.imgsz,
+               "coreset_ratio": ratio, "bank_size": int(bank.shape[0]), "feature_dim": int(bank.shape[1]),
+               "raw_threshold": raw_thr, "threshold": 0.5,
+               "n_train": len(train_files), "n_val_normal": len(val_files)}
+    norm_val = val_scores * scale
+    summary.update({"val_score_mean": float(norm_val.mean()), "val_score_max": float(norm_val.max())})
+    if defect_files:
+        norm_def = scores(defect_files) * scale
+        correct = int((norm_val < 0.5).sum() + (norm_def >= 0.5).sum())
+        acc = correct / (len(norm_val) + len(norm_def))
+        summary.update({"defect_score_min": float(norm_def.min()), "defect_score_mean": float(norm_def.mean()),
+                        "n_test_defect": len(defect_files), "accuracy_at_0.5": acc})
+        print(f"Normal max {norm_val.max():.3f} · Defect min {norm_def.min():.3f} · 정확도(0.5) {acc:.3f}", flush=True)
+    print(f"[ACC] {acc:.4f}", flush=True)
 
-    # KNN 모델 학습
-    k = min(9, len(feature_matrix))
-    knn = NearestNeighbors(n_neighbors=k, metric="euclidean")
-    knn.fit(feature_matrix)
-
-    # 통계 저장 (ONNX 대신 feature bank + threshold 저장)
-    print("[PROGRESS] 85", flush=True)
-
-    # 정상 이미지의 점수 분포 계산 → threshold 자동 설정
-    distances, _ = knn.kneighbors(feature_matrix)
-    mean_distances = distances.mean(axis=1)
-    threshold = float(np.mean(mean_distances) + 2 * np.std(mean_distances))
-
-    # 모델 데이터 저장
-    model_data = {
-        "method": "simple_patchcore",
-        "backbone": args.backbone,
-        "coreset_ratio": coreset_ratio,
-        "input_size": args.imgsz,
-        "threshold": threshold,
-        "feature_dim": feature_matrix.shape[1],
-        "n_samples": feature_matrix.shape[0],
-    }
-
-    np.save(os.path.join(args.output, "feature_bank.npy"), feature_matrix)
-
-    with open(os.path.join(args.output, "model_config.json"), "w") as f:
-        json.dump(model_data, f, indent=2)
-
-    print(f"Threshold: {threshold:.4f}", flush=True)
-    print(f"[ACC] {1.0:.4f}", flush=True)
-
-    # 지표·분포 남기기 — 정상 이미지 점수와 그 위에 놓인 임계값이 이 모델의 판정 근거다
+    with open(os.path.join(args.output, "model_config.json"), "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
     try:
-        write_metrics(
-            args.output,
-            {
-                "method": "simple_patchcore",
-                "backbone": args.backbone,
-                "imgsz": args.imgsz,
-                "threshold": threshold,
-                "coreset_ratio": coreset_ratio,
-                "feature_dim": int(feature_matrix.shape[1]),
-                "n_samples": int(feature_matrix.shape[0]),
-                "score_mean": float(np.mean(mean_distances)),
-                "score_std": float(np.std(mean_distances)),
-                "score_max": float(np.max(mean_distances)),
-            },
-            scores=mean_distances,
-            threshold=threshold,
-            title="Anomaly (simple PatchCore) — normal score distribution",
-        )
+        write_metrics(args.output, summary, scores=norm_val, threshold=0.5,
+                      title="Anomaly (simple PatchCore) — normal validation scores")
     except Exception as ex:  # noqa: BLE001
         print(f"[WARN] 지표 기록 실패 (계속 진행): {ex}", flush=True)
 
-    # 간이 ONNX 변환 (특징 추출 백본만)
     if args.export_onnx:
         print("[PROGRESS] 90", flush=True)
-
-        # 백본 모델을 ONNX로 내보내기
-        dummy = torch.randn(1, 3, args.imgsz, args.imgsz).to(device)
-        onnx_path = os.path.join(args.output, "backbone.onnx")
-
-        # 중간층 출력을 포함하는 wrapper
-        class FeatureExtractor(torch.nn.Module):
-            def __init__(self, model):
-                super().__init__()
-                self.model = model
-
-            def forward(self, x):
-                x = self.model.conv1(x)
-                x = self.model.bn1(x)
-                x = self.model.relu(x)
-                x = self.model.maxpool(x)
-                x = self.model.layer1(x)
-                x = self.model.layer2(x)
-                x = self.model.layer3(x)
-                x = torch.nn.functional.adaptive_avg_pool2d(x, (1, 1))
-                return x.flatten(1)
-
-        extractor = FeatureExtractor(backbone).to(device)
-        extractor.eval()
-
-        torch.onnx.export(
-            extractor, dummy, onnx_path,
-            input_names=["input"],
-            output_names=["features"],
-            dynamic_axes={"input": {0: "batch"}, "features": {0: "batch"}},
-            opset_version=13,
-        )
+        model = PatchCoreOnnx(embedder.cpu(), bank.cpu(), scale, args.imgsz).eval()
+        onnx_path = os.path.join(args.output, "anomaly.onnx")
+        torch.onnx.export(model, torch.zeros(1, 3, args.imgsz, args.imgsz), onnx_path,
+                          input_names=["input"], output_names=["anomaly_map", "pred_score"], opset_version=13)
+        try:
+            import onnx
+            m = onnx.load(onnx_path)
+            for k, v in {"model_format": "anomaly", "method": "simple_patchcore", "imgsz": str(args.imgsz),
+                         "threshold": "0.5", "backbone": args.backbone}.items():
+                p = m.metadata_props.add()
+                p.key, p.value = k, v
+            onnx.save(m, onnx_path)
+        except Exception as ex:  # noqa: BLE001
+            print(f"[WARN] ONNX 메타데이터 기록 실패 (모델은 정상): {ex}", flush=True)
         print(f"[ONNX] {onnx_path}", flush=True)
 
     print("[PROGRESS] 100", flush=True)

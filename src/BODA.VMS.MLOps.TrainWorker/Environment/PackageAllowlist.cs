@@ -16,6 +16,7 @@ public static class PackageAllowlist
         "torchmetrics", "pycocotools", "faster-coco-eval", "timm", "einops", "psutil", "packaging", "filelock", "fsspec", "requests",
         // 이상탐지 (Apache 2.0)
         "anomalib", "lightning", "pytorch-lightning", "omegaconf", "jsonargparse", "rich", "scikit-learn", "scikit-image", "kornia", "freia",
+        "pandas", "python-dotenv", "python_dotenv",
         // OCR (Apache 2.0)
         "paddlepaddle", "paddlepaddle-gpu", "paddleocr", "paddle2onnx", "rapidfuzz", "lmdb", "imgaug", "shapely", "pyclipper",
         // 검출·세그멘테이션 (Apache 2.0). rfdetr[train] 이 끌고 오는 것까지 함께 연다 —
