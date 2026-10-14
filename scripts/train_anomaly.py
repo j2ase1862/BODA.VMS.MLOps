@@ -20,8 +20,8 @@ stdout 프로토콜:
     [ERROR] message
 
 사전 준비:
-    pip install "anomalib[core]>=1.1,<2" "pandas<3" "matplotlib<3.10" python-dotenv torch torchvision onnx
-      (anomalib 1.x 는 pandas 3 · matplotlib 3.10 과 맞지 않고, 모델 패키지 import 에 python-dotenv 가 필요하다.
+    pip install "anomalib[core]>=1.1,<2" "pandas<3" "matplotlib<3.10" python-dotenv scikit-learn torch torchvision onnx
+      (anomalib 1.x 는 pandas 3 · matplotlib 3.10 과 맞지 않고, 모델 패키지 import 에 python-dotenv · scikit-learn 이 필요하다.
        NumPy 2 에서 imgaug 가 import 되도록 하는 처리는 스크립트가 한다)
 
     또는 anomalib 없이 간이 학습 (--backend simple, anomalib 이 없으면 자동):
