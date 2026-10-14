@@ -9,9 +9,10 @@
     → publish 폴더를 통째로 수확 → 서비스 등록 + (선택) 설치 마법사에서 받은 서버 주소·토큰으로 configure.
     publish 폴더는 매번 지우고 다시 만든다. 지난 빌드의 잔재가 MSI 에 섞이는 사고를 막기 위해서다.
 
-    오프라인 wheel 번들: scripts\make-wheel-bundle.ps1 이 WheelBundle\ 에 *.whl 을 채워 두면
-    [설치 폴더]\wheels 로 함께 설치되고 configure 가 그 폴더를 pip 의 find-links 옵션으로 쓴다.
-    산출물 이름에 -offline 이 붙는다. 없으면 온라인 pip 설치(경고만).
+    오프라인 wheel 번들: scripts\make-wheel-bundle.ps1 이 WheelBundle\ 에 *.whl 을 채워 두면 빌드 뒤
+    bin\Release\BODA-VMS-TrainWorker-<버전>-offline\ 배포 폴더(MSI + wheels\ + install-offline.cmd)를 만든다.
+    wheel 은 MSI 에 넣지 않는다 — torch CUDA wheel(약 2.5GB)이 Windows Installer 파일 크기 한도 2GB 를 넘는다(WIX0263).
+    install-offline.cmd 가 wheel 을 %ProgramData%\BODA VMS TrainWorker\wheels 로 복사하고 WHEELBUNDLE 속성으로 MSI 를 실행한다.
 
     솔루션(slnx)에는 넣지 않는다. 매 빌드마다 publish 가 도는 것을 피하기 위해서다.
   -->
@@ -33,10 +34,8 @@
 
     <WheelBundleDir>$(MSBuildProjectDirectory)\WheelBundle\</WheelBundleDir>
     <HasWheelBundle Condition="Exists('$(WheelBundleDir)') AND '$([System.IO.Directory]::GetFiles($(WheelBundleDir), &quot;*.whl&quot;).Length)' != '0'">true</HasWheelBundle>
-    <DefineConstants Condition="'$(HasWheelBundle)' == 'true'">$(DefineConstants);WheelBundleDir=$(WheelBundleDir)</DefineConstants>
 
     <OutputName>BODA-VMS-TrainWorker-$(Version)</OutputName>
-    <OutputName Condition="'$(HasWheelBundle)' == 'true'">BODA-VMS-TrainWorker-$(Version)-offline</OutputName>
   </PropertyGroup>
 
   <!-- 워커 publish. 이 프로젝트를 빌드하면 항상 다시 publish 한다 (증분 없음, 잔재 방지가 우선). -->
@@ -47,7 +46,30 @@
   </Target>
 
   <Target Name="WarnNoWheelBundle" BeforeTargets="CoreCompile" Condition="'$(HasWheelBundle)' != 'true'">
-    <Warning Text="WheelBundle 없음: 온라인 pip 설치 MSI. 폐쇄망 배포는 scripts\make-wheel-bundle.ps1 로 번들을 먼저 만드세요." />
+    <Warning Text="WheelBundle 없음: 온라인 pip 설치용 MSI 만 만듭니다. 폐쇄망 배포 폴더는 scripts\make-wheel-bundle.ps1 로 번들을 먼저 만드세요." />
+  </Target>
+
+  <!-- 폐쇄망 배포 폴더 — MSI + wheels\ + install-offline.cmd. FlattenCultureOutput 뒤에 돈다. -->
+  <Target Name="PackOfflineFolder" AfterTargets="FlattenCultureOutput" Condition="'$(HasWheelBundle)' == 'true'">
+    <PropertyGroup>
+      <OfflineDir>$(OutputPath)BODA-VMS-TrainWorker-$(Version)-offline\</OfflineDir>
+      <MsiName>$(OutputName).msi</MsiName>
+    </PropertyGroup>
+    <ItemGroup>
+      <BundleWheel Include="$(WheelBundleDir)*.whl;$(WheelBundleDir)*.tar.gz" />
+      <OfflineCmdLine Include="@echo off" />
+      <OfflineCmdLine Include="rem BODA VMS Train Worker - offline install. Run from an elevated (administrator) command prompt." />
+      <OfflineCmdLine Include="rem Wheels are copied to this PC and kept: the worker re-syncs its venv from this folder when the package list changes. Do not delete it." />
+      <OfflineCmdLine Include="set DEST=%25ProgramData%25\BODA VMS TrainWorker\wheels" />
+      <OfflineCmdLine Include="robocopy &quot;%25~dp0wheels&quot; &quot;%25DEST%25&quot; /MIR /NJH /NJS /NP /NFL /NDL" />
+      <OfflineCmdLine Include="if errorlevel 8 (echo Failed to copy wheels to %25DEST%25 &amp; exit /b 1)" />
+      <OfflineCmdLine Include="msiexec /i &quot;%25~dp0$(MsiName)&quot; WHEELBUNDLE=&quot;%25DEST%25&quot; %25%2A" />
+    </ItemGroup>
+    <RemoveDir Directories="$(OfflineDir)" />
+    <Copy SourceFiles="$(OutputPath)$(MsiName)" DestinationFolder="$(OfflineDir)" />
+    <Copy SourceFiles="@(BundleWheel)" DestinationFolder="$(OfflineDir)wheels" />
+    <WriteLinesToFile File="$(OfflineDir)install-offline.cmd" Lines="@(OfflineCmdLine)" Overwrite="true" Encoding="us-ascii" />
+    <Message Importance="high" Text="폐쇄망 배포 폴더: $(OfflineDir) (MSI + wheels + install-offline.cmd)" />
   </Target>
 
   <!-- Cultures 지정 시 산출물이 bin\Release\ko-KR\ 로 내려간다 → 루트로 올린다 (VMS.MasterSetup 과 같은 계약). -->

@@ -33,7 +33,29 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
         // 완료 마커가 있어야 "만들어진 venv" 다. pip 도중 실패한 venv 를 완성품으로 믿으면 다음 재시도가 진단(torch import 실패)으로
         // 넘어가 Disabled 에 갇힌다 (2026-09-10 MSI 실증: 3.14 로 만든 venv 에 torch 설치 실패 → 반쪽 venv 잔류).
         var marker = Path.Combine(_o.VenvDir, ".complete");
-        if (File.Exists(PythonExe) && File.Exists(marker)) return PythonExe;
+        if (File.Exists(PythonExe) && File.Exists(marker))
+        {
+            // 허용 목록(requirements)이 venv 를 만든 뒤 바뀌었으면 기존 venv 에 다시 설치해 맞춘다. 마커에 해시가 없는
+            // 예전 venv 도 한 번은 맞춘다. 종전에는 venv 를 처음 한 번만 만들어, 새 MSI 로 허용 목록이 바뀌어도
+            // (예: anomalib 짝 패키지 pandas<3 · matplotlib<3.10) 기존 워커는 옛 패키지로 학습하다 실패했다 (2026-10-14).
+            var reqHash = File.Exists(RequirementsFile) ? Sha256Util.HashFile(RequirementsFile) : null;
+            if (reqHash != null && NeedsRequirementsRefresh(await File.ReadAllTextAsync(marker, ct), reqHash))
+            {
+                logger.LogInformation("허용 목록이 바뀌어 venv 패키지를 다시 맞춥니다: {Dir}", _o.VenvDir);
+                try
+                {
+                    await InstallRequirementsAsync(ct);
+                    var basePy = (await File.ReadAllLinesAsync(marker, ct)).FirstOrDefault() ?? "";
+                    await File.WriteAllTextAsync(marker, MarkerText(basePy, reqHash), ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // 갱신 실패는 venv 를 버리지 않는다 — 옛 패키지로도 다른 학습은 돈다. 다음 시작 때 다시 시도한다.
+                    logger.LogWarning(ex, "venv 패키지 갱신 실패 — 기존 venv 로 계속합니다 (다음 시작 때 재시도)");
+                }
+            }
+            return PythonExe;
+        }
         if (Directory.Exists(_o.VenvDir))
         {
             logger.LogWarning("완료되지 않은 venv 를 지우고 다시 만듭니다: {Dir}", _o.VenvDir);
@@ -46,24 +68,45 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
             "Python 3.12 를 \"모든 사용자용\" 으로 설치하거나 configure --python <python.exe> 로 지정하세요.");
         await RunAsync(basePython, ["-m", "venv", _o.VenvDir], null, ct, throwOnError: true);
 
+        string? hash = null;
         if (File.Exists(RequirementsFile))
         {
-            var disallowed = PackageAllowlist.FindDisallowed(await File.ReadAllLinesAsync(RequirementsFile, ct));
-            if (disallowed.Count > 0)
-                throw new InvalidOperationException("허용 목록 밖 패키지가 requirements 에 있습니다: " + string.Join(", ", disallowed));
-
-            var pip = new List<string> { "-m", "pip", "install", "--disable-pip-version-check" };
-            if (!string.IsNullOrWhiteSpace(_o.WheelBundleDir))
-                pip.AddRange(["--no-index", "--find-links", _o.WheelBundleDir]);
-            pip.AddRange(["-r", RequirementsFile]);
-            await RunAsync(PythonExe, pip, null, ct, throwOnError: true);
+            await InstallRequirementsAsync(ct);
+            hash = Sha256Util.HashFile(RequirementsFile);
         }
         else
         {
             logger.LogWarning("requirements-allowlist.txt 가 없어 패키지 설치를 건너뜁니다: {Path}", RequirementsFile);
         }
-        await File.WriteAllTextAsync(marker, $"{basePython}\n{DateTime.UtcNow:O}\n", ct);
+        await File.WriteAllTextAsync(marker, MarkerText(basePython, hash), ct);
         return PythonExe;
+    }
+
+    /// <summary>허용 목록 검사 후 venv 에 requirements 설치 (온라인 pip 또는 오프라인 wheel 번들).</summary>
+    private async Task InstallRequirementsAsync(CancellationToken ct)
+    {
+        var disallowed = PackageAllowlist.FindDisallowed(await File.ReadAllLinesAsync(RequirementsFile, ct));
+        if (disallowed.Count > 0)
+            throw new InvalidOperationException("허용 목록 밖 패키지가 requirements 에 있습니다: " + string.Join(", ", disallowed));
+
+        var pip = new List<string> { "-m", "pip", "install", "--disable-pip-version-check" };
+        if (!string.IsNullOrWhiteSpace(_o.WheelBundleDir))
+            pip.AddRange(["--no-index", "--find-links", _o.WheelBundleDir]);
+        pip.AddRange(["-r", RequirementsFile]);
+        await RunAsync(PythonExe, pip, null, ct, throwOnError: true);
+    }
+
+    private const string ReqHashPrefix = "requirements-sha256=";
+
+    /// <summary>완료 마커 내용: 기반 파이썬 · 시각 · requirements 해시(있을 때).</summary>
+    public static string MarkerText(string basePython, string? requirementsHash) =>
+        $"{basePython}\n{DateTime.UtcNow:O}\n" + (requirementsHash != null ? $"{ReqHashPrefix}{requirementsHash}\n" : "");
+
+    /// <summary>마커에 적힌 requirements 해시가 현재와 다르면(또는 해시가 없는 예전 마커면) true.</summary>
+    public static bool NeedsRequirementsRefresh(string markerText, string currentRequirementsHash)
+    {
+        var line = markerText.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith(ReqHashPrefix, StringComparison.Ordinal));
+        return line == null || !string.Equals(line[ReqHashPrefix.Length..], currentRequirementsHash, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>worker_diag.py 실행 → WorkerCapabilities. 실패 항목이 있으면 DiagnosticFailures 에 담긴다 (서버가 Disabled 처리).</summary>

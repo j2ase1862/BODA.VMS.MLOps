@@ -8,7 +8,9 @@
   **이 PC 와 같은 조건(Windows x64 · Python 3.12 · CUDA 12.4)** 의 워커 PC 에서만 쓴다.
 
   결과 폴더를 src\BODA.VMS.MLOps.TrainWorker.Setup\WheelBundle\ 에 두고 Setup 프로젝트를 빌드하면
-  BODA-VMS-TrainWorker-<버전>-offline.msi 가 나온다. 워커는 그 폴더를 pip --no-index --find-links 로 쓴다.
+  bin\Release\BODA-VMS-TrainWorker-<버전>-offline\ 배포 폴더(MSI + wheels\ + install-offline.cmd)가 나온다.
+  wheel 은 MSI 안에 넣지 않는다(torch CUDA wheel 2.5GB > Windows Installer 파일 한도 2GB). 워커는 설치 때 받은
+  WHEELBUNDLE 폴더를 pip --no-index --find-links 로 쓴다.
 
   검증: 마지막에 임시 venv 를 만들어 번들만으로 설치가 되는지 확인한다 (-SkipVerify 로 생략).
 
@@ -24,12 +26,15 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Output = (Join-Path $PSScriptRoot "..\src\BODA.VMS.MLOps.TrainWorker.Setup\WheelBundle"),
+    [string]$Output = "",
     [string]$Python = "",
     [switch]$SkipVerify
 )
 
 $ErrorActionPreference = "Stop"
+# 기본 출력 폴더는 본문에서 정한다 — Windows PowerShell 5.1 은 param 기본값 안의 $PSScriptRoot 가 비어
+# Join-Path 가 "빈 문자열" 오류로 시작도 못 한다 (2026-10-14 실증).
+if (-not $Output) { $Output = Join-Path $PSScriptRoot "..\src\BODA.VMS.MLOps.TrainWorker.Setup\WheelBundle" }
 $req = Join-Path $PSScriptRoot "requirements-allowlist.txt"
 if (-not (Test-Path $req)) { throw "requirements-allowlist.txt 가 없습니다: $req" }
 
@@ -69,9 +74,16 @@ if (-not $SkipVerify) {
     & $Python -m venv $tmp
     & (Join-Path $tmp "Scripts\python.exe") -m pip install --disable-pip-version-check --no-index --find-links $Output -r $req
     $ok = ($LASTEXITCODE -eq 0)
+    $importsOk = $false
+    if ($ok) {
+        # 설치 성공만으로는 부족하다 — 학습 스크립트들이 쓰는 import 까지 확인 (anomalib [core] 누락 같은 것)
+        & (Join-Path $tmp "Scripts\python.exe") (Join-Path $PSScriptRoot "bundle_import_check.py")
+        $importsOk = ($LASTEXITCODE -eq 0)
+    }
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     if (-not $ok) { throw "번들만으로 설치가 되지 않습니다 — 위 pip 출력에서 빠진 패키지를 확인하세요" }
-    Write-Host "검증 통과: 번들만으로 전체 설치 완료"
+    if (-not $importsOk) { throw "번들 venv 에서 학습 스크립트 import 가 실패합니다 — 위 FAIL 항목의 패키지를 requirements-allowlist.txt 에 추가하세요" }
+    Write-Host "검증 통과: 번들만으로 전체 설치 + 학습 스크립트 import 확인"
 }
 
-Write-Host "다음: dotnet build src\BODA.VMS.MLOps.TrainWorker.Setup -c Release  → *-offline.msi"
+Write-Host "다음: dotnet build src\BODA.VMS.MLOps.TrainWorker.Setup -c Release  → bin\Release\BODA-VMS-TrainWorker-<버전>-offline\"
