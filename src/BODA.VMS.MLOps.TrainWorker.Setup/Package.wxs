@@ -4,7 +4,7 @@
   <!--
     BODA VMS Train Worker 설치 패키지 (Phase 3 §10).
 
-    설치하는 것: [Program Files]\BODA Vision AI\BODA VMS TrainWorker\ (self-contained 워커 + scripts\ + 선택 wheels\)
+    설치하는 것: [Program Files]\BODA Vision AI\BODA VMS TrainWorker\ (self-contained 워커 + scripts\)
                  Windows 서비스 BodaVmsTrainWorker (자동·지연 시작, LocalSystem — GPU 접근에 계정 제약이 없는 쪽을 기본으로 둔다)
     설치하지 않는 것: 방화벽 예외 (워커는 서버로만 아웃바운드), Python (사전 요건 — 진단 결과만 보여 준다)
     남기는 것: %ProgramData%\BODA VMS TrainWorker\ (worker.json·venv·캐시·로그) — 제거해도 지우지 않는다. 재설치가 곧 복구다.
@@ -12,6 +12,10 @@
     연결 설정 경로 2가지 (같은 속성 공유):
       · 설치 마법사 "워커 연결 설정" 화면 → SERVERURL·WORKERTOKEN·WORKERNAME·WORKERCPU
       · 무인 설치: msiexec /i BODA-VMS-TrainWorker-x.y.z.msi /qn SERVERURL=http://server:5310 WORKERTOKEN=wk_…
+    폐쇄망: 오프라인 wheel 번들(scripts\make-wheel-bundle.ps1)은 MSI 에 넣지 않는다 — torch CUDA wheel 이 2.5GB 라
+    Windows Installer 의 파일 크기 한도(2GB)를 넘는다(WIX0263). 번들 폴더를 이 PC 에 복사해 두고
+    WHEELBUNDLE="C:\…\wheels" 로 경로를 주면 configure 의 wheels 옵션으로 넘어가 pip 가 그 폴더만으로 설치한다.
+    venv 는 허용 목록이 바뀔 때 그 폴더로 다시 맞추므로 폴더를 지우지 않는다.
     둘 다 비우면 파일만 놓고 서비스는 시작하지 않는다 — 나중에 `BODA.VMS.MLOps.TrainWorker.exe configure` 뒤 서비스 시작.
     업그레이드는 기존 worker.json 이 있으면 그대로 쓰고 서비스를 다시 시작한다.
   -->
@@ -30,9 +34,6 @@
       <ComponentGroupRef Id="WorkerFiles" />
       <ComponentRef Id="WorkerServiceComp" />
       <ComponentRef Id="WorkerStartComp" />
-<?ifdef WheelBundleDir ?>
-      <ComponentGroupRef Id="WheelFiles" />
-<?endif?>
     </Feature>
 
     <!-- ── 연결 설정 속성 ── -->
@@ -67,11 +68,11 @@
 
     <!-- ── configure: 마법사/무인 설치에서 받은 값으로 worker.json 을 쓴다 (토큰은 DPAPI LocalMachine 으로 보호) ──
          deferred + Impersonate=no: ProgramData 쓰기와 DPAPI 범위가 서비스 계정(LocalSystem)과 같아야 한다. -->
-<?ifdef WheelBundleDir ?>
-    <Property Id="WHEELARG" Value="--wheels &quot;[INSTALLFOLDER]wheels&quot;" Secure="yes" />
-<?else?>
+    <!-- 오프라인 wheel 번들 폴더 (폐쇄망). SetProperty 로 실제 경로를 펼쳐 둔다 — Property 의 Value 에 다른 속성을 적으면
+         글자 그대로 남는다(종전 [INSTALLFOLDER]wheels 가 그대로 넘어가던 결함, WIX1077). -->
+    <Property Id="WHEELBUNDLE" Secure="yes" />
     <Property Id="WHEELARG" Secure="yes" />
-<?endif?>
+    <SetProperty Id="WHEELARG" Value="--wheels &quot;[WHEELBUNDLE]&quot;" After="AppSearch" Sequence="both" Condition="WHEELBUNDLE" />
     <CustomAction Id="ConfigureWorker"
                   Directory="INSTALLFOLDER"
                   ExeCommand="&quot;[INSTALLFOLDER]BODA.VMS.MLOps.TrainWorker.exe&quot; configure --server &quot;[SERVERURL]&quot; --token &quot;[WORKERTOKEN]&quot; --name &quot;[WORKERNAME]&quot; [WORKERCPUARG] [WHEELARG]"
@@ -96,9 +97,7 @@
   <Fragment>
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="CompanyFolder" Name="BODA Vision AI">
-        <Directory Id="INSTALLFOLDER" Name="BODA VMS TrainWorker">
-          <Directory Id="WheelsFolder" Name="wheels" />
-        </Directory>
+        <Directory Id="INSTALLFOLDER" Name="BODA VMS TrainWorker" />
       </Directory>
     </StandardDirectory>
   </Fragment>
@@ -141,14 +140,5 @@
     </Component>
   </Fragment>
 
-<?ifdef WheelBundleDir ?>
-  <!-- 오프라인 wheel 번들 (폐쇄망): configure 가 wheels 옵션으로 이 폴더를 넘기고 워커는 pip 의 no-index / find-links 옵션으로 설치한다 -->
-  <Fragment>
-    <ComponentGroup Id="WheelFiles" Directory="WheelsFolder">
-      <Files Include="$(var.WheelBundleDir)*.whl" />
-      <Files Include="$(var.WheelBundleDir)*.tar.gz" />
-    </ComponentGroup>
-  </Fragment>
-<?endif?>
 
 </Wix>

@@ -22,11 +22,14 @@ scipy>=1.11
 # matplotlib 상한 3.10: anomalib 1.x 시험 단계 그림이 3.10 에서 지워진 FigureCanvasAgg.tostring_rgb 를 쓴다 (2026-10-13 실증)
 matplotlib>=3.8,<3.10
 opencv-python-headless>=4.9
-anomalib>=1.1,<2
+# [core]: 학습에 필요한 lightning · timm · kornia · FrEIA · imgaug · open-clip 등 — 없으면 anomalib import 가 실패해 간이 경로로만 학습된다 (2026-10-14 번들 venv 실증)
+anomalib[core]>=1.1,<2
 # anomalib 1.x 짝 패키지 — pandas 3 은 Folder 데이터셋 생성에서 ValueError, python-dotenv 는 anomalib.models import 에 필요
 # (VLM 모델 모듈이 패키지 import 시점에 읽는다). 둘 다 BSD-3 (2026-10-13 실증)
 pandas>=2.2,<3
 python-dotenv>=1.0
+# anomalib(데이터 분할 · 코어셋)과 간이 경로가 쓴다 — 허용 이름에는 있었지만 설치 목록에서 빠져 있었다 (2026-10-14)
+scikit-learn>=1.3
 # 세그멘테이션 (Apache-2.0). [train] 없이는 model.train() 이 "training dependencies are missing" 으로 막힌다.
 # 그 extra 가 끌고 오는 것: peft · pytorch-lightning · torchmetrics[detection] · faster-coco-eval ·
 # pycocotools · scipy · torch-hungarian · roboflow (전부 Apache-2.0 또는 BSD).
