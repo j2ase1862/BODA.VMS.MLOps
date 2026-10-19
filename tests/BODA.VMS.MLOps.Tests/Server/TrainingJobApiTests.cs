@@ -116,8 +116,8 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
     /// 받아 와야 하는 스크립트는 미러가 없으면 반드시 실패하는데, 예전에는 그 사실이 작업이 큐에서
     /// 배정되어 실제로 돌기 시작한 뒤에야 드러났다 — 몇 분을 기다린 끝에 "HF 오프라인" 로그만 남았다.</para>
     ///
-    /// <para>반대쪽도 막는다. train_classifier 의 --pretrained 는 <b>경로가 아니라 아키텍처 이름</b>이라
-    /// (getattr(torchvision.models, name)) 미러를 주면 학습이 시작하자마자 죽는다.</para>
+    /// <para>train_classifier 는 선택이다 — 미러가 없으면 백본 이름으로 torchvision 이 인터넷에서 받고,
+    /// 미러를 주면 그 가중치 파일을 쓴다(폐쇄망).</para>
     ///
     /// <para>train_anomaly 는 anomalib 이 timm 백본을 Hugging Face 에서 받으므로 D-FINE 과 같은 쪽(필수)이다.</para>
     /// </summary>
@@ -143,15 +143,12 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
             new CreateTrainingJobRequest(detDs.Id, det.Id, TrainingScript.TrainDfine, PretrainedRef: SharedPretrainedRef, Hyperparams: Hp("""{"epochs": 2}""")), Json);
         ok.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        // ③ --pretrained 를 못 받는 스크립트에 미러를 주면 400 (분류: 아키텍처 이름만 받는다)
+        // ③④ 분류는 선택 — 미러를 줘도(폐쇄망) 안 줘도(인터넷) 통과한다
         var cls = await CreateModelAsync(eng, "m-pre-cls", TaskType.Classification, ["good", "defect"]);
         var clsDs = await UploadDatasetAsync(eng, "ds-pre-cls", TaskType.Classification, "imagefolder");
-        var clsWithMirror = await eng.PostAsJsonAsync("/api/training-jobs",
-            new CreateTrainingJobRequest(clsDs.Id, cls.Id, TrainingScript.TrainClassifier, PretrainedRef: SharedPretrainedRef), Json);
-        clsWithMirror.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (await ErrorAsync(clsWithMirror))!.Code.Should().Be(ErrorCodes.PretrainedNotSupported);
-
-        // ④ 같은 스크립트를 미러 없이 내면 통과한다 — 막는 것은 '미러를 준 경우' 뿐이다
+        (await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(clsDs.Id, cls.Id, TrainingScript.TrainClassifier, PretrainedRef: SharedPretrainedRef), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
         (await eng.PostAsJsonAsync("/api/training-jobs",
             new CreateTrainingJobRequest(clsDs.Id, cls.Id, TrainingScript.TrainClassifier), Json))
             .StatusCode.Should().Be(HttpStatusCode.Created);
