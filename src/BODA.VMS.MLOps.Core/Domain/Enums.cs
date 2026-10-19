@@ -90,9 +90,10 @@ public static class TrainingScriptExtensions
     /// 워커가 <c>TRANSFORMERS_OFFLINE=1</c> 로 돌리므로 로컬 폴더가 없으면 <b>반드시</b> 실패한다 → Required.</item>
     /// <item><b>TrainRfdetrSeg</b> — <c>preview/small/…</c> 는 인터넷에서 받아 오고, 경로를 주면 그 체크포인트를 쓴다.
     /// 폐쇄망 워커에서는 경로가 있어야 한다 → Required.</item>
-    /// <item><b>TrainClassifier</b> — <c>--pretrained</c> 가 <b>경로가 아니라 아키텍처 이름</b>이다
-    /// (<c>getattr(torchvision.models, name)</c>). 미러 폴더를 주면 "지원하지 않는 모델" 로 즉시 죽는다 → NotSupported.
-    /// (가중치는 torchvision 이 자체 캐시에서 받는다 — 폐쇄망 지원은 스크립트를 고쳐야 하는 별건이다.)</item>
+    /// <item><b>TrainClassifier</b> — <c>--pretrained</c> 에 아키텍처 이름(백본 칸)을 주면 torchvision 이 ImageNet
+    /// 가중치를 인터넷에서 받고(HF 오프라인 설정과 무관), 미러 폴더를 주면 그 안의 torchvision 가중치 파일
+    /// (<c>resnet18-f37072fd.pth</c> — 파일 이름에서 아키텍처를 읽는다)을 쓴다. 인터넷이 있는 워커면 미러 없이도
+    /// 돌고, 폐쇄망 워커는 미러가 있어야 한다 → Optional.</item>
     /// <item><b>TrainAnomaly</b> — anomalib 이 백본(timm)을 Hugging Face 에서 받는다. 오프라인 워커에서는
     /// <c>LocalEntryNotFoundError</c> 로 반드시 죽으므로, 미러의 timm 가중치 파일(예: resnet18.a1_in1k 의
     /// model.safetensors)을 <c>--pretrained</c> 로 준다 → Required. 미러 가중치는 <c>backbone</c> 과 같은 구조여야 한다.</item>
@@ -104,7 +105,6 @@ public static class TrainingScriptExtensions
     public static PretrainedRequirement PretrainedRequirement(this TrainingScript s) => s switch
     {
         TrainingScript.TrainDfine or TrainingScript.TrainRfdetrSeg or TrainingScript.TrainAnomaly => Domain.PretrainedRequirement.Required,
-        TrainingScript.TrainClassifier => Domain.PretrainedRequirement.NotSupported,
         _ => Domain.PretrainedRequirement.Optional,
     };
 

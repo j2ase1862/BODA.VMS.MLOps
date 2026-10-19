@@ -26,8 +26,15 @@ stdout 프로토콜:
 사전 준비:
     pip install torch torchvision onnx
 
+사전학습 가중치 (--pretrained):
+    아키텍처 이름(resnet18 등)이면 torchvision 이 ImageNet 가중치를 인터넷에서 받는다.
+    가중치 파일(.pth/.pt/.safetensors) 또는 그 파일 하나가 든 폴더(MLOps 사전학습 미러)를 주면 그 파일을 쓰고
+    인터넷에 나가지 않는다 — 폐쇄망 학습 워커용. 아키텍처는 torchvision 파일 이름에서 읽는다
+    (resnet18-f37072fd.pth → resnet18, efficientnet_b0_rwightman-7f5810bc.pth → efficientnet_b0).
+
 사용 예:
     python train_classifier.py --dataset ./data --output ./output --epochs 50
+    python train_classifier.py --dataset ./data --output ./output --pretrained ./mirror/torchvision-resnet18
 """
 
 import argparse
@@ -105,11 +112,51 @@ def write_history_artifacts(output, history, epochs, best_epoch):
     os.replace(tmp_png, os.path.join(output, "curves.png"))
 
 
+WEIGHT_EXTS = (".pth", ".pt", ".safetensors")
+
+
+def resolve_weights_file(path):
+    """파일이면 그대로, 폴더(MLOps 워커가 넘기는 사전학습 미러)면 그 안의 가중치 파일 하나."""
+    if os.path.isfile(path):
+        return path
+    files = sorted(f for f in os.listdir(path) if f.lower().endswith(WEIGHT_EXTS))
+    if len(files) != 1:
+        print(f"[ERROR] 사전학습 폴더에 가중치 파일({', '.join(WEIGHT_EXTS)})이 하나만 있어야 합니다: "
+              f"{path} → {files or '없음'}", flush=True)
+        sys.exit(1)
+    return os.path.join(path, files[0])
+
+
+def arch_from_weights_name(models, weights_file):
+    """torchvision 가중치 파일 이름 <아키텍처>[_변형]-<해시>.pth 에서 아키텍처를 찾는다.
+    resnet18-f37072fd → resnet18, efficientnet_b0_rwightman-7f5810bc → efficientnet_b0."""
+    stem = os.path.splitext(os.path.basename(weights_file))[0]
+    parts = stem.split("-")[0].lower().split("_")
+    while parts:
+        name = "_".join(parts)
+        if callable(getattr(models, name, None)):  # 하위 모듈(models.resnet 등)은 호출할 수 없어 걸러진다
+            return name
+        parts.pop()
+    print(f"[ERROR] 가중치 파일 이름에서 아키텍처를 알 수 없습니다: {os.path.basename(weights_file)} "
+          f"— torchvision 이름 그대로(예: resnet18-f37072fd.pth) 올리세요", flush=True)
+    sys.exit(1)
+
+
+def load_state_dict(path):
+    import torch
+    if path.lower().endswith(".safetensors"):
+        from safetensors.torch import load_file
+        return load_file(path)
+    sd = torch.load(path, map_location="cpu", weights_only=True)
+    return sd.get("state_dict", sd) if isinstance(sd, dict) and "state_dict" in sd else sd
+
+
 def main():
     parser = argparse.ArgumentParser(description="VMS Classification Training")
     parser.add_argument("--dataset", required=True, help="Dataset path (ImageFolder format)")
     parser.add_argument("--output", required=True, help="Output directory")
-    parser.add_argument("--pretrained", default="resnet18", help="Model architecture")
+    parser.add_argument("--pretrained", default="resnet18",
+                        help="아키텍처 이름, 또는 torchvision 가중치 파일 / 그 파일 하나가 든 폴더(오프라인)")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -177,13 +224,23 @@ def main():
     with open(os.path.join(args.output, "classes.txt"), "w") as f:
         f.write("\n".join(class_names))
 
-    # 모델 생성
-    model_fn = getattr(models, args.pretrained, None)
-    if model_fn is None:
-        print(f"[ERROR] 지원하지 않는 모델: {args.pretrained}", flush=True)
-        sys.exit(1)
-
-    model = model_fn(weights="DEFAULT")
+    # 모델 생성 — 경로를 받으면 그 가중치로(인터넷 없이), 이름이면 torchvision 이 받는다
+    if os.path.exists(args.pretrained):
+        weights_file = resolve_weights_file(args.pretrained)
+        arch = arch_from_weights_name(models, weights_file)
+        model = getattr(models, arch)(weights=None)
+        try:
+            model.load_state_dict(load_state_dict(weights_file))
+        except RuntimeError as ex:
+            print(f"[ERROR] 가중치가 {arch} 구조와 맞지 않습니다: {str(ex).splitlines()[0]}", flush=True)
+            sys.exit(1)
+        print(f"[INFO] 모델 {arch} · 가중치 {weights_file}", flush=True)
+    else:
+        model_fn = getattr(models, args.pretrained, None)
+        if model_fn is None:
+            print(f"[ERROR] 지원하지 않는 모델: {args.pretrained}", flush=True)
+            sys.exit(1)
+        model = model_fn(weights="DEFAULT")
 
     # 마지막 FC 레이어 교체
     if hasattr(model, "fc"):
