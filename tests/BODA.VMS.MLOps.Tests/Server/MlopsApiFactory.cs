@@ -168,8 +168,8 @@ public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
     /// <summary>
     /// 사전학습 미러 하나를 만들어 둔다 (없으면 만들고, 있으면 그대로).
     ///
-    /// <para>train_dfine·train_rfdetr_seg 는 미러 없이는 제출 자체가 거부된다(워커가 오프라인 고정이라
-    /// 가중치를 받아 올 수 없다 — TrainingScriptExtensions.PretrainedRequirement). 그 두 스크립트로
+    /// <para>train_dfine·train_rfdetr_seg·train_anomaly 는 미러 없이는 제출 자체가 거부된다(워커가 오프라인 고정이라
+    /// 가중치를 받아 올 수 없다 — TrainingScriptExtensions.PretrainedRequirement). 그 스크립트들로
     /// 작업을 만드는 시험은 이 헬퍼로 미러를 먼저 갖춘다.</para>
     /// </summary>
     public static async Task<string> EnsurePretrainedAsync(HttpClient admin, string @ref = SharedPretrainedRef)

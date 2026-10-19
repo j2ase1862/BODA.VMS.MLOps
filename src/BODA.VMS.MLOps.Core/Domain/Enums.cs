@@ -93,8 +93,9 @@ public static class TrainingScriptExtensions
     /// <item><b>TrainClassifier</b> — <c>--pretrained</c> 가 <b>경로가 아니라 아키텍처 이름</b>이다
     /// (<c>getattr(torchvision.models, name)</c>). 미러 폴더를 주면 "지원하지 않는 모델" 로 즉시 죽는다 → NotSupported.
     /// (가중치는 torchvision 이 자체 캐시에서 받는다 — 폐쇄망 지원은 스크립트를 고쳐야 하는 별건이다.)</item>
-    /// <item><b>TrainAnomaly</b> — 스크립트에 <c>--pretrained</c> 인자가 <b>아예 없다</b>(<c>--backbone</c> 만 있다).
-    /// 주면 argparse 가 "unrecognized arguments" 로 끝낸다 → NotSupported.</item>
+    /// <item><b>TrainAnomaly</b> — anomalib 이 백본(timm)을 Hugging Face 에서 받는다. 오프라인 워커에서는
+    /// <c>LocalEntryNotFoundError</c> 로 반드시 죽으므로, 미러의 timm 가중치 파일(예: resnet18.a1_in1k 의
+    /// model.safetensors)을 <c>--pretrained</c> 로 준다 → Required. 미러 가중치는 <c>backbone</c> 과 같은 구조여야 한다.</item>
     /// <item><b>TrainYolo</b> — ultralytics 가 <c>yolov8n.pt</c> 를 GitHub 에서 받는다(HF 오프라인 설정과 무관).
     /// 인터넷이 있는 워커면 미러 없이도 돈다 → Optional.</item>
     /// <item><b>TrainPpocr</b> — 스크립트가 "(선택)" 이라고 못박고 있다 → Optional.</item>
@@ -102,8 +103,8 @@ public static class TrainingScriptExtensions
     /// </summary>
     public static PretrainedRequirement PretrainedRequirement(this TrainingScript s) => s switch
     {
-        TrainingScript.TrainDfine or TrainingScript.TrainRfdetrSeg => Domain.PretrainedRequirement.Required,
-        TrainingScript.TrainClassifier or TrainingScript.TrainAnomaly => Domain.PretrainedRequirement.NotSupported,
+        TrainingScript.TrainDfine or TrainingScript.TrainRfdetrSeg or TrainingScript.TrainAnomaly => Domain.PretrainedRequirement.Required,
+        TrainingScript.TrainClassifier => Domain.PretrainedRequirement.NotSupported,
         _ => Domain.PretrainedRequirement.Optional,
     };
 

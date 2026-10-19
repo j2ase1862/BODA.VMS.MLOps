@@ -116,9 +116,10 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
     /// 받아 와야 하는 스크립트는 미러가 없으면 반드시 실패하는데, 예전에는 그 사실이 작업이 큐에서
     /// 배정되어 실제로 돌기 시작한 뒤에야 드러났다 — 몇 분을 기다린 끝에 "HF 오프라인" 로그만 남았다.</para>
     ///
-    /// <para>반대쪽도 막는다. train_classifier 의 --pretrained 는 <b>경로가 아니라 아키텍처 이름</b>이고
-    /// (getattr(torchvision.models, name)), train_anomaly 에는 그 인자가 <b>아예 없다</b>. 미러를 주면
-    /// 학습이 시작하자마자 죽는다.</para>
+    /// <para>반대쪽도 막는다. train_classifier 의 --pretrained 는 <b>경로가 아니라 아키텍처 이름</b>이라
+    /// (getattr(torchvision.models, name)) 미러를 주면 학습이 시작하자마자 죽는다.</para>
+    ///
+    /// <para>train_anomaly 는 anomalib 이 timm 백본을 Hugging Face 에서 받으므로 D-FINE 과 같은 쪽(필수)이다.</para>
     /// </summary>
     [Fact]
     public async Task Pretrained_mirror_requirement_is_enforced_when_the_job_is_submitted()
@@ -153,6 +154,17 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
         // ④ 같은 스크립트를 미러 없이 내면 통과한다 — 막는 것은 '미러를 준 경우' 뿐이다
         (await eng.PostAsJsonAsync("/api/training-jobs",
             new CreateTrainingJobRequest(clsDs.Id, cls.Id, TrainingScript.TrainClassifier), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // ⑤ 이상 탐지는 백본 미러가 필수다 — 없으면 400, 있으면 통과
+        var ano = await CreateModelAsync(eng, "m-pre-ano", TaskType.Anomaly, ["good", "defect"]);
+        var anoDs = await UploadDatasetAsync(eng, "ds-pre-ano", TaskType.Anomaly, "mvtec");
+        var anoNoMirror = await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(anoDs.Id, ano.Id, TrainingScript.TrainAnomaly), Json);
+        anoNoMirror.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ErrorAsync(anoNoMirror))!.Code.Should().Be(ErrorCodes.PretrainedRequired);
+        (await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(anoDs.Id, ano.Id, TrainingScript.TrainAnomaly, PretrainedRef: SharedPretrainedRef), Json))
             .StatusCode.Should().Be(HttpStatusCode.Created);
     }
 

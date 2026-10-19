@@ -30,10 +30,17 @@ stdout 프로토콜:
 출력 ONNX 규약 (두 경로 같음 — VMS AnomalyTool 이 그대로 읽는다):
     입력 input[1,3,S,S] (VMS 가 리사이즈 · ImageNet 정규화한 RGB) →
     출력 anomaly_map[1,1,S,S] · pred_score[1]. 점수는 학습 때 정한 임계값이 0.5 가 되도록 정규화돼 있다.
-    메타데이터 model_format=anomaly · method · imgsz · threshold · backbone.
+    메타데이터 model_format=anomaly · method · imgsz · threshold · backbone · names.
+    names = {0: 'good', 1: <test/ 아래 정상 아닌 폴더, 이름순>…} — MLOps 가 모델 계열의 클래스와 대조한다.
+
+사전학습 백본 (--pretrained):
+    백본 가중치는 원래 timm(Hugging Face) · torchvision 이 인터넷에서 받는다. MLOps 학습 워커는 오프라인 고정
+    (HF_HUB_OFFLINE=1)이라 받을 수 없으므로, 사전학습 미러에 올린 가중치 파일(또는 그 파일 하나가 든 폴더)을 준다.
+    timm 가중치 그대로 — 예: Hugging Face timm/resnet18.a1_in1k 의 model.safetensors. --backbone 과 같은 구조여야 한다.
 
 사용 예:
     python train_anomaly.py --dataset ./data --output ./output
+    python train_anomaly.py --dataset ./data --output ./output --pretrained ./mirror/timm-resnet18
 """
 
 import argparse
@@ -102,6 +109,8 @@ def main():
     parser.add_argument("--export_onnx", action="store_true")
     parser.add_argument("--backend", default="auto", choices=["auto", "anomalib", "simple"],
                         help="auto: anomalib 이 있으면 anomalib, 없으면 간이 PatchCore · anomalib · simple: 강제")
+    parser.add_argument("--pretrained", default=None,
+                        help="백본 가중치 파일(.safetensors/.pth/.bin) 또는 그 파일 하나가 든 폴더 — 없으면 인터넷에서 받는다")
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
@@ -118,6 +127,10 @@ def main():
     if not os.path.exists(train_dir):
         print(f"[ERROR] train/good 폴더를 찾을 수 없습니다: {train_dir}", flush=True)
         sys.exit(1)
+
+    args.weights_file = _resolve_weights_file(args.pretrained)
+    if args.weights_file:
+        print(f"[INFO] 백본 가중치: {args.weights_file}", flush=True)
 
     # anomalib 사용 시도 (--backend simple 이면 건너뜀)
     if args.backend != "simple":
@@ -151,6 +164,10 @@ def train_with_anomalib(args):
 
     print("[PROGRESS] 0", flush=True)
     print(f"[CONFIG] method={args.method} backbone={args.backbone} coreset={args.coreset_ratio}", flush=True)
+
+    # 백본은 모델을 만드는 순간 timm 이 받으므로 그 전에 로컬 가중치로 돌려 둔다
+    if args.weights_file:
+        _use_local_timm_weights(args.weights_file)
 
     # 모델 선택 + 백본/coreset 파라미터 주입
     if args.method == "patchcore":
@@ -254,7 +271,8 @@ def train_with_anomalib(args):
             import onnx
             m = onnx.load(onnx_path)
             for k, v in {"model_format": "anomaly", "method": args.method, "imgsz": str(args.imgsz),
-                         "threshold": "0.5" if scale != 1.0 else "", "backbone": args.backbone}.items():
+                         "threshold": "0.5" if scale != 1.0 else "", "backbone": args.backbone,
+                         "names": _names_repr(_class_names(args.dataset))}.items():
                 p = m.metadata_props.add()
                 p.key, p.value = k, v
             onnx.save(m, onnx_path)
@@ -311,6 +329,61 @@ def _numpy2_compat_for_imgaug():
     }
 
 
+WEIGHT_EXTS = (".safetensors", ".pth", ".pt", ".bin")
+
+
+def _resolve_weights_file(pretrained):
+    """--pretrained 를 가중치 파일 경로로 바꾼다. 워커는 사전학습 미러를 폴더로 넘기므로 그 안의 파일 하나를 고른다."""
+    if not pretrained:
+        return None
+    if os.path.isfile(pretrained):
+        return pretrained
+    if not os.path.isdir(pretrained):
+        print(f"[ERROR] 사전학습 가중치를 찾을 수 없습니다: {pretrained}", flush=True)
+        sys.exit(1)
+    files = sorted(f for f in os.listdir(pretrained) if f.lower().endswith(WEIGHT_EXTS))
+    if len(files) != 1:
+        print(f"[ERROR] 사전학습 폴더에 가중치 파일({', '.join(WEIGHT_EXTS)})이 하나만 있어야 합니다: "
+              f"{pretrained} → {files or '없음'}", flush=True)
+        sys.exit(1)
+    return os.path.join(pretrained, files[0])
+
+
+def _load_state_dict(path):
+    import torch
+    if path.lower().endswith(".safetensors"):
+        from safetensors.torch import load_file
+        return load_file(path)
+    sd = torch.load(path, map_location="cpu", weights_only=True)
+    return sd.get("state_dict", sd) if isinstance(sd, dict) else sd
+
+
+def _use_local_timm_weights(path):
+    """anomalib 의 특징 추출기는 timm.create_model(pretrained=True) 로 백본을 Hugging Face 에서 받는다.
+    오프라인 워커에서는 그게 실패하므로, 사전학습 가중치를 이 파일에서 읽게 한다 (timm 의 pretrained_cfg 'file')."""
+    import timm
+    original = timm.create_model
+
+    def create_model(model_name, pretrained=False, **kwargs):
+        if pretrained and "pretrained_cfg_overlay" not in kwargs:
+            kwargs["pretrained_cfg_overlay"] = dict(file=path)
+        return original(model_name, pretrained=pretrained, **kwargs)
+
+    timm.create_model = create_model
+
+
+def _class_names(dataset):
+    """정상(good) 다음에 test/ 아래 나머지 폴더를 이름순으로 — MLOps 모델 계열 클래스와 같은 순서로 입력한다."""
+    test_dir = os.path.join(dataset, "test")
+    others = sorted(d for d in os.listdir(test_dir)
+                    if d != "good" and os.path.isdir(os.path.join(test_dir, d))) if os.path.isdir(test_dir) else []
+    return ["good"] + (others or ["defect"])
+
+
+def _names_repr(names):
+    return "{" + ", ".join(f"{i}: '{n}'" for i, n in enumerate(names)) + "}"
+
+
 def _list_images(folder):
     exts = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
     if not os.path.isdir(folder):
@@ -357,7 +430,18 @@ def train_simple_patchcore(args):
         "resnet50": models.resnet50,
         "wide_resnet50_2": models.wide_resnet50_2,
     }
-    backbone = backbone_map.get(args.backbone, models.resnet18)(weights="DEFAULT").eval().to(device)
+    factory = backbone_map.get(args.backbone, models.resnet18)
+    if args.weights_file:
+        # timm ResNet 가중치는 torchvision 과 층 이름이 같아 그대로 얹힌다 (fc 등 분류 머리는 쓰지 않는다)
+        net = factory(weights=None)
+        missing, _ = net.load_state_dict(_load_state_dict(args.weights_file), strict=False)
+        missing = [k for k in missing if not k.startswith("fc.")]
+        if missing:
+            print(f"[ERROR] 백본 가중치가 {args.backbone} 구조와 맞지 않습니다 (빠진 층 {len(missing)}개, 예: {missing[0]})", flush=True)
+            sys.exit(1)
+        backbone = net.eval().to(device)
+    else:
+        backbone = factory(weights="DEFAULT").eval().to(device)
 
     class PatchEmbedder(torch.nn.Module):
         """입력 [B,3,S,S] → 패치 특징 [B,C,S/8,S/8] (layer2 해상도)."""
@@ -505,7 +589,8 @@ def train_simple_patchcore(args):
             import onnx
             m = onnx.load(onnx_path)
             for k, v in {"model_format": "anomaly", "method": "simple_patchcore", "imgsz": str(args.imgsz),
-                         "threshold": "0.5", "backbone": args.backbone}.items():
+                         "threshold": "0.5", "backbone": args.backbone,
+                         "names": _names_repr(_class_names(args.dataset))}.items():
                 p = m.metadata_props.add()
                 p.key, p.value = k, v
             onnx.save(m, onnx_path)
