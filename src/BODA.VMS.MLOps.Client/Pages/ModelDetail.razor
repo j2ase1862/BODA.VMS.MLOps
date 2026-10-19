@@ -35,6 +35,10 @@ else
             <div class="d-flex gap-2">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Upload"
                            OnClick="@(() => _uploadOpen = true)">버전 업로드</MudButton>
+                <MudTooltip Text="이름 변경">
+                    <MudIconButton Icon="@Icons.Material.Filled.DriveFileRenameOutline" aria-label="이름 변경"
+                                   Disabled="@_busy" OnClick="OpenRename" />
+                </MudTooltip>
                 @* 버전이 하나라도 있으면 서버가 막는다 — 그때는 버튼을 아예 보이지 않는다 *@
                 @if (!_loadingVersions && _versions.Count == 0)
                 {
@@ -322,6 +326,25 @@ else
     </DialogActions>
 </MudDialog>
 
+<MudDialog @bind-Visible="_renameOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">이름 변경</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+            이름만 바뀝니다. 버전·학습 작업·레시피 바인딩은 계열 ID 로 이어져 있어 그대로입니다.
+        </MudText>
+        <MudTextField @bind-Value="_newName" Label="이름" Immediate="true" AutoFocus="true" />
+        @if (_renameError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_renameError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _renameOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="RenameAsync"
+                   Disabled="@(_busy || string.IsNullOrWhiteSpace(_newName) || _newName.Trim() == _model?.Name)">변경</MudButton>
+    </DialogActions>
+</MudDialog>
+
 @code {
     [Parameter] public Guid Id { get; set; }
 
@@ -343,6 +366,9 @@ else
 
     private bool _busy;
     private bool _promoteOpen, _promotingBusy, _confirmLicense;
+    private bool _renameOpen;
+    private string _newName = "";
+    private string? _renameError;
     private ModelVersionDto? _promoting;
     private ModelStage _targetStage = ModelStage.Staging;
     private string _promoteReason = "";
@@ -456,6 +482,28 @@ else
             await LoadAsync();
         }
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private void OpenRename()
+    {
+        if (_model is null) return;
+        _newName = _model.Name;
+        _renameError = null;
+        _renameOpen = true;
+    }
+
+    private async Task RenameAsync()
+    {
+        if (_model is null || string.IsNullOrWhiteSpace(_newName)) return;
+        _busy = true;
+        try
+        {
+            _model = await Api.UpdateModelAsync(_model.Id, new UpdateModelRequest(Name: _newName.Trim()));
+            _renameOpen = false;
+            Snackbar.Add($"이름을 '{_model.Name}' 으로 바꿨습니다", Severity.Success);
+        }
+        catch (MlopsApiException ex) { _renameError = ex.Describe(); }
         finally { _busy = false; }
     }
 
