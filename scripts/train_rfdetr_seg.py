@@ -438,23 +438,35 @@ def build_model(rfdetr, pretrained):
     클래스 수는 넘기지 않는다. 학습이 데이터셋에서 스스로 세는데(_detect_num_classes_for_training),
     그 값과 다른 수를 밀어 넣으면 라벨 공간이 어긋난 채 학습이 돈다.
     """
-    wanted = str(pretrained).strip().lower()
     candidates = [n for n in dir(rfdetr) if n.startswith("RFDETRSeg")]
     if not candidates:
         fail("설치된 rfdetr 에 세그멘테이션 모델이 없습니다. pip install -U rfdetr")
 
-    match = next((n for n in candidates if n.lower() == f"rfdetrseg{wanted}"), None)
+    # MLOps 워커는 사전학습 미러를 폴더로 넘긴다 — 그 안의 체크포인트 하나를 쓴다
+    weights = resolve_checkpoint(pretrained) if os.path.exists(pretrained) else None
+    # 크기는 이름에서 읽는다: "medium" 이나 체크포인트 파일 이름 rf-detr-seg-medium.pt
+    key = os.path.splitext(os.path.basename(weights))[0] if weights else str(pretrained).strip()
+    key = "".join(ch for ch in key.lower() if ch.isalnum())
+    match = next((n for n in candidates if n.lower() == key or n.lower() == f"rfdetrseg{key}"), None)
     if match is None:
-        if os.path.exists(pretrained):
-            match = candidates[0]   # 체크포인트를 직접 준 경우
-        else:
-            fail(f"'{pretrained}' 에 맞는 세그멘테이션 모델이 없습니다. 쓸 수 있는 것: {sorted(candidates)}")
+        fail(f"'{key}' 에 맞는 세그멘테이션 모델이 없습니다. 체크포인트 이름은 rf-detr-seg-<크기>.pt 여야 합니다 "
+             f"(쓸 수 있는 것: {sorted(candidates)})")
 
-    emit("INFO", f"모델 {match}")
+    emit("INFO", f"모델 {match}" + (f" · 체크포인트 {weights}" if weights else ""))
     factory = getattr(rfdetr, match)
-    if os.path.exists(pretrained):
-        return factory(pretrain_weights=pretrained)
+    if weights:
+        return factory(pretrain_weights=weights)
     return factory()
+
+
+def resolve_checkpoint(path):
+    """파일이면 그대로, 폴더면 그 안의 체크포인트(.pt/.pth) 하나."""
+    if os.path.isfile(path):
+        return path
+    files = sorted(f for f in os.listdir(path) if f.lower().endswith((".pt", ".pth")))
+    if len(files) != 1:
+        fail(f"사전학습 폴더에 체크포인트(.pt/.pth)가 하나만 있어야 합니다: {path} → {files or '없음'}")
+    return os.path.join(path, files[0])
 
 
 def main():
