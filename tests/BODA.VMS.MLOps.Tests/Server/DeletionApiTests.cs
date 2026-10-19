@@ -275,4 +275,29 @@ public class DeletionApiTests : IClassFixture<MlopsApiFactory>
         (await viewer.PostAsJsonAsync("/api/images/delete", new DeleteImagesRequest([Guid.NewGuid()]), Json))
             .StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
+
+    /// <summary>
+    /// 지울 수 없는 계열(버전·작업이 걸린)은 이름을 바꿔 정리한다 — 모델 상세 화면의 이름 변경 버튼이 쓰는 길.
+    /// 이름만 바뀌고 버전은 같은 계열에 그대로 붙어 있어야 한다.
+    /// </summary>
+    [Fact]
+    public async Task Model_family_rename_keeps_versions_and_needs_engineer()
+    {
+        var eng = await _f.EngineerAsync();
+        var model = await CreateModelAsync(eng, "m-rename-before");
+        var version = (await (await UploadVersionAsync(eng, model.Id, OnnxStubs.Bytes(OnnxStubs.DeployWithMeta)))
+            .Content.ReadFromJsonAsync<ModelVersionDto>(Json))!;
+
+        var viewer = await _f.ViewerAsync();
+        (await viewer.PatchAsJsonAsync($"/api/models/{model.Id}", new UpdateModelRequest(Name: "x"), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        var res = await eng.PatchAsJsonAsync($"/api/models/{model.Id}", new UpdateModelRequest(Name: "  GS-B 이상탐지  "), Json);
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<ModelDto>(Json))!.Name.Should().Be("GS-B 이상탐지");
+
+        (await eng.GetFromJsonAsync<ModelDto>($"/api/models/{model.Id}", Json))!.Name.Should().Be("GS-B 이상탐지");
+        var versions = (await eng.GetFromJsonAsync<List<ModelVersionDto>>($"/api/models/{model.Id}/versions", Json))!;
+        versions.Should().ContainSingle(v => v.Id == version.Id);
+    }
 }
