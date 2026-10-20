@@ -52,6 +52,10 @@ node docs/manual/gen_manual.js install.json   # 설치 가이드
 (`C:\Users\<이름>\AppData\...`). 고객에게 나가는 문서라 그 부분만 덮어 두었습니다 —
 원본 PNG 를 다시 만들면 가림도 사라지므로 다시 칠하세요.
 
+`06_workers.png` 는 **위쪽 줄(GPU-01 · GPU-02)만 남기고 잘라 두었습니다.** 개발 DB 에 남은 시험 워커
+(`dev-rtx4060` 두 대 · `msi-test`)가 아래 줄에 찍히는데, 그 카드에는 개발 PC 이름이 나옵니다.
+다시 찍으면 다시 자르세요.
+
 **docx 에서 가리지 마세요.** Word 에서 이미지 위에 도형을 얹으면 그 문서에서는 지워지지만,
 `gen_manual.js` 를 다시 돌리는 순간 없어집니다. 가림은 `screenshots/` 의 PNG 에 넣습니다.
 
@@ -79,6 +83,30 @@ MSI 마법사 화면(`17_msi_wizard`)은 워커가 **설치되지 않은** PC �
 라벨링 화면은 **미라벨 이미지가 남아 있는 데이터셋**을 골라야 "라벨 없음" 상태의 캔버스가 찍힙니다
 (다 라벨링된 데이터셋도 열리기는 합니다 — 첫 장이 열립니다). 사진이 아예 없는 데이터셋만
 빈 화면입니다. `capture.js` 가 검출·분류에서 각각 미라벨이 남은 데이터셋을 골라 씁니다.
+
+**예제 데이터는 개발 DB 의 복사본으로 씁니다.** `src/BODA.VMS.MLOps.Server/mlops-dev.db` 와 `.dev-storage` 를
+임시 폴더에 복사하고, 그 복사본을 가리켜 다른 포트로 띄웁니다 — 5310 은 그 PC 의 MLOps 서비스가 쓰고 있을 수 있고,
+그림을 맞추느라 보관·삭제한 것이 원본 개발 DB 에 남지 않게 하려는 것입니다.
+
+```bash
+ASPNETCORE_ENVIRONMENT=Development \
+ConnectionStrings__DefaultConnection="Data Source=<복사본>\mlops-dev.db" \
+Mlops__StorageRoot="<복사본>\storage" \
+Monitoring__ProductionWebUrl="http://127.0.0.1:5399" \
+dotnet run --project src/BODA.VMS.MLOps.Server --urls http://localhost:5311
+
+MLOPS_URL=http://localhost:5311 node docs/manual/capture.js 01_dashboard 02_datasets …
+```
+
+개발 DB 에는 통합 시험이 남긴 것(`it-…`·`e2e-live-…`·`재현 A …` 데이터셋·모델·판)이 섞여 있습니다.
+찍기 전에 API 로 데이터셋·모델은 보관(`PATCH … {"isArchived":true}`)하고, 판은 지웁니다.
+수집 사진(`15_image_pool`)에는 라인 사진이 있어야 하므로 `POST /api/images/line-ng` 로 `lineId`·`verdict:` 태그를
+붙여 몇 장 올립니다. 2026-10-20 판은 GS 시험 자료의 이상 탐지 사진(T자 피팅)을 썼습니다.
+
+**모니터링 그림(13 · 14)은 운영 웹이 있어야 찍힙니다.** 운영 웹 대신 `/api/history/model-outcomes` 하나만
+답하는 작은 가짜 서버를 띄워 `Monitoring:ProductionWebUrl` 로 가리킵니다. `modelVersion` 은 `mv:<버전 id 32자리>`,
+요청의 `endDate` 가 지금이면 최근 구간, 아니면 기준 구간으로 답합니다. 재학습 창(14)은 **학습 작업에서 나온 버전**이
+나빠져 있어야 [재학습] 버튼이 생깁니다.
 
 **목차는 Word 가 채웁니다.** `gen_manual.js` 는 목차 *필드*만 넣습니다. 필드를 갱신하지 않으면
 받는 사람 화면에 항목이 비어 보이므로, 배포 전에 Word 로 한 번 열어 `Ctrl+A` → `F9` 로 갱신한 뒤
