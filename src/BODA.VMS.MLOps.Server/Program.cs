@@ -131,6 +131,11 @@ else if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
         "운영 웹이 없는 설치라면 Auth:Mode=Local 로 두고 Auth:Local:Key 를 주세요.");
 }
 
+// Web 모드의 개발 토큰은 전용 audience 로 나간다. 그 audience 는 개발 토큰이 켜져 있을 때만 받는다 — 운영에서는 막힌다.
+string[] validAudiences = localMode ? [authOptions.Local.Audience]
+    : authOptions.EnableDevTokens ? [jwt.Audience, ServiceTokenIssuer.DevAudience]
+    : [jwt.Audience];
+
 builder.Services.AddAuthentication(SmartAuthScheme.Name)
     .AddPolicyScheme(SmartAuthScheme.Name, "JWT or WorkerToken", o => o.ForwardDefaultSelector = SmartAuthScheme.Select)
     .AddJwtBearer(o =>
@@ -142,7 +147,7 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             ValidIssuer = localMode ? authOptions.Local.Issuer : jwt.Issuer,
-            ValidAudience = localMode ? authOptions.Local.Audience : jwt.Audience,
+            ValidAudiences = validAudiences,
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(localMode ? authOptions.Local.Key : jwt.Key)),
             ClockSkew = TimeSpan.FromMinutes(1),
