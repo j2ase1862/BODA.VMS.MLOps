@@ -22,6 +22,20 @@ namespace BODA.VMS.MLOps.Server.Auth;
 public sealed class ServiceTokenIssuer(IOptions<JwtOptions> jwt)
 {
     /// <summary>
+    /// 개발 토큰의 audience. <b>운영 웹이 받는 audience 와 일부러 다르게 둔다.</b>
+    ///
+    /// <para>
+    /// Web 모드에서는 두 서버가 서명 키·발급자를 공유하고, 운영 웹 로그인 토큰을 받으려고 우리 audience 도
+    /// 운영 웹과 맞춘다. 그 상태로 개발 토큰을 우리 audience 로 발급하면, 개발 PC 에 운영 키를 넣고
+    /// <c>dotnet run</c> 한 동안 익명 요청 하나로 <b>운영 웹이 받는 Admin 토큰</b>이 나온다 (2026-09-11 점검에서 발견).
+    /// 운영 웹의 토큰 세대 검사는 사용자 id 와 세대만 보므로 이것을 막지 못한다.
+    /// 개발 토큰만 이 audience 로 발급하고, 서버는 개발 토큰이 켜져 있을 때만 이것을 받는다.
+    /// 운영 웹은 이 값을 모르므로 개발 토큰은 거기서 통하지 않는다.
+    /// </para>
+    /// </summary>
+    public const string DevAudience = "BODA.VMS.MLOps.Dev";
+
+    /// <summary>
     /// 토큰을 만든다. <paramref name="roles"/> 는 <see cref="Roles.All"/> 안의 것만 실린다 —
     /// 오타로 만든 역할이 조용히 실려 나중에 "왜 권한이 없지" 로 헤매지 않게 한다.
     ///
@@ -29,7 +43,7 @@ public sealed class ServiceTokenIssuer(IOptions<JwtOptions> jwt)
     /// <paramref name="audience"/> 를 주면 그 값으로 발급한다. <b>남의 서버로 보낼 토큰은
     /// 그쪽이 검증하는 audience 여야 한다</b> — 우리 것과 같다고 보면 401 을 받는다.
     /// 실제로 BODA.VMS.Web 은 <c>BODA.VMS.Web.Client</c> 를 검증한다.
-    /// null 이면 우리 자신의 audience 를 쓴다 (개발 토큰 등 우리가 받을 토큰).
+    /// null 이면 우리 자신의 audience 를 쓴다. 개발 토큰은 <see cref="DevAudience"/> 를 넘긴다.
     /// </para>
     /// </summary>
     /// <summary>

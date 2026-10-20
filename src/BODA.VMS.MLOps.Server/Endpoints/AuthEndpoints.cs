@@ -29,9 +29,11 @@ public static class AuthEndpoints
             var roles = ServiceTokenIssuer.AcceptedRoles(req.Roles);
             // 모드마다 이 서버가 받아들이는 서명 키·발급자가 다르다. 로컬 모드에서 운영 웹 키로
             // 만들어 주면 방금 받은 토큰이 다음 요청에서 401 이 된다.
+            // Web 모드는 운영 웹과 키를 공유하므로 전용 audience 로 발급한다 — 거기서는 통하지 않게
+            // (ServiceTokenIssuer.DevAudience).
             var token = auth.Value.Mode == AuthMode.Local
                 ? local.IssueService(req.User, roles, req.Hours)
-                : issuer.Issue(req.User, roles, req.Hours);
+                : issuer.Issue(req.User, roles, req.Hours, audience: ServiceTokenIssuer.DevAudience);
             return Results.Ok(new { token, roles });
         }).AllowAnonymous();
 
