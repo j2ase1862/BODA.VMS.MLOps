@@ -35,11 +35,37 @@ const PAGES = [
   { file: "06_workers", path: "/workers", settle: 2000 },
   { file: "07_pretrained", path: "/pretrained", settle: 2000 },
   { file: "08_models", path: "/models", settle: 2000 },
-  { file: "09_bindings", path: "/bindings", settle: 2000 },
+  // 바인딩은 레시피 ID 로 조회해야 표가 나온다 — 빈 화면을 찍지 않도록 넣고 [조회] 까지 누른다
+  { file: "09_bindings", path: "/bindings", settle: 2000, prepare: fillRecipe },
   { file: "10_line_clients", path: "/line-clients", settle: 2000 },
   // 모니터링은 운영 웹까지 다녀오므로 넉넉히 기다린다. 설정이 없으면 "볼 수 없습니다" 가 찍힌다.
   { file: "13_monitoring", path: "/monitoring", settle: 6000 },
 ];
+
+// 바인딩 화면에 넣을 레시피 ID. 예제 데이터의 라인A 레시피가 기본이다.
+const RECIPE = process.env.MLOPS_DOC_RECIPE || "RCP-LINE-A";
+
+async function fillRecipe(client) {
+  // Blazor 는 input 이벤트로 바인딩한다 — value 만 바꾸면 [조회] 가 잠긴 채로 남는다
+  await evaluate(client, `
+    (() => {
+      const f = document.querySelector('.mud-main-content input:not([type=hidden])');
+      if (!f) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(f, ${JSON.stringify(RECIPE)});
+      f.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`);
+  await sleep(500);
+  await evaluate(client, `
+    (() => {
+      const b = Array.from(document.querySelectorAll('button')).find(e => e.innerText.trim() === '조회');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`);
+  await sleep(1500);
+}
 
 async function cdp() {
   const res = await fetch(`http://127.0.0.1:${PORT}/json/list`);
@@ -132,6 +158,7 @@ async function main() {
     process.stdout.write(`${page.path}\n`);
     await client.send("Page.navigate", { url: BASE + page.path });
     await sleep(page.settle);
+    if (page.prepare) await page.prepare(client);
     await shoot(client, page.file);
   }
 
