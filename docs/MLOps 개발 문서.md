@@ -1,6 +1,6 @@
 # BODA VMS MLOps 플랫폼 개발 문서 — AI 학습 도구의 웹 전환
 
-문서 버전: v0.1 (초안, 2026-09-08)
+문서 버전: v0.2 (2026-10-21)
 작성 배경: VMS.DeepLearning(WPF) 을 GS 인증 범위에서 분리하고, 데이터 관리 → 라벨링 → 학습 → 배포 → 모니터링을 웹 플랫폼으로 옮기는 개발 계획
 관련 문서: `D:\Repo\VMS\docs\gs\guides\gs_scope_ai_tools.md` (인증 범위), `docs\design\lot-concept-spec.md`, `docs\design\wo-mixed-recipe-spec.md`, BODA.VMS.Web 리포 (`D:\Project\BODA.VMS.Web`)
 
@@ -67,9 +67,17 @@ SAIGE 는 플랫폼(데이터·라벨링·학습·배포) + SDK 구조다. 우�
 ### 3.1 배치 형태
 | 형태 | 구성 | 대상 |
 |---|---|---|
+| 분리형 | 관리 서버(기존 Web 서버) + GPU 워커 1~N, 라인 PC 는 런타임만 | 다중 라인 공장 |
 | 올인원 | 관리 서버 + GPU 워커가 한 PC (라벨링 PC 겸용) | 소규모 사이트, 첫 도입 |
-| 분리형 | 관리 서버(기존 Web 서버) + GPU 워커 1~N | 다중 라인 공장 |
-| 단독 모드 | 서버 없음. 라인 PC 에서 기존 WPF 도구 유지 | 서버를 두지 않는 사이트 (#407 단독 모드와 동일 원칙) |
+| 라인 PC 겸용 | 라인 PC 한 대에 런타임 + 관리 서버 + GPU 워커 | 워커 PC 를 따로 둘 수 없는 소규모 사이트 |
+
+~~단독 모드 (서버 없음, 라인 PC 에서 WPF 도구 유지)~~ 는 2026-10-21 에 접었다. 딥러닝 학습은 MLOps 한 경로로 모은다 (§5.5).
+서버를 두지 않던 사이트는 **라인 PC 겸용**으로 간다 — PC 를 더 사지 않아도 된다.
+
+**라인 PC 겸용은 검사와 학습이 한 GPU 를 나눠 쓴다.** 학습이 GPU 를 수십 분 채우면 검사 추론이 늦어져 택트를 놓친다.
+WPF 도구로 학습해도 같은 문제였다 — 누가 띄웠든 같은 GPU 다. 워커 PC 를 따로 두는 것이 가장 깨끗하지만 소규모 사이트에는
+그 비용이 크므로, **AutoRun 중에는 학습을 돌리지 않는 것을 코드로 막는다** (§5.6). 그 장치가 들어오기 전에는
+운영 규칙(검사 중에는 그 워커를 비활성화)으로 막는다.
 
 ### 3.2 설계 원칙
 1. **런타임은 플랫폼 없이도 동작한다.** 레시피의 모델 참조는 로컬 경로를 항상 허용하고, 플랫폼 바인딩은 선택이다.
@@ -140,6 +148,56 @@ Image ← ImageSource (수동 업로드 | 라인 NG 업로드 | Active Learning 
 ### 5.5 WPF 도구의 위치
 - Phase 1~3 동안 WPF 도구는 유지 보수 모드. Phase 1 에서 "레지스트리에 업로드", Phase 2 에서 "웹 데이터셋 버전 내려받기" 버튼만 추가.
 - Phase 4 완료 후 WPF 라벨링은 폐기하고 인스톨러 `AiTools` Feature 는 워커 설치 패키지로 대체.
+
+**2026-10-21 결정 — WPF 도구를 정리하고 딥러닝은 MLOps 로 일원화한다.**
+Phase 4 가 끝났는데도 WPF 도구가 라벨링·학습을 그대로 갖고 설치되어, 같은 일을 하는 화면이 두 벌이 됐다.
+사용자 매뉴얼 7.1 의 [레지스트리에 등록] 을 웹에서 찾다 못 찾는 일이 실제로 있었다. 학습 엔진(`train_*.py`)은 하나지만
+WPF 에서 올린 버전은 출처가 `Upload` 라 데이터셋 판·seed 가 남지 않아, 두 길을 섞으면 재현되는 모델과 안 되는 모델이 섞인다.
+단독 모드도 함께 접는다 (§3.1).
+
+정리 전에 MLOps 가 먼저 채울 것 — WPF 에는 있고 웹에는 없거나 모자란 것 (2026-10-21 대조):
+
+| 순서 | 항목 | 지금 웹 | 범위 |
+|---|---|---|---|
+| 1 | PP-OCR 내보내기 | 이미지당 **첫 Text 박스만** rec 로 낸다(`DatasetExport.WritePpOcr`, `DatasetSnapshotService` 크롭). 크롭할 박스도 Text 가 아니라 첫 박스다 | 박스마다 rec 크롭. 형식은 `train_ppocr.py` 가 읽는 그대로. **det 은 만들지 않는다** — `train_ppocr.py --target detection` 이 det 설정에 rec 라벨 파일을 넘겨 검출 학습이 돌지 않으므로, 허용 목록의 `detection` 선택지를 닫는다 |
+| 1b | PP-OCR rec 데이터셋 가져오기 | 밖에서 만든 zip 을 `ppocr` 판으로 올리는 길은 있다(`DatasetVersionService.UploadAsync`, 내용 무검사) | VisionSetup SynthData 출력(AiTools 와 함께 학습 카드가 사라진다)을 zip 으로 올려 워커가 그대로 학습하는지 검증하고, 구조가 틀린 zip 은 올릴 때 이유와 함께 거절 |
+| 2 | 데이터셋 클래스 추가 | 생성 후 불변(`UpdateDatasetRequest` 는 이름·설명·보관만) | **끝에 덧붙이기만**. 이름·순서 변경·삭제는 막는다 — 뜬 판과 학습한 모델이 그 순서를 쥐고 있다 |
+| 3 | 모델 돌려 보기 | 없음. 승격하는 사람이 지표 숫자만 본다 | `PrelabelService` 의 검출 추론을 재사용해 사진별 겹쳐 보기 · conf/IoU 조절 (WPF 미리보기도 검출만) |
+| 4 | 폴더 단위 Active Learning | 불확실도로 라벨링 순서만 정하고 보여 주지 않는다 | 이미지 풀 → 후보 모델로 훑기 → 불확실도 순 목록 → 골라 데이터셋에 담기 |
+| 5 | 증강 프리셋 | 값을 하나씩 넣는다 | 제출 화면의 값 묶음 버튼. 화이트리스트 검사는 그대로 |
+
+그 뒤 VMS 리포에서 (1·1b·2·3 이 머지된 뒤):
+- **학습 스크립트 원본을 MLOps 리포로 옮긴다** (지금은 `VMS.DeepLearning/scripts`). 그 뒤로는 stdout 프로토콜(`TrainingOutputParser`·`TrainingArgumentBuilder`)은
+  `VMS.Core.Contracts` 에, 스크립트는 MLOps 에 있으므로 **프로토콜을 바꿀 때는 두 리포 PR 이 함께 간다.** 옮기는 시점에 CLAUDE.md 의 "손대면 안 되는 것" 절도 고친다.
+- 마스터 MSI 에서 `AiTools` Feature·체크박스·`ExcludeAiTools` 를 지운다. **워커는 별도 MSI 로 배포한다** — LocalSystem 서비스이고 Python·GPU 환경을 요구해
+  라인 PC 기본 설치와 성격이 다르다. 라인 PC 겸용은 두 MSI 를 각각 설치한다.
+- VisionSetup 의 Deep Learning 메뉴·`VMS.DeepLearning` 프로젝트·이를 참조하는 시험, VisionSetup 의 죽은 `TrainingService`·`AnnotationViewModel`·`AnnotationView`,
+  SynthData 창의 학습 카드(→ MLOps 로 올리는 안내로), 도움말·템플릿 문구의 "VMS.DeepLearning 에서 학습" 안내를 지운다.
+
+### 5.6 검사 중 학습 막기 (라인 PC 겸용)
+라인 PC 겸용(§3.1)에서 VMS 가 **AutoRun 중이면 그 PC 의 워커는 학습하지 않는다.** 검사가 학습보다 먼저다.
+- **신호는 같은 PC 안에서 주고받는다.** VMS 가 AutoRun 동안 Windows 명명 객체를 잡고, 워커가 작업을 받기 전과 학습 중에 확인한다.
+  서버를 거치지 않으므로 서버가 죽어도 동작하고, VMS 가 비정상 종료하면 운영체제가 객체를 풀어 준다(파일 표시는 남아 워커가 영영 멈춘다).
+  워커는 LocalSystem(세션 0), VMS 는 사용자 세션이라 `Global\` 이름 공간과 접근 권한을 맞춰야 한다. 이름은 두 리포가 같은 문자열을 써야 하는 계약이라 `VMS.Core.Contracts` 에 둔다.
+- **학습 중에 AutoRun 이 시작되면 학습을 중단하고 대기열로 되돌린다.** 일시정지는 GPU 메모리를 쥔 채라 검사 추론이 메모리 부족으로 터질 수 있고,
+  AutoRun 을 학습 끝까지 미루는 것은 라인이 학습을 기다리는 꼴이다. 되돌린 것은 실패 시도로 세지 않는다(`MaxAttempts` 를 갉아먹지 않게).
+  새 전이이므로 `TrainingJobStateMachine` 과 그 시험부터 고친다. 처음부터 다시 도는 것이 비용이고, 체크포인트 이어 하기는 `train_*.py` 변경이라 나중 일이다.
+- **처음에는 학습만 막는다.** 서버도 같은 PC 면 SAM 보조·사전 라벨링·모델 돌려 보기가 CPU 를 쓰지만 학습보다 훨씬 가볍다. 택트에 영향이 보이면 그때 넣는다.
+- 순서: Contracts 에 신호 이름 → VMS 의 AutoRun 이 신호를 잡음 → 워커가 받아 중단·대기열 (Phase 3 명세 §7).
+
+VMS 쪽 검토 결과 (2026-10-21, VMS PR 머지 때 확정):
+- **신호를 잡는 구간:** AutoProcessService 의 `StartAsync` 부터 `StopCoreAsync` 끝까지(`IsRunning`) + **Roller 연속 검사**.
+  수동 단발 검사·VisionSetup 티칭·Test Run·시뮬레이션은 대화형이라 잡지 않는다. 그래서 이름이 AutoRun 보다 넓다.
+- **이름(안):** `VMS.Core.Services.InspectionActivitySignal.MutexName = @"Global\BODA.VMS.InspectionActive"`.
+  같은 클래스의 `TryAcquire()`(VMS 용, 실패하면 null — 생성 실패가 AutoRun 을 막지 않는다)와 `IsActive()`(워커용)를 양쪽이 같이 쓴다.
+  **워커는 `IsActive()` 만 부른다** — `UnauthorizedAccessException`(있는데 못 엶)도 "검사 중" 으로 본다.
+- **Mutex 는 `initiallyOwned: false`** — 소유는 스레드에 묶이는데 VMS 의 시작·정지는 다른 스레드라 abandoned 가 된다. 신호는 존재만 쓴다.
+- **다중 인스턴스는 문제없다.** VMS 는 한 PC 다중 인스턴스(`--instance`)를 지원하지만, 명명 객체는 마지막 핸들이 닫힐 때 사라지므로
+  이름 하나로 충분하다. 이 이름은 인스턴스 접미사(`QualifyIpcName`)를 붙이지 않는다.
+- **라인 검사도 GPU 를 쓴다** (OnnxRuntime.Gpu, Auto = CUDA → DML → CPU). 같은 GPU 를 두고 직접 경합한다.
+- **VMS 는 워커를 기다리지 않는다.** 그래서 AutoRun 직후 몇 사이클은 워커가 GPU 메모리를 놓기 전이다.
+  워커는 신호를 **1~2초 주기**로 보고, 중단은 **파이썬 프로세스 트리를 즉시 종료**한다.
+- **패키지:** `VMS.Core.Contracts 1.43.0` (VMS v1.43.0 과 함께). 이쪽 참조를 `1.33.*` → `1.43.*` 로 올린다.
 
 ---
 
@@ -283,3 +341,4 @@ MVP = Phase 1 + Phase 3 (WPF 라벨링 유지). 이 시점에 "웹에서 학습�
 | 버전 | 날짜 | 내용 |
 |---|---|---|
 | v0.1 | 2026-09-08 | 초안 — 목표·아키텍처·도메인·컴포넌트·API·보안·라이선스·로드맵·리스크·테스트·운영·미결 |
+| v0.2 | 2026-10-21 | WPF 도구 정리·딥러닝 MLOps 일원화 결정(§5.5), 단독 모드를 접고 라인 PC 겸용 배치 추가(§3.1), AutoRun 중 학습 막기(§5.6) |
