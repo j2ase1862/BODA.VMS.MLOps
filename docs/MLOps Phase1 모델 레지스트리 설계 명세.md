@@ -14,7 +14,7 @@
 3. 레시피 도구의 ModelPath 에 `model://{modelId}@{version}` 참조를 저장하고, VMS/VisionSetup 이 레시피 동기화 시 아티팩트를 캐시로 내려받아 경로를 치환한다.
 4. 서버가 없거나 오프라인이어도 캐시에 있는 모델로 검사가 계속된다.
 5. 생산 이력에 modelVersionId 가 기록되고, 모델 버전별 NG 율이 화면에 보인다.
-6. WPF 도구(VMS.DeepLearning)에 [레지스트리에 업로드] 버튼이 있다.
+6. WPF 도구(VMS.DeepLearning)에 [레지스트리에 업로드] 버튼이 있다. (2026-10-21 VMS PR #570 으로 WPF 도구째 정리 — 상위 문서 §5.5)
 
 **비목표**: 데이터셋 관리, 학습 실행, 브라우저 라벨링 (Phase 2~4).
 
