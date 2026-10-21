@@ -44,6 +44,11 @@ const PAGES = [
 
 // 바인딩 화면에 넣을 레시피 ID. 예제 데이터의 라인A 레시피가 기본이다.
 const RECIPE = process.env.MLOPS_DOC_RECIPE || "RCP-LINE-A";
+// 데이터셋 상세(03)에 찍을 데이터셋 이름. 비우면 "라벨이 붙은 첫 데이터셋" — DB 상태에 따라 그림이 바뀐다.
+const DETAIL = process.env.MLOPS_DOC_DETAIL || "라인A 스크래치 검출";
+// 모델 돌려 보기(18)에 쓸 모델 계열 이름과 신뢰도 문턱. 실제로 무언가를 찾는 검출 모델이어야 그림이 의미가 있다.
+const TRY_MODEL = process.env.MLOPS_DOC_TRY_MODEL || "라인C 각인 검출(실모델)";
+const TRY_CONF = process.env.MLOPS_DOC_TRY_CONF || "0.15";
 
 async function fillRecipe(client) {
   // Blazor 는 input 이벤트로 바인딩한다 — value 만 바꾸면 [조회] 가 잠긴 채로 남는다
@@ -204,7 +209,8 @@ async function main() {
       const token = localStorage.getItem('mlops.token');
       const res = await fetch('${BASE}/api/datasets?archived=false', { headers: { Authorization: 'Bearer ' + token } });
       const list = await res.json();
-      const detail = list.find(d => (d.stats?.labeled ?? 0) > 0) || list[0];
+      const detail = list.find(d => d.name === ${JSON.stringify(DETAIL)})
+                     || list.find(d => (d.stats?.labeled ?? 0) > 0) || list[0];
       const unlabeled = d => (d.stats?.unlabeled ?? 0) > 0;
       // 검출은 그리기 도구(사각형·폴리곤·SAM)가 보이고, 분류는 클래스만 고른다 — 둘 다 담는다
       const detection = list.find(d => unlabeled(d) && d.taskType === 'detection');
@@ -259,6 +265,54 @@ async function main() {
       })()`);
     await sleep(1200);
     await shoot(client, "15_image_pool");
+  }
+
+  // 모델 돌려 보기 — 버전 행의 [돌려 보기] 로 들어가 사진을 뽑고, 신뢰도 문턱을 낮춘 상태로 찍는다.
+  // 기본 문턱(0.25)은 실모델 시험 모델의 최고 확신도(0.19 안팎)보다 높아 상자가 안 보인다.
+  if (want("18_model_try")) {
+    const target = await evaluate(client, `
+      (async () => {
+        const token = localStorage.getItem('mlops.token');
+        const h = { Authorization: 'Bearer ' + token };
+        const models = await (await fetch('${BASE}/api/models', { headers: h })).json();
+        const m = models.find(x => x.name === ${JSON.stringify(TRY_MODEL)}) || models.find(x => x.taskType === 'detection');
+        if (!m) return null;
+        const versions = await (await fetch('${BASE}/api/models/' + m.id + '/versions', { headers: h })).json();
+        const v = versions.find(x => x.format === 'yolo' || x.format === 'dFine' || x.format === 'dfine');
+        return v ? { model: m.id, version: v.id } : null;
+      })()`);
+    if (!target) {
+      console.log("  돌려 볼 검출 모델이 없어 그 그림은 건너뜁니다");
+    } else {
+      process.stdout.write("/models/…/try (모델 돌려 보기)\n");
+      await client.send("Page.navigate", { url: `${BASE}/models/${target.model}/try/${target.version}` });
+      await sleep(3000);
+      await evaluate(client, `
+        (() => {
+          const b = Array.from(document.querySelectorAll('button')).find(e => e.innerText.trim() === '돌려 보기');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`);
+      for (let i = 0; i < 60; i++) {
+        await sleep(500);
+        if (await evaluate(client, "!!document.querySelector('.mud-main-content img[src*=\"/thumb\"]')")) break;
+      }
+      await sleep(1500);
+      // 슬라이더는 input 이벤트로 바인딩된다 — value 만 바꾸면 화면이 그대로다
+      await evaluate(client, `
+        (() => {
+          const r = document.querySelector('input[type=range]');
+          if (!r) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(r, ${JSON.stringify(TRY_CONF)});
+          r.dispatchEvent(new Event('input', { bubbles: true }));
+          r.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()`);
+      await sleep(1500);
+      await shoot(client, "18_model_try");
+    }
   }
 
   // 재학습 창은 눌러야 나온다. 학습에서 나온 버전이 라인에서 나빠져 있어야 버튼이 생기므로,
