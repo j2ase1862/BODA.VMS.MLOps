@@ -1,5 +1,6 @@
 @* 학습 작업 제출 (Phase 3 §9). 하이퍼파라미터 항목은 서버의 화이트리스트에서 받아 그린다. *@
 @inject MlopsApi Api
+@using BODA.VMS.MLOps.Core.Training
 
 <MudDialog Visible="Visible" VisibleChanged="VisibleChanged"
            Options="new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true }">
@@ -118,6 +119,27 @@
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 이 목록은 서버 화이트리스트입니다. 비워 두면 스크립트 기본값을 씁니다.
             </MudText>
+            @if (AugmentationPresets.For(_script) is { Count: > 0 } presets)
+            {
+                @* 증강 프리셋 (§5.5 5번) — 그 스크립트가 실제로 쓰는 값만 채운다. 나머지 칸은 건드리지 않는다. *@
+                <div class="d-flex flex-wrap align-center gap-2 mt-2">
+                    <MudText Typo="Typo.body2">증강 프리셋</MudText>
+                    @foreach (var preset in presets)
+                    {
+                        <MudTooltip Text="@($"{preset.Purpose} — {string.Join(" · ", preset.Values.Select(v => $"{v.Key} {v.Value}"))}")">
+                            <MudButton Size="Size.Small" Variant="@(_preset == preset.Name ? Variant.Filled : Variant.Outlined)"
+                                       Color="@(_preset == preset.Name ? Color.Primary : Color.Default)"
+                                       OnClick="@(() => ApplyPreset(preset))">@preset.Name</MudButton>
+                        </MudTooltip>
+                    }
+                </div>
+                @if (_script == TrainingScript.TrainDfine)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+                        D-FINE 은 mosaic · mixup 을 쓰지 않아 색 증강(hsv_h · hsv_s · hsv_v)만 바뀝니다.
+                    </MudText>
+                }
+            }
             <MudGrid Class="mt-1">
                 @foreach (var spec in _specs)
                 {
@@ -179,6 +201,8 @@
     private string _snapshotDatasetName = "";
     private bool _takeNewSnapshot, _snapshotReviewedOnly = true;
     private TrainingScript _script = TrainingScript.TrainDfine;
+    /// <summary>마지막으로 누른 증강 프리셋. 값을 손으로 바꾸면 지운다 — 버튼이 켜진 채 다른 값이 들어가 있으면 거짓말이다.</summary>
+    private string? _preset;
     private string? _pretrainedRef;
     private string _backbone = "", _license = "";
     private int _seed, _priority;
@@ -253,6 +277,7 @@
     private async Task OnScriptChangedAsync(TrainingScript script)
     {
         _script = script;
+        _preset = null;
         // --pretrained 를 못 받는 스크립트로 바꾸면 고른 미러를 버린다 — 그대로 두면 제출이 거부된다
         if (PretrainedNeed == PretrainedRequirement.NotSupported) _pretrainedRef = null;
         await LoadSpecsAsync();
@@ -335,8 +360,16 @@
 
     private string Get(string key) => _values.GetValueOrDefault(key, "");
 
+    private void ApplyPreset(AugmentationPreset preset)
+    {
+        foreach (var (key, value) in preset.Values)
+            if (_specs.Any(s => s.Key == key)) _values[key] = value;
+        _preset = preset.Name;
+    }
+
     private void Set(string key, string? value)
     {
+        if (_preset is not null && AugmentationPresets.EffectiveKeys(_script).Contains(key)) _preset = null;
         if (string.IsNullOrWhiteSpace(value)) _values.Remove(key);
         else _values[key] = value.Trim();
     }

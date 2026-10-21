@@ -174,7 +174,9 @@ WPF 에서 올린 버전은 출처가 `Upload` 라 데이터셋 판·seed 가 �
 `AiTools` 가 빠지며, 학습 스크립트 원본은 MLOps `scripts/` 로 넘어왔다(`tools/check_train_curves.py` 도 함께).
 4 는 "새 사진 훑기" 로 넣었다 — 데이터셋 상세 → 수집 사진 중 그 데이터셋에 없는 것을 후보 모델로 60장씩 훑어
 **후보 없음 → 최고 점수가 낮은 순**(WPF 의 "신뢰도 낮은 순")으로 보여 주고, 사람이 골라 담는다. 고른 사진만 미리 채운다
-(`PrelabelRequest.ImageIds`). 훑기는 아무것도 담지 않는다. 남은 것은 5 증강 프리셋뿐이다.
+(`PrelabelRequest.ImageIds`). 훑기는 아무것도 담지 않는다.
+5 증강 프리셋은 WPF 의 넷(기본 · 공장 조명 · 작은 결함 · 최소)을 `Core/Training/AugmentationPresets` 로 옮기되 **스크립트가 실제로 쓰는 값만** 바꾼다 —
+`train_dfine.py` 는 mosaic·mixup 을 버리고 `train_rfdetr_seg.py` 는 증강 인자를 하나도 쓰지 않는다. **이로써 1~5 가 모두 들어갔다.**
 
 그 뒤 VMS 리포에서 (1·1b·2·3 이 머지된 뒤):
 - **학습 스크립트 원본을 MLOps 리포로 옮긴다** (지금은 `VMS.DeepLearning/scripts`). 그 뒤로는 stdout 프로토콜(`TrainingOutputParser`·`TrainingArgumentBuilder`)은
