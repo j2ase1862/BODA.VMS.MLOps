@@ -11,6 +11,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using static BODA.VMS.MLOps.Tests.Server.MlopsApiFactory;
+using VMS.Core.Services;
 
 namespace BODA.VMS.MLOps.Tests.Server;
 
@@ -69,7 +70,7 @@ public class MonitoringReportTests : IClassFixture<MonitoringReportTests.Stubbed
                 var start = ParseStart(request.RequestUri!.Query);
                 bool recent = start > owner.Clock.GetUtcNow().UtcDateTime.AddDays(-14);
 
-                var tag = ModelVersionTag.Write(owner.VersionId);
+                var tag = DlModelIdentity.ForVersion(owner.VersionId);
                 var rows = recent
                     ? new object[]
                     {

@@ -4,6 +4,7 @@ using BODA.VMS.MLOps.Contracts.Models;
 using BODA.VMS.MLOps.Core.Monitoring;
 using FluentAssertions;
 using static BODA.VMS.MLOps.Tests.Server.MlopsApiFactory;
+using VMS.Core.Services;
 
 namespace BODA.VMS.MLOps.Tests.Server;
 
@@ -45,23 +46,33 @@ public class MonitoringApiTests : IClassFixture<MlopsApiFactory>
 }
 
 /// <summary>
-/// VMS 가 싣는 식별자와 MLOps 가 읽는 식별자가 같은 규약인지.
+/// 모니터링이 기대는 모델 식별자 규약 — VMS 런타임이 싣는 <c>mv:{32자}</c> 를 MLOps 가 그대로 읽는지.
 ///
 /// <para>
-/// 두 리포에 같은 규칙이 두 벌 있다 (VMS 의 <c>DlModelIdentity</c>, 여기의
-/// <see cref="ModelVersionTag"/>). 한쪽만 바뀌면 집계가 <b>조용히 빈다</b> — 오류도 안 나고
-/// 모델별 줄이 그냥 안 나타난다. 그래서 형식을 글자 그대로 못 박는다.
+/// 규약은 <see cref="DlModelIdentity"/>(VMS.Core.Contracts) 한 곳에 있다. 예전에는 여기에 같은 규칙이 한 벌 더 있었다
+/// (<c>ModelVersionTag</c>, VMS #572 로 정리). 그래도 이 시험은 남긴다 — 패키지를 올렸는데 형식이 바뀌어 있으면
+/// 집계가 <b>조용히 빈다</b>. 오류도 안 나고 모델별 줄이 그냥 안 나타난다. VMS 쪽 <c>Wire_format_is_pinned</c> 와 같은 값을
+/// 쓰는 쪽에서도 글자 그대로 못 박는다.
 /// </para>
 /// </summary>
-public class ModelVersionTagTests
+public class DlModelIdentityContractTests
 {
-    /// <summary>VMS 가 실제로 만드는 문자열 모양. 이 값이 바뀌면 두 리포를 함께 고쳐야 한다.</summary>
+    /// <summary>VMS 가 실제로 만드는 문자열 모양. 이 값이 바뀌면 운영 웹에 쌓인 이력과 이어지지 않는다.</summary>
     [Fact]
-    public void Format_matches_what_vms_writes()
+    public void Format_is_pinned()
     {
         var id = Guid.Parse("0f8fad5b-d9cb-469f-a165-70867728950e");
 
-        ModelVersionTag.Write(id).Should().Be("mv:0f8fad5bd9cb469fa16570867728950e");
+        DlModelIdentity.ForVersion(id).Should().Be("mv:0f8fad5bd9cb469fa16570867728950e");
+        DlModelIdentity.VersionPrefix.Should().Be("mv:");
+    }
+
+    /// <summary>VMS 쪽 이력 열(DlModelVersion)이 50자라, 형식이 길어지면 라인의 업로드가 400 으로 막힌다</summary>
+    [Fact]
+    public void Fits_the_history_column()
+    {
+        DlModelIdentity.MaxLength.Should().Be(50);
+        DlModelIdentity.ForVersion(Guid.NewGuid()).Length.Should().BeLessThanOrEqualTo(DlModelIdentity.MaxLength);
     }
 
     [Fact]
@@ -69,7 +80,7 @@ public class ModelVersionTagTests
     {
         var id = Guid.NewGuid();
 
-        ModelVersionTag.TryRead(ModelVersionTag.Write(id)).Should().Be(id);
+        DlModelIdentity.TryReadVersionId(DlModelIdentity.ForVersion(id)).Should().Be(id);
     }
 
     /// <summary>옛 VMS 가 싣던 형식과 빈 값은 이어지지 않는다 — 버리지 말고 세어야 한다.</summary>
@@ -81,7 +92,7 @@ public class ModelVersionTagTests
     [InlineData("mv:이건GUID가아니다")]
     [InlineData("MV:0f8fad5bd9cb469fa16570867728950e")]   // 접두는 대소문자를 가린다
     public void Unknown_formats_read_as_null(string? identity)
-        => ModelVersionTag.TryRead(identity).Should().BeNull();
+        => DlModelIdentity.TryReadVersionId(identity).Should().BeNull();
 
     /// <summary>앞뒤 공백은 흔한 실수라 받아 준다.</summary>
     [Fact]
@@ -89,6 +100,6 @@ public class ModelVersionTagTests
     {
         var id = Guid.NewGuid();
 
-        ModelVersionTag.TryRead("  " + ModelVersionTag.Write(id) + "  ").Should().Be(id);
+        DlModelIdentity.TryReadVersionId("  " + DlModelIdentity.ForVersion(id) + "  ").Should().Be(id);
     }
 }

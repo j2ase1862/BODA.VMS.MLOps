@@ -10,7 +10,7 @@
     <RootNamespace>BODA.VMS.MLOps.Core</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="VMS.Core.Contracts" Version="1.43.*" />
+    <PackageReference Include="VMS.Core.Contracts" Version="1.45.*" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="BODA.VMS.MLOps.Tests" />
