@@ -119,7 +119,7 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 - 워커당 동시 1작업(GPU 독점). `MaxConcurrent` 는 향후 다중 GPU 용.
 - 같은 데이터셋 버전·설정의 성공 작업이 있으면 제출 시 "동일 작업 존재" 경고(중복 실행 방지, 강제 가능).
 - 우선순위 상승은 Engineer, 다른 사람 작업 취소는 Admin.
-- **검사 중에는 학습하지 않는다 (계획, 상위 문서 §5.6).** 워커가 라인 PC 와 같은 PC 에 있으면 VMS AutoRun 신호(`Global\` 명명 객체, 이름은 `VMS.Core.Contracts`)를 본다. 신호가 있으면 작업을 받지 않고, 학습 중에 신호가 켜지면 파이썬 프로세스를 끝내고 작업을 `Queued` 로 되돌린다. 되돌림은 `Attempt` 를 올리지 않는다. 새 전이라 `TrainingJobStateMachine` 과 그 시험을 먼저 고친다. 신호를 내는 VMS 가 없는 PC(전용 워커 PC)에서는 아무 일도 하지 않는다.
+- **검사 중에는 학습하지 않는다 (계획, 상위 문서 §5.6).** 워커가 라인 PC 와 같은 PC 에 있으면 VMS 검사 신호(`InspectionActivitySignal.IsActive()`, `Global\` 명명 Mutex, `VMS.Core.Contracts` 1.43)를 1~2초 주기로 본다. 신호가 있으면 작업을 받지 않고, 학습 중에 신호가 켜지면 파이썬 프로세스 트리를 즉시 끝내고 작업을 `Queued` 로 되돌린다. VMS 는 워커를 기다리지 않으므로 GPU 메모리를 빨리 놓아야 한다. 되돌림은 `Attempt` 를 올리지 않는다. 새 전이라 `TrainingJobStateMachine` 과 그 시험을 먼저 고친다. 신호를 내는 VMS 가 없는 PC(전용 워커 PC)에서는 아무 일도 하지 않는다.
 
 ---
 

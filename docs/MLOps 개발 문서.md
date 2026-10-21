@@ -180,6 +180,20 @@ VisionSetup 의 Deep Learning 메뉴·`VMS.DeepLearning` 프로젝트·이를 �
 - **처음에는 학습만 막는다.** 서버도 같은 PC 면 SAM 보조·사전 라벨링·모델 돌려 보기가 CPU 를 쓰지만 학습보다 훨씬 가볍다. 택트에 영향이 보이면 그때 넣는다.
 - 순서: Contracts 에 신호 이름 → VMS 의 AutoRun 이 신호를 잡음 → 워커가 받아 중단·대기열 (Phase 3 명세 §7).
 
+VMS 쪽 검토 결과 (2026-10-21, VMS PR 머지 때 확정):
+- **신호를 잡는 구간:** AutoProcessService 의 `StartAsync` 부터 `StopCoreAsync` 끝까지(`IsRunning`) + **Roller 연속 검사**.
+  수동 단발 검사·VisionSetup 티칭·Test Run·시뮬레이션은 대화형이라 잡지 않는다. 그래서 이름이 AutoRun 보다 넓다.
+- **이름(안):** `VMS.Core.Services.InspectionActivitySignal.MutexName = @"Global\BODA.VMS.InspectionActive"`.
+  같은 클래스의 `TryAcquire()`(VMS 용, 실패하면 null — 생성 실패가 AutoRun 을 막지 않는다)와 `IsActive()`(워커용)를 양쪽이 같이 쓴다.
+  **워커는 `IsActive()` 만 부른다** — `UnauthorizedAccessException`(있는데 못 엶)도 "검사 중" 으로 본다.
+- **Mutex 는 `initiallyOwned: false`** — 소유는 스레드에 묶이는데 VMS 의 시작·정지는 다른 스레드라 abandoned 가 된다. 신호는 존재만 쓴다.
+- **다중 인스턴스는 문제없다.** VMS 는 한 PC 다중 인스턴스(`--instance`)를 지원하지만, 명명 객체는 마지막 핸들이 닫힐 때 사라지므로
+  이름 하나로 충분하다. 이 이름은 인스턴스 접미사(`QualifyIpcName`)를 붙이지 않는다.
+- **라인 검사도 GPU 를 쓴다** (OnnxRuntime.Gpu, Auto = CUDA → DML → CPU). 같은 GPU 를 두고 직접 경합한다.
+- **VMS 는 워커를 기다리지 않는다.** 그래서 AutoRun 직후 몇 사이클은 워커가 GPU 메모리를 놓기 전이다.
+  워커는 신호를 **1~2초 주기**로 보고, 중단은 **파이썬 프로세스 트리를 즉시 종료**한다.
+- **패키지:** `VMS.Core.Contracts 1.43.0` (VMS v1.43.0 과 함께). 이쪽 참조를 `1.33.*` → `1.43.*` 로 올린다.
+
 ---
 
 ## 6. API 초안
