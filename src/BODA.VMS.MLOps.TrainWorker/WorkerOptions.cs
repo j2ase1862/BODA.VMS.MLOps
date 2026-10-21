@@ -37,6 +37,11 @@ public sealed class WorkerOptions
     /// <summary>자기진단 생략 (테스트 전용)</summary>
     public bool SkipDiagnostics { get; set; }
     public int RetryDelaySec { get; set; } = 10;
+    /// <summary>
+    /// 학습 중 VMS 검사 신호를 보는 주기 (개발 문서 §5.6). VMS 는 워커를 기다리지 않으므로 짧아야 한다 —
+    /// 이 주기만큼 검사와 학습이 GPU 를 함께 쓴다.
+    /// </summary>
+    public int InspectionCheckMs { get; set; } = 1000;
 
     public string ResolvedCacheRoot() => string.IsNullOrWhiteSpace(CacheRoot) ? DefaultRoot : Path.GetFullPath(CacheRoot);
     public string VenvDir => Path.Combine(ResolvedCacheRoot(), "venv");

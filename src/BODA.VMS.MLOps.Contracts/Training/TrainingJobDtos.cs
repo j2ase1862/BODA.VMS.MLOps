@@ -79,4 +79,12 @@ public static class FailureKinds
     public const string UploadError = "UploadError";
     public const string AckTimeout = "AckTimeout";
     public const string Oom = "Oom";
+    /// <summary>
+    /// 실패가 아니다. 같은 PC 의 VMS 가 검사를 시작해 GPU 를 내주고 대기열로 돌아간 것 (개발 문서 §5.6).
+    /// 시도 횟수에 세지 않는다.
+    /// </summary>
+    public const string YieldedToInspection = "YieldedToInspection";
 }
+
+/// <summary>워커가 학습을 멈추고 작업을 대기열로 돌려보낸다 — 검사에 GPU 를 내줄 때</summary>
+public sealed record YieldJobRequest(string? Reason = null);

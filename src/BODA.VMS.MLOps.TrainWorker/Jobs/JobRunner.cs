@@ -14,10 +14,12 @@ namespace BODA.VMS.MLOps.TrainWorker.Jobs;
 /// JobRunner (Phase 3 §5): Preparing(데이터셋·사전학습·스크립트·출력 폴더·디스크) → Running(TrainingProcessHost, 1/s 코얼레싱 보고)
 /// → Exporting/Uploading(best.onnx 검증·아티팩트 업로드 재시도 3회) → finish(재현성 레코드).
 /// CUDA OOM 은 batch_size 반감으로 1회 재실행, 취소는 하트비트 응답 또는 progress 응답으로 전달된다.
+/// 같은 PC 의 VMS 가 검사를 시작하면 학습 프로세스를 끝내고 작업을 대기열로 돌려보낸다 (개발 문서 §5.6) —
+/// GPU 를 쓰는 것은 학습 프로세스뿐이라, 준비(데이터셋 받기)와 업로드는 멈추지 않는다. 업로드 중에 멈추면 다 끝난 학습을 버린다.
 /// </summary>
 public sealed class JobRunner(
     ServerClient server, DatasetCache datasets, PretrainedCache pretrained, ScriptStore scripts, TrainingProcessHost host,
-    IOptions<WorkerOptions> options, ILogger<JobRunner> logger)
+    IInspectionSignal inspection, IOptions<WorkerOptions> options, ILogger<JobRunner> logger)
 {
     private readonly WorkerOptions _o = options.Value;
 
@@ -62,6 +64,9 @@ public sealed class JobRunner(
             int localAttempt = 0;
             while (true)
             {
+                // 준비하는 동안 검사가 시작됐을 수 있다. 띄운 뒤 감시에 걸리는 것보다 띄우지 않는 편이 GPU 를 덜 쓴다.
+                if (inspection.IsActive())
+                    throw new YieldException("학습을 시작하려는데 이 PC 에서 검사가 돌고 있어 대기열로 되돌렸습니다.");
                 result = await RunOnceAsync(a, hyperparams, pythonExe, scriptPath, datasetDir, pretrainedDir, outputDir, reporter, logWriter, ct);
                 if (result.OomDetected && !result.Cancelled && !result.Succeeded && localAttempt == 0
                     && hyperparams.TryGetValue("batch_size", out var bs) && int.TryParse(bs, out var b) && b > 1)
@@ -109,6 +114,14 @@ public sealed class JobRunner(
         {
             logger.LogWarning("워커 종료로 작업 {Job} 중단 — 서버가 하트비트 소실로 재큐한다", job.Id);
         }
+        catch (YieldException ex) when (!shutdown.IsCancellationRequested)
+        {
+            logger.LogWarning("작업 {Job}: {Reason}", job.Id, ex.Message);
+            // 되돌린 뒤에는 이 작업이 이 워커 것이 아니라 progress 가 거부된다 — 로그는 먼저 보낸다
+            await reporter.LogAsync(JobLogLevel.Warn, ex.Message, CancellationToken.None);
+            await reporter.FlushAsync(null, CancellationToken.None);
+            await YieldAsync(job.Id, ex.Message, shutdown);
+        }
         catch (PrepareException ex)
         {
             logger.LogError(ex, "준비 실패");
@@ -155,7 +168,17 @@ public sealed class JobRunner(
         await reporter.FlushAsync(TrainingJobState.Running, ct);
         await logWriter.WriteLineAsync($"[worker] run: {pythonExe} {string.Join(' ', args)}");
 
-        var result = await host.RunAsync(
+        // 학습 프로세스가 도는 동안만 검사 신호를 본다. 켜지면 이 실행만 끊는다 — 사람의 취소(ct)와 갈라야
+        // 끝난 뒤에 "취소됨" 이 아니라 "대기열로 되돌림" 으로 보고할 수 있다.
+        using var yieldCts = new CancellationTokenSource();
+        using var stopWatching = new CancellationTokenSource();
+        using var run = CancellationTokenSource.CreateLinkedTokenSource(ct, yieldCts.Token);
+        var watcher = WatchInspectionAsync(yieldCts, stopWatching.Token);
+
+        ProcessRunResult result;
+        try
+        {
+            result = await host.RunAsync(
             new ProcessRunRequest(pythonExe, args, Path.GetDirectoryName(scriptPath)!, env,
                 TimeSpan.FromMinutes(_o.MaxSilenceMinutes), TimeSpan.FromHours(_o.MaxDurationHours)),
             onProtocol: ev =>
@@ -168,10 +191,60 @@ public sealed class JobRunner(
                 await logWriter.WriteLineAsync(line);
                 await reporter.LogAsync(level, line, ct);
             },
-            cancel: ct);
+            cancel: run.Token);
+        }
+        finally
+        {
+            stopWatching.Cancel();
+            await watcher;
+        }
 
         await reporter.FlushAsync(null, CancellationToken.None);
+        if (yieldCts.IsCancellationRequested && !ct.IsCancellationRequested)
+            throw new YieldException($"이 PC 에서 검사가 시작되어 학습을 멈추고 대기열로 되돌렸습니다 (에폭 {result.Epoch}/{result.TotalEpochs}).");
         return result;
+    }
+
+    private async Task WatchInspectionAsync(CancellationTokenSource yieldCts, CancellationToken stop)
+    {
+        var period = TimeSpan.FromMilliseconds(Math.Max(100, _o.InspectionCheckMs));
+        try
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                if (inspection.IsActive())
+                {
+                    yieldCts.Cancel();   // TrainingProcessHost 가 200ms 안에 프로세스 트리를 끝낸다
+                    return;
+                }
+                await Task.Delay(period, stop);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { logger.LogWarning(ex, "검사 신호 확인 실패 — 이 실행 동안은 확인하지 않습니다"); }
+    }
+
+    private async Task YieldAsync(Guid jobId, string reason, CancellationToken ct)
+    {
+        for (int attempt = 1; attempt <= 5; attempt++)
+        {
+            try
+            {
+                await server.YieldAsync(jobId, new YieldJobRequest(reason), ct);
+                return;
+            }
+            catch (ServerApiException ex) when (ex.IsClientError)
+            {
+                logger.LogWarning(ex, "yield 거부 — 서버가 이미 상태를 바꿨을 수 있음");
+                return;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 끝내 못 알리면 서버에는 이 워커에 배정된 채로 남는다. 다음 long-poll 이 같은 배정을 돌려주므로(재접속 멱등) 검사가 끝난 뒤 다시 돈다
+                logger.LogWarning(ex, "yield 실패 (시도 {A}/5)", attempt);
+                try { await Task.Delay(TimeSpan.FromSeconds(2 * attempt), ct); } catch (OperationCanceledException) { return; }
+            }
+        }
     }
 
     private async Task<ArtifactsResponse> UploadWithRetryAsync(Guid jobId, IReadOnlyList<(string, string)> files, CancellationToken ct)
@@ -252,6 +325,8 @@ public sealed class JobRunner(
 
     public sealed class PrepareException(string message, Exception? inner = null) : Exception(message, inner);
     public sealed class UploadException(string message, Exception? inner = null) : Exception(message, inner);
+    /// <summary>검사에 GPU 를 내주고 작업을 돌려보낸다 — 실패가 아니다</summary>
+    public sealed class YieldException(string message) : Exception(message);
 }
 
 /// <summary>

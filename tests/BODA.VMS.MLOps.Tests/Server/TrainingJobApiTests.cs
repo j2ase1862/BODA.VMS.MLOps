@@ -319,6 +319,63 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
     }
 
     [Fact]
+    public async Task Yield_to_inspection_requeues_without_counting_the_attempt()
+    {
+        // 라인 PC 겸용에서 VMS 가 검사를 시작하면 워커가 학습을 끊고 돌려보낸다 (개발 문서 §5.6).
+        // 실패가 아니므로 시도 횟수에 세지 않는다 — 세면 검사가 잦은 라인에서 멀쩡한 작업이 MaxAttempts 로 Failed 가 된다.
+        var eng = await _f.EngineerAsync();
+        var (job, _) = await QueuedJobAsync(eng, "m-yield", priority: 40);
+        var (w, workerId) = await OnlineWorkerAsync("gpu-yield");
+
+        for (var round = 1; round <= 3; round++)   // MaxAttempts(2) 보다 많이 양보해도 Failed 가 되지 않는다
+        {
+            var a = await (await w.GetAsync("/api/training-jobs/next?wait=0")).Content.ReadFromJsonAsync<JobAssignment>(Json);
+            a!.Job.Id.Should().Be(job.Id);
+            a.Job.Attempt.Should().Be(1, $"{round}번째 배정");
+            await w.PostAsync($"/api/training-jobs/{job.Id}/ack", null);
+            await w.PatchAsJsonAsync($"/api/training-jobs/{job.Id}/progress", new ProgressReport(TrainingJobState.Running, 30, 3, 10), Json);
+
+            var res = await w.PostAsJsonAsync($"/api/training-jobs/{job.Id}/yield", new YieldJobRequest("검사 시작"), Json);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+            var y = (await res.Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
+            y.State.Should().Be(TrainingJobState.Queued);
+            y.Attempt.Should().Be(0);
+            y.WorkerId.Should().BeNull();
+            y.FailureKind.Should().Be(FailureKinds.YieldedToInspection);
+            y.Error.Should().Be("검사 시작");
+            y.Progress.Should().Be(0);
+
+            // 재시도는 멱등 — 이미 되돌렸으면 워커 배정이 비어 있어도 같은 답
+            (await w.PostAsJsonAsync($"/api/training-jobs/{job.Id}/yield", new YieldJobRequest("검사 시작"), Json))
+                .StatusCode.Should().Be(HttpStatusCode.OK);
+            (await eng.GetFromJsonAsync<WorkerDto>($"/api/workers/{workerId}", Json))!.Status.Should().Be(WorkerStatus.Online);
+        }
+
+        // 다시 받은 뒤 다른 워커가 끼어들어 돌려보낼 수는 없다
+        await w.GetAsync("/api/training-jobs/next?wait=0");
+        var (intruder, _) = await OnlineWorkerAsync("gpu-yield-other");
+        (await intruder.PostAsJsonAsync($"/api/training-jobs/{job.Id}/yield", new YieldJobRequest(), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        await w.PostAsJsonAsync($"/api/training-jobs/{job.Id}/finish", new FinishJobRequest(TrainingJobState.Failed, "cleanup"), Json);
+    }
+
+    [Fact]
+    public async Task Yield_after_a_cancel_request_ends_the_job_as_cancelled()
+    {
+        // 사람이 취소를 눌러 둔 작업을 대기열로 되돌리면 취소가 사라진다
+        var eng = await _f.EngineerAsync();
+        var (job, _) = await QueuedJobAsync(eng, "m-yield-cancel", priority: 41);
+        var (w, _) = await OnlineWorkerAsync("gpu-yield-cancel");
+        await w.GetAsync("/api/training-jobs/next?wait=0");
+        await w.PostAsync($"/api/training-jobs/{job.Id}/ack", null);
+        (await eng.PostAsJsonAsync($"/api/training-jobs/{job.Id}/cancel", new CancelJobRequest(), Json)).EnsureSuccessStatusCode();
+
+        var y = (await (await w.PostAsJsonAsync($"/api/training-jobs/{job.Id}/yield", new YieldJobRequest("검사 시작"), Json))
+            .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
+        y.State.Should().Be(TrainingJobState.Cancelled);
+    }
+
+    [Fact]
     public async Task Supervisor_requeues_on_ack_timeout_and_worker_lost_then_fails_after_max_attempts()
     {
         var eng = await _f.EngineerAsync();

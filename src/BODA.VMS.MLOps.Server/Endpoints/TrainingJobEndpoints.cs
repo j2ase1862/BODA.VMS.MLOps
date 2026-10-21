@@ -90,6 +90,10 @@ public static class TrainingJobEndpoints
         g.MapPost("/{id:guid}/finish", async (Guid id, FinishJobRequest req, TrainingJobService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.FinishAsync(id, WorkerEndpoints.RequireWorkerId(p), req, ct))).RequireAuthorization(Policies.Worker);
 
+        // 같은 PC 의 VMS 가 검사를 시작해 학습을 멈췄다 — 실패가 아니라 대기열로 되돌린다 (개발 문서 §5.6)
+        g.MapPost("/{id:guid}/yield", async (Guid id, YieldJobRequest req, TrainingJobService svc, ClaimsPrincipal p, CancellationToken ct) =>
+            Results.Ok(await svc.YieldAsync(id, WorkerEndpoints.RequireWorkerId(p), req, ct))).RequireAuthorization(Policies.Worker);
+
         // ── 화면용: 스크립트별 하이퍼파라미터 화이트리스트 ──
         api.MapGet("/training/hyperparams/{script}", (string script) =>
             Results.Ok(HyperparamWhitelist.For(EnumBinding.Parse<TrainingScript>(script, "script")).Select(s => new

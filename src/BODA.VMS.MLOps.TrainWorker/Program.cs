@@ -40,6 +40,7 @@ builder.Services.AddSingleton<TrainingProcessHost>();
 builder.Services.AddSingleton<DatasetCache>();
 builder.Services.AddSingleton<PretrainedCache>();
 builder.Services.AddSingleton<ScriptStore>();
+builder.Services.AddSingleton<IInspectionSignal, VmsInspectionSignal>();
 builder.Services.AddSingleton<JobRunner>();
 builder.Services.AddHostedService<WorkerAgent>();
 
