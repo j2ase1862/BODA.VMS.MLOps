@@ -6,7 +6,11 @@ namespace BODA.VMS.MLOps.Contracts.Datasets;
 
 public sealed record CreateDatasetRequest(string Name, TaskType TaskType, string[] Classes, string? Description = null);
 
-public sealed record UpdateDatasetRequest(string? Name = null, string? Description = null, bool? IsArchived = null);
+/// <param name="AddClasses">
+/// 클래스 목록 끝에 덧붙일 이름. 이름 바꾸기·순서 바꾸기·지우기는 없다 — 이미 뜬 판과 학습한 모델이
+/// 그 순서를 쥐고 있어, 바꾸면 재현이 깨지거나 라벨이 한 칸 밀린다 (개발 문서 §5.5 2번).
+/// </param>
+public sealed record UpdateDatasetRequest(string? Name = null, string? Description = null, bool? IsArchived = null, string[]? AddClasses = null);
 
 public sealed record DatasetDto(
     Guid Id, string Name, TaskType TaskType, string[] Classes, string? Description,

@@ -804,6 +804,55 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         }
     }
 
+    [Fact]
+    public async Task Classes_can_be_appended_but_never_renamed_or_reordered()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("클래스 늘리기", TaskType.Detection, ["good", "defect"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+
+        var upload = await UploadAsync(eng, ("cls.png", MakePng(200, 150, SKColors.Teal, 53)));
+        var imageId = upload.Results[0].Image.Id;
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest([imageId]), Json);
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "defect", 0.1, 0.1, 0.2, 0.2)], true), Json);
+        var before = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(), Json)).Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+
+        // 새 불량 유형 — 끝에 붙고, 기존 클래스의 순서(= 학습 인덱스)는 그대로다
+        var res = await eng.PatchAsJsonAsync($"/api/datasets/{dataset.Id}", new UpdateDatasetRequest(AddClasses: [" scratch "]), Json);
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<DatasetDto>(Json))!.Classes.Should().Equal("good", "defect", "scratch");
+
+        // 새 클래스로 라벨을 붙일 수 있고, 이미 붙은 라벨은 그대로다
+        (await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/labels", new SaveLabelsRequest([
+            new AnnotationDto(AnnotationShape.Box, "defect", 0.1, 0.1, 0.2, 0.2),
+            new AnnotationDto(AnnotationShape.Box, "scratch", 0.5, 0.5, 0.2, 0.2),
+        ], true), Json)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 이미 뜬 판은 그때의 클래스를 지킨다 — 재현성
+        (await eng.GetFromJsonAsync<DatasetVersionDto>($"/api/dataset-versions/{before.Id}", Json))!
+            .Classes.Should().Equal("good", "defect");
+        var after = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(), Json)).Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        after.Classes.Should().Equal("good", "defect", "scratch");
+        var entries = await ReadZipAsync(await eng.GetAsync($"/api/dataset-versions/{after.Id}/export"));
+        entries["data.yaml"].Should().Contain("0: good").And.Contain("1: defect").And.Contain("2: scratch");
+
+        // 있는 이름·중복은 거절한다
+        var dup = await eng.PatchAsJsonAsync($"/api/datasets/{dataset.Id}", new UpdateDatasetRequest(AddClasses: ["good"]), Json);
+        dup.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ErrorAsync(dup))!.Message.Should().Contain("이미 있는 클래스");
+        (await eng.PatchAsJsonAsync($"/api/datasets/{dataset.Id}", new UpdateDatasetRequest(AddClasses: ["dent", "dent"]), Json))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // 라벨러는 데이터셋 정의를 바꾸지 못한다
+        var labeler = await _f.ClientAsAsync("labeler-cls", "Labeler");
+        (await labeler.PatchAsJsonAsync($"/api/datasets/{dataset.Id}", new UpdateDatasetRequest(AddClasses: ["dent"]), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     private static async Task<Dictionary<string, string>> ReadZipAsync(HttpResponseMessage response)
     {
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());

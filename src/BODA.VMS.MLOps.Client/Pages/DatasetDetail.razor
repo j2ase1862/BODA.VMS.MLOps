@@ -26,6 +26,10 @@ else
             <MudText Typo="Typo.h5" HtmlTag="h1">@_dataset.Name</MudText>
             <MudText Typo="Typo.body2" Class="mud-text-secondary">
                 @Display.TaskTypeText(_dataset.TaskType) · 클래스 [@string.Join(", ", _dataset.Classes)]
+                <AuthorizeView Roles="Engineer,Admin" Context="cls">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="@(() => { _classesOpen = true; _newClasses = ""; _classesError = null; })">클래스 추가</MudButton>
+                </AuthorizeView>
             </MudText>
         </div>
         <div class="d-flex gap-2">
@@ -301,6 +305,31 @@ else
     </DialogActions>
 </MudDialog>
 
+@* ── 클래스 추가 ── *@
+<MudDialog @bind-Visible="_classesOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
+    <TitleContent><MudText Typo="Typo.h6">클래스 추가</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+            지금 클래스 [@string.Join(", ", _dataset?.Classes ?? [])] 뒤에 붙습니다.
+            이름 바꾸기·순서 바꾸기·지우기는 할 수 없습니다 — 이미 만든 버전과 학습한 모델이 이 순서를 쓰기 때문입니다.
+        </MudText>
+        <MudTextField @bind-Value="_newClasses" Label="추가할 클래스 (쉼표 구분)" Placeholder="scratch, dent" Immediate="true" />
+        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+            클래스를 늘린 데이터셋으로 학습하면 클래스가 다른 모델이 나옵니다. 학습할 때 같은 클래스 목록으로
+            새 모델 계열을 만들어 고르세요 — 기존 계열에는 등록되지 않습니다.
+        </MudAlert>
+        @if (_classesError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">@_classesError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _classesOpen = false)">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_addingClasses || string.IsNullOrWhiteSpace(_newClasses))"
+                   OnClick="AddClassesAsync">추가</MudButton>
+    </DialogActions>
+</MudDialog>
+
 @* ── 스냅샷 ── *@
 <MudDialog @bind-Visible="_snapshotOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">데이터셋 버전 만들기</MudText></TitleContent>
@@ -338,6 +367,10 @@ else
     private string _search = "";
 
     private bool _uploadOpen, _cropOpen;
+
+    private bool _classesOpen, _addingClasses;
+    private string _newClasses = "";
+    private string? _classesError;
 
     private bool _snapshotOpen, _snapshotting, _reviewedOnly, _includeUnlabeled;
     private string _snapshotName = "";
@@ -555,6 +588,23 @@ else
         }
         catch (MlopsApiException ex) { _prelabelError = ex.Describe(); }
         finally { _prelabeling = false; }
+    }
+
+    private async Task AddClassesAsync()
+    {
+        _addingClasses = true;
+        _classesError = null;
+        try
+        {
+            var add = _newClasses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            await Api.UpdateDatasetAsync(Id, new UpdateDatasetRequest(AddClasses: add));
+            // 수정 응답에는 통계가 없다 — 다시 읽어 화면의 숫자를 지킨다
+            _dataset = await Api.DatasetAsync(Id);
+            Snackbar.Add($"클래스를 추가했습니다: {string.Join(", ", add)}", Severity.Success);
+            _classesOpen = false;
+        }
+        catch (MlopsApiException ex) { _classesError = ex.Describe(); }
+        finally { _addingClasses = false; }
     }
 
     private async Task CreateSnapshotAsync()

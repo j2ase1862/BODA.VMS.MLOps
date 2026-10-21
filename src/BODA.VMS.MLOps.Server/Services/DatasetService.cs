@@ -56,13 +56,28 @@ public sealed class DatasetService(MlopsDbContext db, AuditService audit, TimePr
         return await q.OrderBy(d => d.Name).ToListAsync(ct);
     }
 
-    public async Task<Dataset> UpdateAsync(Guid id, string? name, string? description, bool? archived,
+    public async Task<Dataset> UpdateAsync(Guid id, string? name, string? description, bool? archived, string[]? addClasses,
         CurrentUser user, CancellationToken ct)
     {
         var dataset = await db.Datasets.FirstOrDefaultAsync(d => d.Id == id, ct) ?? throw ApiException.NotFound("데이터셋");
         if (!string.IsNullOrWhiteSpace(name)) dataset.Name = name.Trim();
         if (description is not null) dataset.Description = description;
         if (archived is not null) dataset.IsArchived = archived.Value;
+
+        // 현장에서 새 불량 유형이 나오면 데이터셋을 새로 만들지 않고 클래스를 늘린다.
+        // 끝에 덧붙이기만 한다 — 라벨은 이름으로 저장되지만, 뜬 판·내보내기·학습한 모델은 순서(인덱스)를 쓴다.
+        var added = ModelRegistryService.NormalizeClasses(addClasses);
+        if (added.Length > 0)
+        {
+            var classes = Mapping.Json(dataset.ClassesJson, Array.Empty<string>());
+            var clash = added.Where(c => classes.Contains(c, StringComparer.Ordinal)).ToArray();
+            if (clash.Length > 0)
+                throw ApiException.BadRequest(ErrorCodes.Validation, $"이미 있는 클래스입니다: {string.Join(", ", clash)}");
+            if (added.Distinct(StringComparer.Ordinal).Count() != added.Length)
+                throw ApiException.BadRequest(ErrorCodes.Validation, "덧붙일 클래스 이름이 중복됩니다.");
+            dataset.ClassesJson = Mapping.ToJson(classes.Concat(added).ToArray());
+            audit.Record(AuditService.Dataset, "ClassesAdded", user.Name, id.ToString(), new { added, before = classes });
+        }
         audit.Record(AuditService.Dataset, "Updated", user.Name, id.ToString(), new { name, archived });
         await db.SaveChangesAsync(ct);
         return dataset;
