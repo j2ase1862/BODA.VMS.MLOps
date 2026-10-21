@@ -52,6 +52,20 @@ public sealed class TrainingJobService(
             throw ApiException.BadRequest(ErrorCodes.TaskTypeMismatch, $"데이터셋 작업 유형 {dataset.TaskType} 은(는) 스크립트 {req.Script}({taskType}) 와 맞지 않습니다.");
         if (model.TaskType != taskType)
             throw ApiException.BadRequest(ErrorCodes.TaskTypeMismatch, $"모델 작업 유형 {model.TaskType} 은(는) 스크립트 {req.Script}({taskType}) 와 맞지 않습니다.");
+        // 검출은 내보내기가 클래스 전부를 data.yaml 에 넣으므로 결과 ONNX 의 names 가 판의 클래스 그대로다.
+        // 모델 계열과 다르면 학습이 다 끝난 뒤 등록(ModelRegistryService)에서 막혀 GPU 시간만 버린다 — 여기서 끊는다.
+        // 데이터셋에 클래스를 덧붙인 뒤 옛 계열로 학습을 걸 때 흔하다. 분류·세그멘테이션은 샘플 없는 클래스를
+        // 학습 도구가 빼기도 해서 판의 클래스와 결과가 다를 수 있으므로 여기서 판단하지 않는다.
+        if (taskType == TaskType.Detection)
+        {
+            var datasetClasses = Mapping.Json(dataset.ClassesJson, Array.Empty<string>());
+            var modelClasses = Mapping.Json(model.ClassesJson, Array.Empty<string>());
+            if (datasetClasses.Length > 0 && !datasetClasses.SequenceEqual(modelClasses, StringComparer.Ordinal))
+                throw ApiException.BadRequest(ErrorCodes.ClassMismatch,
+                    "데이터셋 판과 모델 계열의 클래스 목록(수·이름·순서)이 달라, 학습해도 이 계열에 등록되지 않습니다. " +
+                    "클래스를 늘렸다면 그 클래스 목록으로 새 모델 계열을 만들어 학습하세요.",
+                    [$"dataset: [{string.Join(", ", datasetClasses)}]", $"model: [{string.Join(", ", modelClasses)}]"]);
+        }
         var expectedFormat = req.Script.DatasetExportFormat();
         if (!dataset.ExportFormat.Equals(expectedFormat, StringComparison.OrdinalIgnoreCase))
             throw ApiException.BadRequest(ErrorCodes.TaskTypeMismatch, $"데이터셋 내보내기 형식 {dataset.ExportFormat} ≠ 스크립트 요구 형식 {expectedFormat}");

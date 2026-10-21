@@ -319,6 +319,25 @@ public class TrainingJobApiTests : IClassFixture<MlopsApiFactory>
     }
 
     [Fact]
+    public async Task Detection_job_with_different_classes_is_refused_before_training()
+    {
+        // 데이터셋에 클래스를 덧붙인 뒤 옛 모델 계열로 학습을 걸면, 학습이 다 끝난 뒤에야 등록에서 막혔다.
+        // GPU 시간을 쓰기 전에 끊는다.
+        var eng = await _f.EngineerAsync();
+        await EnsurePretrainedAsync(await _f.AdminAsync());
+        var model = await CreateModelAsync(eng, "m-class-mismatch", classes: ["good", "defect", "scratch"]);
+        var ds = await UploadDatasetAsync(eng, "ds-class-mismatch", zip: MakeYoloDatasetZip(9));   // good, defect
+
+        var res = await eng.PostAsJsonAsync("/api/training-jobs", new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine,
+            PretrainedRef: SharedPretrainedRef, Hyperparams: Hp("""{"epochs": 2}""")), Json);
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var error = (await ErrorAsync(res))!;
+        error.Code.Should().Be(ErrorCodes.ClassMismatch);
+        error.Message.Should().Contain("새 모델 계열");
+        error.Details.Should().Contain(d => d.Contains("scratch"));
+    }
+
+    [Fact]
     public async Task Yield_to_inspection_requeues_without_counting_the_attempt()
     {
         // 라인 PC 겸용에서 VMS 가 검사를 시작하면 워커가 학습을 끊고 돌려보낸다 (개발 문서 §5.6).

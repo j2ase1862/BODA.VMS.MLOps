@@ -44,7 +44,7 @@ public static class DatasetEndpoints
             Results.Ok((await svc.GetAsync(id, ct)).ToDto(await svc.StatsAsync(id, ct)))).RequireAuthorization(Policies.Viewer);
 
         g.MapPatch("/{id:guid}", async (Guid id, UpdateDatasetRequest req, DatasetService svc, ClaimsPrincipal p, CancellationToken ct) =>
-            Results.Ok((await svc.UpdateAsync(id, req.Name, req.Description, req.IsArchived, CurrentUser.From(p), ct)).ToDto()))
+            Results.Ok((await svc.UpdateAsync(id, req.Name, req.Description, req.IsArchived, req.AddClasses, CurrentUser.From(p), ct)).ToDto()))
             .RequireAuthorization(Policies.Engineer);
 
         g.MapDelete("/{id:guid}", async (Guid id, DatasetService svc, ClaimsPrincipal p, CancellationToken ct) =>
