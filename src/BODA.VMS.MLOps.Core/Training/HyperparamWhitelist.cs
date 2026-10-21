@@ -68,6 +68,23 @@ public static class HyperparamWhitelist
 
     public static IReadOnlyList<HyperparamSpec> For(TrainingScript script) => PerScript[script];
 
+    /// <summary>
+    /// 받기는 하지만 그 스크립트가 학습에 반영하지 않는 키 — <c>train_dfine.py</c> 는 mosaic·mixup 을 받고 버리고(경고만),
+    /// <c>train_rfdetr_seg.py</c> 는 증강 인자를 받기만 한다. <b>화면에서는 숨긴다</b> — 값을 넣어도 아무 일이 없는 칸은
+    /// "조명에 강하게 학습했다" 고 사람을 속인다. 검증 목록에서는 빼지 않는다: 옛 작업을 재시도하면 워커가 같은 규칙으로
+    /// 다시 검사하는데, 그때 이 키가 거절되면 재시도가 막힌다. 스크립트가 이 값을 쓰게 되면 여기서 지운다.
+    /// </summary>
+    public static IReadOnlyCollection<string> Unused(TrainingScript script) => script switch
+    {
+        TrainingScript.TrainDfine => ["mosaic", "mixup"],
+        TrainingScript.TrainRfdetrSeg => ["mosaic", "mixup", "hsv_h", "hsv_s", "hsv_v"],
+        _ => [],
+    };
+
+    /// <summary>화면에 보일 칸 — <see cref="Unused"/> 를 뺀 것</summary>
+    public static IReadOnlyList<HyperparamSpec> Visible(TrainingScript script) =>
+        PerScript[script].Where(s => !Unused(script).Contains(s.Key)).ToList();
+
     public static HyperparamSpec? Find(TrainingScript script, string key) =>
         PerScript[script].FirstOrDefault(s => s.Key.Equals(key, StringComparison.Ordinal));
 

@@ -49,6 +49,21 @@ public class AugmentationPresetTests
         AugmentationPresets.For(TrainingScript.TrainYolo).Select(p => p.Name).Should().Equal("기본", "공장 조명", "작은 결함", "최소");
     }
 
+    /// <summary>
+    /// 화면에서 숨긴 칸도 검증은 통과해야 한다 — 숨기기 전에 그 값으로 제출된 작업을 재시도하면
+    /// 워커가 같은 규칙으로 다시 검사하는데, 거기서 막히면 재시도가 되지 않는다.
+    /// </summary>
+    [Theory]
+    [InlineData(TrainingScript.TrainDfine)]
+    [InlineData(TrainingScript.TrainRfdetrSeg)]
+    public void Hidden_fields_still_validate_for_old_jobs(TrainingScript script)
+    {
+        var old = HyperparamWhitelist.Unused(script).ToDictionary(k => k, _ => "0.5", StringComparer.Ordinal);
+        old.Should().NotBeEmpty();
+        HyperparamWhitelist.ValidateNormalized(script, old, out var errors).Should().BeTrue(string.Join("; ", errors));
+        HyperparamWhitelist.Visible(script).Select(s => s.Key).Should().NotIntersectWith(old.Keys);
+    }
+
     [Theory]
     [InlineData(TrainingScript.TrainRfdetrSeg)]   // 증강 인자를 받기만 하고 쓰지 않는다
     [InlineData(TrainingScript.TrainClassifier)]

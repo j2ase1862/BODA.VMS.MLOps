@@ -95,8 +95,9 @@ public static class TrainingJobEndpoints
             Results.Ok(await svc.YieldAsync(id, WorkerEndpoints.RequireWorkerId(p), req, ct))).RequireAuthorization(Policies.Worker);
 
         // ── 화면용: 스크립트별 하이퍼파라미터 화이트리스트 ──
+        // 스크립트가 받기만 하고 쓰지 않는 키(HyperparamWhitelist.Unused)는 화면에 내지 않는다 — 검증은 그대로 받는다
         api.MapGet("/training/hyperparams/{script}", (string script) =>
-            Results.Ok(HyperparamWhitelist.For(EnumBinding.Parse<TrainingScript>(script, "script")).Select(s => new
+            Results.Ok(HyperparamWhitelist.Visible(EnumBinding.Parse<TrainingScript>(script, "script")).Select(s => new
             {
                 s.Key, type = s.Type.ToString().ToLowerInvariant(), s.Min, s.Max, s.Choices, s.Default,
             }))).WithTags("TrainingJobs").RequireAuthorization(Policies.Viewer);
