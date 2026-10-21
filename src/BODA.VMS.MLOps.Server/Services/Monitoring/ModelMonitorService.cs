@@ -3,6 +3,7 @@ using BODA.VMS.MLOps.Core.Monitoring;
 using BODA.VMS.MLOps.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using VMS.Core.Services;
 
 namespace BODA.VMS.MLOps.Server.Services.Monitoring;
 
@@ -97,7 +98,7 @@ public sealed class ModelMonitorService(
 
         // 이어지지 않은 검사 — 옛 VMS 이거나 DL 을 안 쓴 스텝
         int unmatched = recent
-            .Where(o => Core.Monitoring.ModelVersionTag.TryRead(o.ModelVersion) is null)
+            .Where(o => DlModelIdentity.TryReadVersionId(o.ModelVersion) is null)
             .Sum(o => o.TotalCount);
 
         return new ModelMonitorReportDto(
@@ -109,11 +110,13 @@ public sealed class ModelMonitorService(
     }
 
     /// <summary>같은 버전 id 로 온 줄을 합친다. 라인이 여럿이면 여러 줄로 올 수 있다.</summary>
+    /// <remarks>검사 이력의 모델 식별자(<c>mv:{32자}</c>)는 VMS 런타임이 정한 규약이다 — <see cref="DlModelIdentity"/>(VMS.Core.Contracts)를 그대로 쓴다.
+    /// 예전에는 여기에 같은 규칙이 한 벌 더 있었고, 한쪽만 바뀌면 집계가 오류 없이 빌 수 있었다 (VMS #572 로 한 곳에 모았다).</remarks>
     private static Dictionary<Guid, OutcomeWindow> ByVersionId(IReadOnlyList<ProductionOutcome> outcomes)
     {
         var result = new Dictionary<Guid, OutcomeWindow>();
         foreach (var group in outcomes
-                     .Select(o => (Id: Core.Monitoring.ModelVersionTag.TryRead(o.ModelVersion), Outcome: o))
+                     .Select(o => (Id: DlModelIdentity.TryReadVersionId(o.ModelVersion), Outcome: o))
                      .Where(x => x.Id is not null)
                      .GroupBy(x => x.Id!.Value))
         {
