@@ -66,12 +66,18 @@ else
 
     @if (_job.Error is { } err)
     {
-        <MudAlert Severity="@(_job.State == TrainingJobState.Cancelled ? Severity.Info : Severity.Error)" Class="mb-4">
-            <MudText Typo="Typo.subtitle2">@(_job.FailureKind ?? "오류")</MudText>
+        @* 검사에 GPU 를 내준 것은 실패가 아니다 — 빨간 경고로 보이면 사람이 "학습이 깨졌다" 로 읽는다 *@
+        var yielded = _job.FailureKind == FailureKinds.YieldedToInspection;
+        <MudAlert Severity="@(_job.State == TrainingJobState.Cancelled || yielded ? Severity.Info : Severity.Error)" Class="mb-4">
+            <MudText Typo="Typo.subtitle2">@(yielded ? "검사에 GPU 를 내줌" : _job.FailureKind ?? "오류")</MudText>
             <MudText Typo="Typo.body2">@err</MudText>
             @if (_job.FailureKind == FailureKinds.WorkerLost)
             {
                 <MudText Typo="Typo.caption">워커 하트비트가 끊겼습니다. 워커 화면에서 상태를 확인하세요.</MudText>
+            }
+            @if (yielded)
+            {
+                <MudText Typo="Typo.caption">시도 횟수에 세지 않습니다. 다시 배정되면 처음부터 학습합니다 — 그 PC 의 검사가 끝나거나, 다른 워커가 먼저 받습니다.</MudText>
             }
         </MudAlert>
     }

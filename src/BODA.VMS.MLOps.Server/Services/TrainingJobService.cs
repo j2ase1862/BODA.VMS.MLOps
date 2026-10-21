@@ -531,6 +531,58 @@ public sealed class TrainingJobService(
         return dto;
     }
 
+    /// <summary>
+    /// 워커가 검사에 GPU 를 내주고 작업을 돌려보낸다 (개발 문서 §5.6). 실패가 아니므로 대기열로 되돌리고
+    /// <b>이번 시도를 세지 않는다</b> — 배정 때 올린 <c>Attempt</c> 를 되돌린다. 세면 검사가 잦은 라인에서
+    /// 학습이 한 번도 실패하지 않았는데 <c>MaxAttempts</c> 에 걸려 Failed 가 된다.
+    /// 사람이 그 사이 취소를 눌렀으면 되돌리지 않고 취소로 끝낸다.
+    /// </summary>
+    public async Task<TrainingJobDto> YieldAsync(Guid jobId, Guid workerId, YieldJobRequest req, CancellationToken ct)
+    {
+        var job = await db.TrainingJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct) ?? throw ApiException.NotFound("학습 작업");
+        // 재시도 멱등 — 앞선 요청이 이미 되돌렸으면 워커 배정이 비어 있어 LoadOwnedAsync 가 403 을 낸다
+        if (job.State == TrainingJobState.Queued && job.WorkerId is null && job.FailureKind == FailureKinds.YieldedToInspection)
+            return job.ToDto();
+        if (job.WorkerId != workerId)
+            throw ApiException.Forbidden("이 워커에 배정된 작업이 아닙니다.");
+        if (!TrainingJobStateMachine.IsActiveOnWorker(job.State))
+            throw ApiException.Conflict(ErrorCodes.InvalidJobTransition, $"{job.State} 상태의 작업은 되돌릴 수 없습니다.");
+
+        var worker = await db.Workers.FirstOrDefaultAsync(w => w.Id == workerId, ct);
+        var target = job.CancelRequested ? TrainingJobState.Cancelled : TrainingJobState.Queued;
+        if (!TrainingJobStateMachine.CanTransition(job.State, target))
+            throw ApiException.Conflict(ErrorCodes.InvalidJobTransition, $"{job.State} → {target} 전이는 허용되지 않습니다.");
+
+        if (target == TrainingJobState.Cancelled)
+        {
+            job.State = TrainingJobState.Cancelled;
+            job.FinishedAt = Now;
+            job.Error = "취소됨";
+        }
+        else
+        {
+            Requeue(job);
+            job.Attempt = Math.Max(0, job.Attempt - 1);
+            job.FailureKind = FailureKinds.YieldedToInspection;
+            job.Error = req.Reason ?? $"워커 '{worker?.Name}' 의 PC 에서 검사가 시작되어 학습을 멈추고 대기열로 되돌렸습니다.";
+        }
+
+        if (worker is not null && worker.CurrentJobId == job.Id)
+        {
+            worker.CurrentJobId = null;
+            if (!worker.AdminDisabled && worker.Status != WorkerStatus.Disabled) worker.Status = WorkerStatus.Online;
+        }
+
+        audit.Record(AuditService.Training, target == TrainingJobState.Queued ? "JobYielded" : "JobCancelled",
+            $"worker:{worker?.Name ?? workerId.ToString()}", job.Id.ToString(), new { job.Attempt, reason = req.Reason });
+        await SaveWorkerReportAsync(ct);
+        var dto = job.ToDto();
+        if (target == TrainingJobState.Queued) await notifier.JobQueued(dto);
+        else await notifier.JobDone(dto);
+        logger.LogInformation("작업 {JobId} → {Target} (워커 {Worker} 가 검사에 GPU 를 내줌)", job.Id, target, worker?.Name);
+        return dto;
+    }
+
     // ───────────── 감독 ─────────────
 
     /// <summary>하트비트 소실 → Offline + WorkerLost 재큐, ack 타임아웃 → 재큐 (Phase 3 §3, §4). 조정 건수를 돌려준다.</summary>

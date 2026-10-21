@@ -104,6 +104,9 @@ public sealed class ServerClient
     public Task<TrainingJobDto> FinishAsync(Guid jobId, FinishJobRequest req, CancellationToken ct) =>
         PostAsync<FinishJobRequest, TrainingJobDto>($"api/training-jobs/{jobId}/finish", req, ct);
 
+    public Task<TrainingJobDto> YieldAsync(Guid jobId, YieldJobRequest req, CancellationToken ct) =>
+        PostAsync<YieldJobRequest, TrainingJobDto>($"api/training-jobs/{jobId}/yield", req, ct);
+
     public async Task<ScriptsManifest> ScriptsManifestAsync(CancellationToken ct)
     {
         using var timeout = WithTimeout(ct, 30);

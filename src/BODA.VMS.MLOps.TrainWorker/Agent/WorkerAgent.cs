@@ -12,15 +12,17 @@ namespace BODA.VMS.MLOps.TrainWorker.Agent;
 /// <summary>
 /// 워커 메인 루프 (Phase 3 §2, §4): 환경 준비 → 자기진단 → 등록 → [하트비트 30s] + [Idle 이면 long-poll → JobRunner].
 /// 워커당 동시 1작업. Disabled 면 주기적으로 재등록만 한다.
+/// 같은 PC 의 VMS 가 검사 중이면 작업을 받으러 가지 않는다 (개발 문서 §5.6).
 /// </summary>
 public sealed class WorkerAgent(
-    ServerClient server, PythonEnvironment python, JobRunner runner, IOptions<WorkerOptions> options,
+    ServerClient server, PythonEnvironment python, JobRunner runner, IInspectionSignal inspection, IOptions<WorkerOptions> options,
     IHostApplicationLifetime lifetime, ILogger<WorkerAgent> logger) : BackgroundService
 {
     private readonly WorkerOptions _o = options.Value;
     private Guid _workerId;
     private volatile bool _disabled;
     private string? _disabledReason;
+    private bool _waitingForInspection;
 
     // 메인 루프가 쓰고 하트비트 태스크가 읽는다. 잠그지 않으면 하트비트가 취소를 지시하려는 순간
     // 메인 루프가 CTS 를 dispose 해 ObjectDisposedException 이 나고, 그 예외가 삼켜져 취소가 유실된다.
@@ -80,6 +82,17 @@ public sealed class WorkerAgent(
                     reg = await RegisterWithRetryAsync(caps, stoppingToken);
                     continue;
                 }
+
+                // 검사 중에는 받지 않는다. 받아 놓고 곧바로 돌려보내면 그 사이 다른 워커가 받을 기회만 늦어진다.
+                if (inspection.IsActive())
+                {
+                    if (!_waitingForInspection) logger.LogInformation("이 PC 에서 검사가 돌고 있어 학습 작업을 받지 않습니다");
+                    _waitingForInspection = true;
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(500, _o.InspectionCheckMs)), stoppingToken);
+                    continue;
+                }
+                if (_waitingForInspection) logger.LogInformation("검사가 끝나 학습 작업을 다시 받습니다");
+                _waitingForInspection = false;
 
                 var assignment = await server.NextJobAsync(reg!.PollIntervalSec, stoppingToken);
                 if (assignment is null) continue;
