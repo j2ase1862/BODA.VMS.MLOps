@@ -172,8 +172,7 @@ BODA.VMS.Web 과 같은 키·발급자를 쓰면 기존 로그인 토큰이 그�
 모델은 MobileSAM(Apache 2.0)이고 저장소에 넣지 않습니다.
 
 ```bash
-# 1) 인코더·디코더 준비 — VMS 리포에서 복사하거나 직접 내보낸다 (.onnx 와 .onnx.data 가 한 세트)
-cp VMS.DeepLearning/models/sam/mobile_sam_*.onnx* src/BODA.VMS.MLOps.Server/models/sam/
+# 1) 인코더·디코더 내보내기 (.onnx 와 .onnx.data 가 한 세트) — 이미 만든 세트가 있으면 그 4개 파일을 복사해도 된다
 python scripts/export_mobile_sam.py --output src/BODA.VMS.MLOps.Server/models/sam
 
 # 2) 후보 여러 개를 쓰려면 디코더에 출력을 하나 더 연다 (pip install onnx 만 있으면 된다)
@@ -514,8 +513,8 @@ SAM 은 마스크에서 폴리곤을 뽑는 순수 부분(좌표 규약·윤곽 
 | 길 | 어디 | 상태 |
 |---|---|---|
 | 모델 받아 쓰기 (`model://` 해석·캐시·엔진 적재) | VisionSetup·라인 PC | VMS master (PR #437·#438) |
-| 모델 올리기 ([레지스트리에 등록]) | AI 학습 도구 | VMS master (PR #439) |
-| 데이터셋 받기 ([웹 데이터셋 내려받기]) | AI 학습 도구 | VMS master (PR #440) |
+| ~~모델 올리기 ([레지스트리에 등록])~~ | ~~AI 학습 도구~~ | VMS PR #439 → **#570 으로 정리** (학습은 웹, 등록은 자동) |
+| ~~데이터셋 받기 ([웹 데이터셋 내려받기])~~ | ~~AI 학습 도구~~ | VMS PR #440 → **#570 으로 정리** |
 | 세그멘테이션 학습·추론 (`rfdetrseg`) | 학습 스크립트 · VisionSetup 도구 | VMS master (PR #441·#442) |
 
 넷 다 아직 릴리즈 전이고 다음 주간 릴리즈에 실립니다.

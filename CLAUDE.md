@@ -24,10 +24,10 @@ dotnet run --project src/BODA.VMS.MLOps.Server   # http://localhost:5310/swagger
 ## 반드시 지킬 규약
 
 **학습 스크립트 stdout 프로토콜은 계약입니다.** `[EPOCH] [LOSS] [ACC] [PROGRESS] [ONNX] [DONE] [ERROR]`.
-워커와 WPF 도구와 CLI 가 같은 `train_*.py` 를 실행합니다. 프로토콜을 바꾸면
-`VMS.Core.Contracts` 패키지, `scripts/` 의 스크립트 5종, VMS 리포의 소비자를 한 번에 갱신해야 합니다.
-WPF 도구를 정리하면서 스크립트 원본을 이 리포로 옮기기로 했습니다(2026-10-21, 개발 문서 §5.5). 옮긴 뒤에는 프로토콜 파서는
-`VMS.Core.Contracts`(VMS 리포)에, 스크립트는 여기에 있으므로 **프로토콜을 바꾸는 변경은 두 리포 PR 이 함께 가야 합니다.**
+학습 스크립트의 원본은 이 리포의 `scripts/` 이고, 그것을 실행하는 것은 학습 워커뿐입니다.
+프로토콜 파서(`TrainingOutputParser`·`TrainingArgumentBuilder`)는 `VMS.Core.Contracts`(VMS 리포)에 있으므로
+**프로토콜을 바꾸는 변경은 두 리포 PR 이 함께 가야 합니다** — 파서 쪽 패키지 버전을 올리고 이쪽 참조를 맞춥니다.
+(WPF AI 학습 도구는 VMS PR #570 으로 정리됐습니다. 그 전에는 VMS 리포가 원본이었습니다.)
 
 **모델 규약은 런타임이 정의합니다.** 레지스트리는 판별과 검증만 하고 변환하지 않습니다.
 판별은 `InferenceSession` 없이 protobuf 만 읽습니다. 업로드 경로에서 ONNX 세션을 만들지 마세요.
@@ -259,5 +259,9 @@ MSI 문자열은 코드페이지 949 라 `—`·`▸`·`…` 같은 문자를 �
 
 ## 손대면 안 되는 것
 
-`scripts/train_*.py` 와 `scripts/export_mobile_sam.py` 는 VMS 리포(`VMS.DeepLearning/scripts`)의 복사본입니다.
-여기서 고치지 말고 VMS 리포에서 고친 뒤 가져오세요. `train_fake.py` 와 `worker_diag.py` 는 이 리포 것입니다.
+**학습 스크립트는 이제 여기가 원본입니다** (VMS PR #570, 2026-10-21). VMS 리포의 `VMS.DeepLearning/scripts` 에서 옮겨 왔고
+그쪽에는 더 이상 없습니다 — VMS 쪽을 고치고 가져오던 절차는 끝났습니다.
+`write_history_artifacts`(곡선·지표 기록)는 스크립트마다 복사본이 있습니다. 워커가 파일 하나씩 받아 돌리므로 공용 모듈을 쓸 수 없어서입니다.
+한 곳을 고치면 나머지도 맞추고, `tools/check_train_curves.py` 로 합성 데이터에 돌려 보세요 (GPU·torch 없이, matplotlib·numpy 만 —
+워커 venv 파이썬이면 그대로 돕니다). 그림 그리는 줄의 오타는 몇 시간짜리 학습이 끝날 무렵에야 드러납니다.
+허용 목록 밖 패키지는 쓰지 않습니다(`scripts/requirements-allowlist.txt`·`PackageAllowlist`).
