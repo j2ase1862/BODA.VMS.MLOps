@@ -99,6 +99,11 @@ else
                         <MudButton OnClick="@(() => OpenDetail(context))">상세</MudButton>
                         <MudButton Href="@MlopsApi.ArtifactUrl(context.Id)" Target="_blank">다운로드</MudButton>
                         <AuthorizeView Roles="Engineer,Admin" Context="auth">
+                            @if (_model.TaskType == TaskType.Detection && context.Format is ModelFormat.Yolo or ModelFormat.DFine)
+                            {
+                                @* 승격하기 전에 사진 위의 결과를 본다 — 지표 숫자만으로 라인에 내보내지 않게 *@
+                                <MudButton Href="@($"/models/{Id}/try/{context.Id}")">돌려 보기</MudButton>
+                            }
                             <MudButton OnClick="@(() => OpenPromote(context))">스테이지</MudButton>
                         </AuthorizeView>
                     </MudButtonGroup>

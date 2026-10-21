@@ -31,8 +31,8 @@ WPF 도구를 정리하면서 스크립트 원본을 이 리포로 옮기기로 
 
 **모델 규약은 런타임이 정의합니다.** 레지스트리는 판별과 검증만 하고 변환하지 않습니다.
 판별은 `InferenceSession` 없이 protobuf 만 읽습니다. 업로드 경로에서 ONNX 세션을 만들지 마세요.
-서버가 `InferenceSession` 을 여는 곳은 SAM 보조(`SamAssistService`) 하나뿐이고, 그 모델은
-관리자가 설치 폴더에 둔 것이라 업로드된 파일이 아닙니다.
+서버가 `InferenceSession` 을 여는 곳은 두 곳입니다. SAM 보조(`SamAssistService`)는 관리자가 설치 폴더에 둔 모델이고,
+검출 추론(`DetectionInference` — 사전 라벨링·모델 돌려 보기)은 업로드 검증을 이미 통과한 레지스트리 아티팩트만 엽니다.
 
 **하이퍼파라미터는 화이트리스트 밖이면 거부합니다.** `HyperparamWhitelist` 가 서버(작업 생성)와
 워커(실행 직전) 양쪽에서 같은 규칙으로 검사합니다. 스크립트 인자는 `ProcessStartInfo.ArgumentList` 로만
@@ -179,7 +179,7 @@ audience 를 받습니다. `DevTokenAudienceTests` 가 운영 웹의 검증 조�
 **색·서체·모서리는 `MlopsTheme.cs` 한 곳에서 정합니다.** 화면마다 색을 직접 쓰지 마세요.
 강조색 `#FF4052` 는 지금 누를 것과 켜져 있는 것에만 씁니다.
 라벨 색 팔레트는 그 강조색과 겹치지 않게 파랑부터 시작하고,
-`label-canvas.js` 의 `PALETTE` 와 `Labeling.razor`·`DatasetDetail.razor` 의 `ColorOf` 가 같은 순서여야 합니다.
+Blazor 화면은 모두 `Shared/ClassPalette.cs` 를 쓰고, 캔버스(`label-canvas.js` 의 `PALETTE`)와 순서가 같아야 합니다.
 
 **라벨 좌표는 어디서나 0~1 정규화입니다.** 캔버스 안, API, DB, 내보내기 매니페스트가 모두 같습니다.
 픽셀 좌표로 바꾸는 곳은 COCO 내보내기 하나뿐입니다.
@@ -197,10 +197,13 @@ audience 를 받습니다. `DevTokenAudienceTests` 가 운영 웹의 검증 조�
 지표는 축소본(긴 변 2048) 기준이라 원본 해상도가 다른 사진끼리 견주면 안 됩니다.
 이 값이 생기기 전에 올라온 이미지는 null 이고, 0 으로 채우지 마세요 — "가장 흐린 사진" 으로 보입니다.
 
-**사전 라벨링은 검출만 지원합니다.** `PrelabelService` 는 YOLO·D-FINE 만 후처리합니다.
+**사전 라벨링과 모델 돌려 보기는 검출만 지원합니다.** 둘 다 `DetectionInference` 하나로 YOLO·D-FINE 만 돌립니다.
 분류·이상탐지·OCR 을 넣으려면 각 규약의 후처리와 그것을 확인할 실제 모델이 함께 필요합니다.
 확인하지 못한 후처리는 "그럴듯한" 라벨을 만들고, 사람이 검토로 승인하면 다음 학습 데이터가 오염됩니다.
-좌표는 레터박스 규약을 씁니다 — `LetterBox` 가 배율·여백과 되돌리기를 한 곳에서 정합니다.
+**전처리는 규약마다 다르고 런타임(VMS)을 따릅니다.** YOLO 는 레터박스(`LetterBox` 가 배율·여백과 되돌리기를 한 곳에서 정함),
+D-FINE 은 늘려 맞추는 리사이즈 + `orig_target_sizes`(h, w, int64) 입력이고 상자는 원본 픽셀 xyxy 입니다(VMS `DFineOnnxEngine`).
+D-FINE 에 크기 입력을 빠뜨린 동안 사전 라벨링이 D-FINE 모델에서 모든 사진을 건너뛰었습니다 — 추론 시험이 YOLO 모델로만
+돌아 몰랐고, 실제 D-FINE 모델(`MLOPS_TEST_DFINE`)로 돌려서야 드러났습니다. 규약을 추가하면 그 규약의 실제 모델로 한 번은 돌리세요.
 
 **세그멘테이션은 RF-DETR 규약(`rfdetrseg`)입니다.** 검출에서 D-FINE 을 고른 것과 같은 이유입니다 —
 Ultralytics(AGPL-3.0) 없이 상용 배포를 하기 위해서입니다. YOLO-Seg 도 규약으로 남아 있지만

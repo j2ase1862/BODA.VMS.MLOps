@@ -18,7 +18,7 @@ const MIN_BOX = 0.002;          // 이보다 작은 사각형은 실수로 본�
 
 // 라벨 색. 화면 강조색(#FF4052)과 겹치지 않게 파랑부터 시작한다 —
 // 빨강이 앞에 있으면 "지금 고른 UI 요소" 와 "라벨" 이 같은 색이 되어 눈으로 갈라지지 않는다.
-// 순서는 Labeling.razor·DatasetDetail.razor 의 ColorOf 와 같아야 한다.
+// 순서는 Shared/ClassPalette.cs 와 같아야 한다 (Blazor 화면은 그쪽을 쓴다).
 const PALETTE = [
     '#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00acc1',
     '#d81b60', '#6d4c41', '#3949ab', '#c62828', '#00897b',

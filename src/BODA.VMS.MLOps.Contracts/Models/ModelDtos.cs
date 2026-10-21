@@ -34,3 +34,20 @@ public sealed record PromoteRequest(ModelStage Stage, string? Reason = null, boo
 
 /// <summary>라인 PC 의 model:// 참조 해석 응답 (Phase 1 §5 resolve)</summary>
 public sealed record ResolveResponse(Guid ModelId, Guid ModelVersionId, int Number, string Sha256, long SizeBytes, ModelStage Stage, string ArtifactUrl);
+
+/// <summary>
+/// 모델 돌려 보기 (개발 문서 §5.5 3번) — 고른 사진에 그 버전을 돌린다. 승격하는 사람이 지표 숫자만 보고 누르지 않게.
+/// 결과는 <see cref="TryModelResultDto.ScoreFloor"/> 까지 담아 보내므로 신뢰도 문턱은 화면이 바로 바꾼다.
+/// </summary>
+public sealed record TryModelRequest(Guid[] ImageIds);
+
+/// <summary>후보 하나. 좌표는 0~1 정규화 (x, y 는 왼쪽 위)</summary>
+public sealed record TryDetectionDto(int ClassIndex, string ClassName, double Score, double X, double Y, double W, double H);
+
+/// <param name="MaxScore">가장 높은 후보 점수. 후보가 없으면 null — 바닥값(ScoreFloor) 아래라 모른다는 뜻이다.</param>
+public sealed record TryImageResultDto(Guid ImageId, IReadOnlyList<TryDetectionDto> Detections, double? MaxScore, string? Error = null);
+
+/// <param name="NmsIou">서버가 YOLO 에 건 NMS 문턱. 화면은 이보다 낮은 값으로만 더 거를 수 있다. D-FINE 은 NMS 를 쓰지 않아 null.</param>
+public sealed record TryModelResultDto(
+    Guid ModelVersionId, ModelFormat Format, string[] Classes, double ScoreFloor, double? NmsIou,
+    IReadOnlyList<TryImageResultDto> Images, long ElapsedMs);

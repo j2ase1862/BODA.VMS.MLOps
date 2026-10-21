@@ -36,16 +36,14 @@ public sealed record PrelabelResult(
 /// </summary>
 public sealed class PrelabelService(
     MlopsDbContext db,
-    IArtifactStorage storage,
     LabelingService labeling,
+    DetectionInference inference,
     ILogger<PrelabelService> logger,
     TimeProvider clock)
 {
     /// <summary>한 번에 훑을 이미지 수 상한. 요청이 너무 길어지지 않도록 나눠 부르게 한다.</summary>
     public const int MaxImagesPerCall = 500;
 
-    /// <summary>검출 모델 기본 입력 크기 (메타에 imgsz 가 없을 때)</summary>
-    private const int DefaultInputSize = 640;
 
     public async Task<PrelabelResult> RunAsync(
         Guid datasetId, Guid modelVersionId, double confidence, int maxImages,
@@ -65,13 +63,9 @@ public sealed class PrelabelService(
         if (version.Model.TaskType != dataset.TaskType)
             throw ApiException.BadRequest(ErrorCodes.TaskTypeMismatch,
                 $"데이터셋은 {dataset.TaskType} 인데 모델은 {version.Model.TaskType} 입니다.");
-        if (version.Format is not (ModelFormat.Yolo or ModelFormat.DFine))
+        if (!DetectionInference.Supports(version.Format))
             throw ApiException.BadRequest(ErrorCodes.Validation,
                 $"이 규약({version.Format})은 사전 라벨링을 아직 지원하지 않습니다. YOLO 또는 D-FINE 이어야 합니다.");
-
-        var artifact = storage.LocalPath(version.ArtifactKey);
-        if (artifact is null || !File.Exists(artifact))
-            throw ApiException.NotFound("모델 아티팩트 파일");
 
         // 모델의 클래스 이름을 데이터셋 클래스에 맞춘다. 없는 이름은 버린다 —
         // 이름이 다른 모델을 잘못 골랐을 때 조용히 엉뚱한 라벨이 붙는 것을 막는다.
@@ -86,21 +80,21 @@ public sealed class PrelabelService(
         if (targets.Count == 0)
             return new PrelabelResult(0, 0, 0, 0, 0, "채울 미라벨 이미지가 없습니다.");
 
-        int inputSize = version.InputSize is > 0 ? version.InputSize.Value : DefaultInputSize;
+        int inputSize = DetectionInference.InputSizeOf(version);
         var started = clock.GetTimestamp();
 
         var predictions = new Dictionary<Guid, IReadOnlyList<LabelAnnotation>>();
         var uncertainty = new Dictionary<Guid, double>();
         int skipped = 0, annotations = 0;
 
-        using (var session = OpenSession(artifact))
+        using (var session = inference.Open(version))
         {
             foreach (var image in targets)
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var found = await InferAsync(session, version.Format, image, inputSize, confidence, ct);
+                    var found = await inference.InferAsync(session, version.Format, image, inputSize, confidence, DetectionPostProcess.DefaultIouThreshold, ct);
                     var labels = found
                         .Where(d => d.ClassIndex >= 0 && d.ClassIndex < modelClasses.Length)
                         .Select(d => new { Detection = d, Name = modelClasses[d.ClassIndex] })
@@ -164,109 +158,5 @@ public sealed class PrelabelService(
         if (wanted.Count == 0) return [];
         var images = await db.Images.AsNoTracking().Where(i => wanted.Contains(i.Id)).ToListAsync(ct);
         return images;
-    }
-
-    private InferenceSession OpenSession(string artifactPath)
-    {
-        var options = new Microsoft.ML.OnnxRuntime.SessionOptions
-        {
-            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-        };
-        try
-        {
-            return new InferenceSession(artifactPath, options);
-        }
-        catch (Exception ex)
-        {
-            // 손상된 ONNX 가 네이티브 예외로 올라와도 요청은 ApiError 로 끝나야 한다
-            throw ApiException.BadRequest(ErrorCodes.Validation, $"모델을 여는 데 실패했습니다: {ex.Message}");
-        }
-    }
-
-    private async Task<List<Detection>> InferAsync(
-        InferenceSession session, ModelFormat format, Image image, int inputSize,
-        double confidence, CancellationToken ct)
-    {
-        await using var stream = storage.OpenRead(image.StorageKey);
-        using var memory = new MemoryStream();
-        await stream.CopyToAsync(memory, ct);
-        memory.Position = 0;
-
-        return await Task.Run(() =>
-        {
-            using var bitmap = SKBitmap.Decode(memory)
-                ?? throw new ImageProcessor.UnsupportedImageException("이미지를 디코딩하지 못했습니다.");
-
-            var box = LetterBox.For(bitmap.Width, bitmap.Height, inputSize);
-            var tensor = BuildInput(bitmap, box);
-
-            var inputName = session.InputMetadata.Keys.First();
-            using var results = session.Run([NamedOnnxValue.CreateFromTensor(inputName, tensor)]);
-
-            return format == ModelFormat.DFine
-                ? ReadDFine(results, bitmap.Width, bitmap.Height, confidence)
-                : ReadYolo(results, box, confidence);
-        }, ct);
-    }
-
-    /// <summary>
-    /// 레터박스로 줄여 넣고 남는 자리는 회색(114)으로 채운다. 값은 0~1 로 나눈다 (Ultralytics 규약).
-    /// </summary>
-    private static DenseTensor<float> BuildInput(SKBitmap source, LetterBox box)
-    {
-        var info = new SKImageInfo(box.ScaledWidth, box.ScaledHeight, SKColorType.Rgba8888, SKAlphaType.Unpremul);
-        using var resized = source.Resize(info, SKFilterQuality.Medium)
-            ?? throw new ImageProcessor.UnsupportedImageException("이미지를 모델 입력 크기로 줄이지 못했습니다.");
-
-        int size = box.InputSize;
-        var tensor = new DenseTensor<float>([1, 3, size, size]);
-        var buffer = tensor.Buffer.Span;
-        int plane = size * size;
-
-        const float pad = 114f / 255f;
-        buffer.Fill(pad);
-
-        var pixels = resized.GetPixelSpan();
-        int stride = resized.RowBytes;
-        for (int y = 0; y < box.ScaledHeight; y++)
-        {
-            int row = y * stride;
-            int destinationRow = (y + box.PadY) * size + box.PadX;
-            for (int x = 0; x < box.ScaledWidth; x++)
-            {
-                int source4 = row + x * 4;
-                int destination = destinationRow + x;
-                buffer[destination] = pixels[source4] / 255f;
-                buffer[plane + destination] = pixels[source4 + 1] / 255f;
-                buffer[2 * plane + destination] = pixels[source4 + 2] / 255f;
-            }
-        }
-        return tensor;
-    }
-
-    private static List<Detection> ReadYolo(
-        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results, LetterBox box, double confidence)
-    {
-        var output = results.FirstOrDefault(r => r.Name == "output0")?.AsTensor<float>()
-                     ?? results.First().AsTensor<float>();
-        var dimensions = output.Dimensions;
-        if (dimensions.Length != 3) return [];
-
-        // [1, 4+nc, anchors]
-        return DetectionPostProcess.Yolo(output.ToArray(), dimensions[1], dimensions[2], box, confidence);
-    }
-
-    private static List<Detection> ReadDFine(
-        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results,
-        int width, int height, double confidence)
-    {
-        var labels = results.FirstOrDefault(r => r.Name == "labels")?.AsTensor<long>();
-        var boxes = results.FirstOrDefault(r => r.Name == "boxes")?.AsTensor<float>();
-        var scores = results.FirstOrDefault(r => r.Name == "scores")?.AsTensor<float>();
-        if (labels is null || boxes is null || scores is null) return [];
-
-        int count = labels.Dimensions.Length >= 2 ? labels.Dimensions[1] : labels.Dimensions[0];
-        return DetectionPostProcess.DFine(
-            labels.ToArray(), boxes.ToArray(), scores.ToArray(), count, width, height, confidence);
     }
 }
