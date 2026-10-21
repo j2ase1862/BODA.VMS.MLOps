@@ -12,18 +12,19 @@ public sealed record AugmentationPreset(string Name, string Purpose, IReadOnlyDi
 /// <para><b>스크립트가 실제로 쓰는 값만 바꾼다.</b> WPF 는 스크립트를 가리지 않고 다섯 값을 모두 채웠지만,
 /// <c>train_dfine.py</c> 는 mosaic·mixup 을 받고 버리며(경고만 낸다), <c>train_rfdetr_seg.py</c> 는 증강 인자를 받기만 하고
 /// 하나도 쓰지 않는다. 쓰지 않는 값을 바꾸는 버튼은 "조명 변화에 강하게 했다" 고 사람을 속인다.
-/// 스크립트가 증강을 바꾸면 <see cref="EffectiveKeys"/> 를 함께 고친다.</para>
+/// 스크립트가 증강을 바꾸면 <see cref="HyperparamWhitelist.Unused"/> 를 고친다.</para>
 /// <para>값은 화이트리스트 범위 안이어야 한다 — 시험이 프리셋마다 <see cref="HyperparamWhitelist"/> 로 검사한다.</para>
 /// </summary>
 public static class AugmentationPresets
 {
-    /// <summary>그 스크립트가 학습에 실제로 반영하는 증강 키. 비면 프리셋을 보이지 않는다.</summary>
-    public static IReadOnlyList<string> EffectiveKeys(TrainingScript script) => script switch
-    {
-        TrainingScript.TrainYolo => ["mosaic", "mixup", "hsv_h", "hsv_s", "hsv_v"],
-        TrainingScript.TrainDfine => ["hsv_h", "hsv_s", "hsv_v"],
-        _ => [],
-    };
+    private static readonly string[] AugKeys = ["mosaic", "mixup", "hsv_h", "hsv_s", "hsv_v"];
+
+    /// <summary>
+    /// 그 스크립트가 학습에 실제로 반영하는 증강 키. 비면 프리셋을 보이지 않는다.
+    /// 화이트리스트에 있고 <see cref="HyperparamWhitelist.Unused"/> 가 아닌 것 — 근거는 그쪽 한 곳이다.
+    /// </summary>
+    public static IReadOnlyList<string> EffectiveKeys(TrainingScript script) =>
+        AugKeys.Where(k => HyperparamWhitelist.Find(script, k) is not null && !HyperparamWhitelist.Unused(script).Contains(k)).ToList();
 
     // WPF 도구(VMS.DeepLearning, LabelingMainViewModel 의 PresetAug*)와 같은 값
     private static readonly (string Name, string Purpose, (string Key, double Value)[] Values)[] All =

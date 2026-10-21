@@ -30,6 +30,23 @@ public class RoutingAndErrorTests : IClassFixture<MlopsApiFactory>
         body!.Select(x => x["key"].ToString()).Should().Contain(["epochs", "lr", "batch_size", "hsv_v"]);
     }
 
+    /// <summary>
+    /// 스크립트가 받기만 하고 쓰지 않는 칸은 화면에 내지 않는다 — 값을 넣어도 아무 일이 없는 칸은 사람을 속인다.
+    /// </summary>
+    [Theory]
+    [InlineData("trainDfine", new[] { "hsv_v", "flip" }, new[] { "mosaic", "mixup" })]
+    [InlineData("trainRfdetrSeg", new[] { "epochs", "lr" }, new[] { "mosaic", "mixup", "hsv_h", "hsv_s", "hsv_v" })]
+    [InlineData("trainYolo", new[] { "mosaic", "mixup", "hsv_v" }, new string[0])]
+    public async Task Screen_hides_fields_the_script_ignores(string script, string[] shown, string[] hidden)
+    {
+        var eng = await _f.EngineerAsync();
+        var body = await (await eng.GetAsync($"/api/training/hyperparams/{script}"))
+            .Content.ReadFromJsonAsync<List<Dictionary<string, object>>>(Json);
+        var keys = body!.Select(x => x["key"].ToString()).ToList();
+        keys.Should().Contain(shown);
+        if (hidden.Length > 0) keys.Should().NotContain(hidden);
+    }
+
     [Fact]
     public async Task Unknown_enum_value_is_400_not_500()
     {
