@@ -1,7 +1,7 @@
 {
   "title": "BODA VMS MLOps 설치 가이드",
   "subtitle": "관리 서버 · 학습 워커 · 라인 PC 연결 (관리자용)",
-  "version": "v1.0",
+  "version": "v1.1",
   "docName": "설치가이드",
   "sections": [
     {
@@ -253,7 +253,7 @@
         { "type": "figure", "file": "17_msi_wizard", "caption": "워커 연결 설정 — 서버 주소·토큰·이름을 넣습니다. 토큰은 입력하는 동안 가려집니다. 아래 \"Python 3.12\" 줄이 이 PC 에서 찾은 파이썬을 알려 주는데, 여기에 \"현재 사용자 전용 설치\" 라고 나오면 서비스 계정이 못 읽을 수 있습니다 (2.3·4.7)." },
         { "type": "p", "text": "설치가 끝나면 서비스 `BodaVmsTrainWorker` 가 자동(지연 시작)으로 등록되고 바로 시작됩니다. 서버 주소와 토큰을 비워 두고 설치했다면 서비스는 등록만 되고 멈춘 상태로 남습니다 — 4.4 로 나중에 설정합니다." },
         { "type": "h2", "text": "4.3 무인 설치" },
-        { "type": "code", "caption": "관리자 명령 프롬프트", "text": ["msiexec /i BODA-VMS-TrainWorker-0.1.1.msi /qn ^", "  SERVERURL=http://192.168.0.10:5310 WORKERTOKEN=wk_xxxxxxxx WORKERNAME=GPU-01"] },
+        { "type": "code", "caption": "관리자 명령 프롬프트", "text": ["msiexec /i BODA-VMS-TrainWorker-0.1.3.msi /qn ^", "  SERVERURL=http://192.168.0.10:5310 WORKERTOKEN=wk_xxxxxxxx WORKERNAME=GPU-01"] },
         { "type": "p", "text": "그 밖의 속성: `WORKERCPU=1` (CPU 전용 허용), `INSTALLFOLDER=\"D:\\Apps\\TrainWorker\"`." },
         { "type": "warn", "text": "상세 로그(`/l*v`)를 남기면 토큰이 명령줄 형태로 찍힙니다. 그 로그를 메일이나 메신저로 내보냈다면 토큰을 재발급하세요." },
         { "type": "h2", "text": "4.4 나중에 설정하기 · 설정 바꾸기" },
@@ -494,6 +494,20 @@
           ]
         },
         { "type": "note", "text": "이 PC 의 Python 3.12 는 사용자 전용 설치였기 때문에, 서비스가 PATH 의 3.14 를 잡아 패키지 설치에 실패했습니다. 2.3 과 4.7 이 그 경험에서 나왔습니다." }
+      ]
+    },
+
+    {
+      "heading": "부록 C. 개정 이력",
+      "blocks": [
+        {
+          "type": "table",
+          "header": ["판", "날짜", "바뀐 것"],
+          "rows": [
+            ["v1.0", "2026-09-21", "첫 판"],
+            ["v1.1", "2026-10-21", "배치 세 형태와 라인 PC 겸용(1.1). VMS 1.43.0 이상과 학습 워커 0.1.3 이상이면 검사 중 학습이 자동으로 멈춥니다. 학습 워커를 라인 PC 에 둘 때의 주의(4장). 무인 설치 예시를 워커 0.1.3 으로"]
+          ]
+        }
       ]
     }
   ]
