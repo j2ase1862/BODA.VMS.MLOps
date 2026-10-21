@@ -1,7 +1,9 @@
 using System.IO.Compression;
+using System.Text;
 using BODA.VMS.MLOps.Contracts;
 using BODA.VMS.MLOps.Contracts.Datasets;
 using BODA.VMS.MLOps.Core.Domain;
+using BODA.VMS.MLOps.Core.Export;
 using BODA.VMS.MLOps.Server.Auth;
 using BODA.VMS.MLOps.Server.Data;
 using BODA.VMS.MLOps.Server.Data.Entities;
@@ -32,7 +34,7 @@ public sealed class DatasetVersionService(
         var temp = await TempFileWriter.WriteAsync(storage, zip, options.Value.MaxDatasetBytes, ".zip", ct);
         try
         {
-            ValidateZip(temp.TempPath, options.Value.MaxDatasetBytes);
+            ValidateZip(temp.TempPath, format, options.Value.MaxDatasetBytes);
             var id = Guid.NewGuid();
             var key = StorageKeys.Dataset(id);
             await storage.CommitTempAsync(temp.TempPath, key, ct);
@@ -85,8 +87,9 @@ public sealed class DatasetVersionService(
     /// <summary>
     /// zip 구조·경로 탈출(..)·절대 경로 항목 거부 (Phase 3 §8) + 해제 후 총 크기 상한.
     /// 여기서 걸러야 워커가 압축 폭탄을 받아 디스크를 채우는 일이 없다 (워커도 해제하며 실제 바이트를 다시 센다).
+    /// PP-OCR 은 구조까지 본다 — 스크립트가 맨 위의 라벨 목록과 거기 적힌 크롭 경로를 그대로 읽기 때문이다.
     /// </summary>
-    private static void ValidateZip(string path, long maxUncompressedBytes)
+    private static void ValidateZip(string path, string format, long maxUncompressedBytes)
     {
         try
         {
@@ -102,6 +105,19 @@ public sealed class DatasetVersionService(
                 total += e.Length;
                 if (total > maxUncompressedBytes)
                     throw ApiException.TooLarge($"zip 해제 크기가 상한({maxUncompressedBytes / (1024 * 1024)}MB)을 넘습니다.");
+            }
+
+            if (format == "ppocr")
+            {
+                var files = archive.Entries.Where(e => e.Name.Length > 0).Select(e => e.FullName.Replace('\\', '/')).ToList();
+                var problem = PpOcrLayout.Problem(files, name =>
+                {
+                    var entry = archive.Entries.First(e => e.FullName.Replace('\\', '/') == name);
+                    using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
+                    return reader.ReadToEnd();
+                });
+                if (problem is not null)
+                    throw ApiException.BadRequest(ErrorCodes.Validation, $"PP-OCR 데이터셋 구조가 맞지 않습니다: {problem}");
             }
         }
         catch (InvalidDataException)

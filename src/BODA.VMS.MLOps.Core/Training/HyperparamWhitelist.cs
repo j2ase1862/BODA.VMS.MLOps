@@ -59,7 +59,9 @@ public static class HyperparamWhitelist
             new("epochs", HyperparamType.Int, 1, 10000, Default: "20"),
             new("lr", HyperparamType.Float, 1e-7, 10, Default: "0.001"),
             new("batch_size", HyperparamType.Int, 1, 1024, Default: "8"),
-            new("target", HyperparamType.Choice, Choices: ["detection", "recognition"], Default: "recognition"),
+            // detection 은 닫아 둔다. train_ppocr.py 가 det 설정을 골라도 라벨은 rec 파일(train_rec.txt)을 넘겨
+            // 검출 학습이 돌지 않고, 우리 내보내기도 det 라벨을 내지 않는다. 스크립트가 det 라벨을 읽게 되면 함께 연다.
+            new("target", HyperparamType.Choice, Choices: ["recognition"], Default: "recognition"),
         ],
         [TrainingScript.TrainRfdetrSeg] = [.. Common, .. Aug],
     };

@@ -16,9 +16,21 @@ public class ExportWriterTests
     {
         public Dictionary<string, string> Texts { get; } = new(StringComparer.Ordinal);
         public List<(string Path, Guid ImageId)> Images { get; } = [];
+        public List<(string Path, Guid ImageId, NormBox Box)> Crops { get; } = [];
+        /// <summary>잘라 내지 못하게 할 영역 (이미지 밖이 된 박스 등)</summary>
+        public Func<NormBox, bool> CanCrop { get; init; } = _ => true;
         public void WriteText(string path, string content) => Texts[path] = content;
         public void WriteImage(string path, Guid imageId) => Images.Add((path, imageId));
+        public bool WriteCrop(string path, Guid imageId, NormBox box)
+        {
+            if (!CanCrop(box)) return false;
+            Crops.Add((path, imageId, box));
+            return true;
+        }
     }
+
+    private static LabelAnnotation Text(string text, double x, double y, double w = 0.2, double h = 0.1) =>
+        new() { Shape = AnnotationShape.Text, ClassName = "text", Box = new NormBox(x, y, w, h), Text = text };
 
     private static LabelAnnotation Box(string cls, double x, double y, double w, double h) =>
         new() { Shape = AnnotationShape.Box, ClassName = cls, Box = new NormBox(x, y, w, h) };
@@ -117,19 +129,46 @@ public class ExportWriterTests
     [Fact]
     public void PpOcr_writes_rec_lists_and_dictionary()
     {
-        var text = new LabelAnnotation
-        {
-            Shape = AnnotationShape.Text, ClassName = "text",
-            Box = new NormBox(0.1, 0.1, 0.5, 0.2), Text = "AB12",
-        };
         var sink = new MemorySink();
         DatasetExportWriter.Write(new ExportManifest("o", TaskType.Ocr, ["text"],
-            [Img("crop.jpg", DatasetSplit.Train, text)]), "ppocr", sink);
+            [Img("crop.jpg", DatasetSplit.Train, Text("AB12", 0.1, 0.1, 0.5, 0.2))]), "ppocr", sink);
 
-        sink.Images.Single().Path.Should().Be("train_crops/crop.jpg");
-        sink.Texts["train_rec.txt"].Trim().Should().Be("train_crops/crop.jpg\tAB12");
+        sink.Images.Should().BeEmpty("원본이 아니라 글자 영역의 크롭이 들어간다");
+        sink.Crops.Single().Path.Should().Be("train_crops/crop-00.jpg");
+        sink.Crops.Single().Box.Should().Be(new NormBox(0.1, 0.1, 0.5, 0.2));
+        sink.Texts["train_rec.txt"].Trim().Should().Be("train_crops/crop-00.jpg\tAB12");
         sink.Texts["val_rec.txt"].Should().BeEmpty();
         sink.Texts["dict.txt"].Split('\n').Should().BeEquivalentTo(["1", "2", "A", "B"]);
+    }
+
+    [Fact]
+    public void PpOcr_writes_one_sample_per_text_region()
+    {
+        // 라벨 한 장에 글자 영역이 셋이면 샘플도 셋이다. 첫 영역만 내던 동안은 나머지가 조용히 빠졌다.
+        var img = Img("plate.jpg", DatasetSplit.Val,
+            Text("LOT-01", 0.1, 0.1), Text("2026", 0.1, 0.4), Text("가나", 0.1, 0.7));
+        var sink = new MemorySink();
+        DatasetExportWriter.Write(new ExportManifest("o", TaskType.Ocr, ["text"], [img]), "ppocr", sink);
+
+        sink.Crops.Select(c => c.Path).Should().Equal("val_crops/plate-00.jpg", "val_crops/plate-01.jpg", "val_crops/plate-02.jpg");
+        sink.Crops.Select(c => c.Box.Y).Should().Equal(0.1, 0.4, 0.7);
+        sink.Texts["val_rec.txt"].Split('\n', StringSplitOptions.RemoveEmptyEntries).Should().Equal(
+            "val_crops/plate-00.jpg\tLOT-01", "val_crops/plate-01.jpg\t2026", "val_crops/plate-02.jpg\t가나");
+        sink.Texts["dict.txt"].Split('\n').Should().Contain(["가", "나", "L", "-", "6"]);
+    }
+
+    [Fact]
+    public void PpOcr_leaves_out_a_region_that_could_not_be_cropped()
+    {
+        // 잘라 내지 못한 영역을 원본 전체로 대신하면 사진 한 장에 글자 하나가 붙은 샘플이 생긴다.
+        // 그 줄은 라벨 목록에도 없어야 한다 — 파일 없는 줄은 학습을 멈춘다.
+        var img = Img("p.jpg", DatasetSplit.Train, Text("OK", 0.1, 0.1), Text("BAD", 0.5, 0.5));
+        var sink = new MemorySink { CanCrop = b => b.X < 0.5 };
+        DatasetExportWriter.Write(new ExportManifest("o", TaskType.Ocr, ["text"], [img]), "ppocr", sink);
+
+        sink.Crops.Should().ContainSingle().Which.Path.Should().Be("train_crops/p-00.jpg");
+        sink.Texts["train_rec.txt"].Trim().Should().Be("train_crops/p-00.jpg\tOK");
+        sink.Texts["dict.txt"].Should().NotContain("B");
     }
 
     [Fact]

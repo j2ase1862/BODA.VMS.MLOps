@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using BODA.VMS.MLOps.Contracts.Training;
+using BODA.VMS.MLOps.Core.Export;
 using BODA.VMS.MLOps.Core.Hashing;
 using BODA.VMS.MLOps.TrainWorker.Agent;
 using Microsoft.Extensions.Logging;
@@ -111,7 +112,8 @@ public sealed class DatasetCache(ServerClient server, IOptions<WorkerOptions> op
             "yolo" => File.Exists(Path.Combine(dir, "data.yaml")) || Directory.GetFiles(dir, "data.yaml", SearchOption.AllDirectories).Length > 0,
             "imagefolder" => Directory.Exists(Path.Combine(dir, "train")) || Directory.GetDirectories(dir).Length > 0,
             "mvtec" => Directory.GetDirectories(dir, "train", SearchOption.AllDirectories).Length > 0,
-            "ppocr" => Directory.GetFiles(dir, "*.txt", SearchOption.AllDirectories).Length > 0,
+            // 스크립트는 데이터셋 폴더 바로 아래의 train_rec.txt 를 읽는다. 폴더째 압축한 zip 은 한 겹 더 들어가 여기서 걸린다.
+            "ppocr" => File.Exists(Path.Combine(dir, PpOcrLayout.TrainList)),
             "coco" => Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories).Length > 0,
             _ => true,
         };

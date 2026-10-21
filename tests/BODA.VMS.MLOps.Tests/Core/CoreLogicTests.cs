@@ -202,9 +202,9 @@ public class TrainingArgumentListTests
     {
         var args = TrainingArgumentList.Build(new TrainingArgumentList.Request(
             TrainingScript.TrainPpocr, "train_ppocr.py", "ds", "out", null, 0,
-            new Dictionary<string, string> { ["target"] = "detection", ["epochs"] = "20" }));
+            new Dictionary<string, string> { ["target"] = "recognition", ["epochs"] = "20" }));
         args[1].Should().Be("--target");
-        args[2].Should().Be("detection");
+        args[2].Should().Be("recognition");
         args.Should().NotContain("--seed");
     }
 

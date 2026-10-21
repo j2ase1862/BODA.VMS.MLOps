@@ -32,6 +32,13 @@ public interface IExportSink
     void WriteText(string path, string content);
     /// <summary>원본 이미지 바이트를 그 경로로 복사한다 (재인코딩하지 않는다 — 검사 재현성)</summary>
     void WriteImage(string path, Guid imageId);
+
+    /// <summary>
+    /// 원본의 정규화 사각형을 잘라 그 경로에 쓴다 (PP-OCR 인식 학습이 크롭을 쓴다).
+    /// 잘라 내지 못하면 false 이고, 그 샘플은 라벨 목록에도 넣지 않는다 —
+    /// 원본 전체를 대신 넣으면 사진 한 장에 글자 하나가 붙은 샘플이 조용히 학습에 들어간다.
+    /// </summary>
+    bool WriteCrop(string path, Guid imageId, NormBox box);
 }
 
 /// <summary>
@@ -42,7 +49,7 @@ public interface IExportSink
 /// <item>yolo        — data.yaml + images/{train,val}/ + labels/{train,val}/*.txt (정규화 cx cy w h)</item>
 /// <item>imagefolder — {train,val}/{class}/*</item>
 /// <item>mvtec       — train/good/ + test/good/ + test/{class}/</item>
-/// <item>ppocr       — {train,val}_crops/ + {train,val}_rec.txt (경로 TAB 라벨) + dict.txt</item>
+/// <item>ppocr       — {train,val}_crops/ (글자 영역마다 한 장) + {train,val}_rec.txt (경로 TAB 라벨) + dict.txt</item>
 /// <item>coco        — images/{split}/ + annotations/instances_{split}.json</item>
 /// </list>
 /// </summary>
@@ -150,23 +157,30 @@ public static class DatasetExportWriter
 
     private static void WritePpOcr(ExportManifest m, IExportSink sink)
     {
-        // 크롭을 만들지 않고 원본과 함께 라벨 텍스트를 낸다. 크롭은 서버가 잘라 넣는다
-        // (여기서는 경로만 정하고, ExportImage.FileName 이 이미 크롭 파일명이다).
+        // 인식 학습은 글자 영역 하나가 샘플 하나다. 사진 한 장에 영역이 여럿이면 크롭도 여럿 낸다 —
+        // 첫 영역만 내던 동안은 나머지가 아무 오류 없이 학습에서 빠졌다.
+        // 검출(det) 라벨은 내지 않는다. train_ppocr.py 의 detection 대상이 아직 rec 라벨 파일을 읽기 때문이다.
         var lines = new Dictionary<DatasetSplit, StringBuilder>();
         var chars = new SortedSet<char>();
 
         foreach (var img in m.Images)
         {
-            var text = img.Annotations.FirstOrDefault(a => a.Shape == AnnotationShape.Text)?.Text;
-            if (string.IsNullOrEmpty(text)) continue;
-
             var split = img.Split == DatasetSplit.Train ? DatasetSplit.Train : DatasetSplit.Val;
             var dir = $"{SplitDir(split)}_crops";
-            sink.WriteImage($"{dir}/{img.FileName}", img.ImageId);
+            var stem = Path.GetFileNameWithoutExtension(img.FileName);
+            var n = 0;
 
-            if (!lines.TryGetValue(split, out var sb)) lines[split] = sb = new StringBuilder();
-            sb.Append($"{dir}/{img.FileName}\t{text}\n");
-            foreach (var c in text) chars.Add(c);
+            foreach (var a in img.Annotations)
+            {
+                if (a.Shape != AnnotationShape.Text || a.Box is not { } box || string.IsNullOrEmpty(a.Text)) continue;
+
+                var path = $"{dir}/{stem}-{n++:D2}.jpg";
+                if (!sink.WriteCrop(path, img.ImageId, box)) continue;
+
+                if (!lines.TryGetValue(split, out var sb)) lines[split] = sb = new StringBuilder();
+                sb.Append($"{path}\t{a.Text}\n");
+                foreach (var c in a.Text) chars.Add(c);
+            }
         }
 
         foreach (var split in new[] { DatasetSplit.Train, DatasetSplit.Val })

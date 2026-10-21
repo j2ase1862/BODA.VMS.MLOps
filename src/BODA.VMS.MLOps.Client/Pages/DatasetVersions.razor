@@ -91,6 +91,17 @@
                 <MudSelectItem T="string" Value="@f.Key">@f.Key — @f.Value</MudSelectItem>
             }
         </MudSelect>
+        @if (_format == "ppocr")
+        {
+            @* VisionSetup 의 OCR 합성 데이터(SynthData) 출력을 올려 학습하는 길이 이것이다 (개발 문서 §5.5 1b).
+               서버가 구조를 보고 틀리면 이유와 함께 거절하지만, 가장 흔한 실수는 미리 알려 준다. *@
+            <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+                VisionSetup 의 OCR 합성 데이터 출력도 그대로 올릴 수 있습니다. 출력 폴더를 열고 그 안의
+                <span class="mono">train_crops</span> · <span class="mono">val_crops</span> 폴더와
+                <span class="mono">train_rec.txt</span> · <span class="mono">val_rec.txt</span> · <span class="mono">dict.txt</span> 를
+                모두 골라 압축하세요. 폴더째 압축하면 한 겹 더 들어가 거절됩니다.
+            </MudAlert>
+        }
         <MudNumericField T="int" @bind-Value="_imageCount" Label="이미지 수 (선택)" Class="mt-3" />
         <MudTextField @bind-Value="_classes" Label="클래스 (쉼표 구분, 선택)" Class="mt-3" />
 
@@ -116,7 +127,7 @@
         ["yolo"] = "data.yaml + images/labels (검출)",
         ["imagefolder"] = "클래스별 폴더 (분류)",
         ["mvtec"] = "MVTec 구조 (이상탐지)",
-        ["ppocr"] = "PP-OCR 라벨 텍스트 (OCR)",
+        ["ppocr"] = "PP-OCR 인식 크롭 + 라벨 목록 (OCR)",
         ["coco"] = "COCO json (세그멘테이션)",
     };
 
