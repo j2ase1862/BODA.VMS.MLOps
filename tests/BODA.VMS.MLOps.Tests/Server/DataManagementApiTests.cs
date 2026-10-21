@@ -721,6 +721,89 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         (await viewer.PostAsync("/api/images", form)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    [Fact]
+    public async Task Ocr_export_crops_every_text_region_of_an_image()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("각인 OCR", TaskType.Ocr, ["text"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+
+        var upload = await UploadAsync(eng, ("plate.png", MakePng(320, 240, SKColors.LightGray, 41)));
+        var imageId = upload.Results[0].Image.Id;
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest([imageId]), Json);
+        (await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/labels", new SaveLabelsRequest([
+            // 크기를 다르게 둔다 — 줄마다 붙은 크롭이 그 글자의 영역인지 크기로 가린다 (320×240 기준)
+            new AnnotationDto(AnnotationShape.Text, "text", 0.1, 0.1, 0.4, 0.2, Text: "LOT-01"),   // 128×48
+            new AnnotationDto(AnnotationShape.Text, "text", 0.1, 0.6, 0.25, 0.1, Text: "2026"),    // 80×24
+        ], true), Json)).EnsureSuccessStatusCode();
+
+        var version = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(), Json)).Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        var bytes = await (await eng.GetAsync($"/api/dataset-versions/{version.Id}/export")).Content.ReadAsByteArrayAsync();
+        using var zip = new ZipArchive(new MemoryStream(bytes));
+
+        // 영역마다 크롭 한 장, 라벨 한 줄. 첫 영역만 내던 동안은 둘째 영역이 학습에서 빠졌다.
+        zip.Entries.Count(e => e.FullName.StartsWith("train_crops/")).Should().Be(2);
+        string recList;
+        using (var reader = new StreamReader(zip.GetEntry("train_rec.txt")!.Open()))
+            recList = await reader.ReadToEndAsync();
+        var lines = recList.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Split('\t')).ToList();
+        lines.Select(l => l[1]).Should().BeEquivalentTo("LOT-01", "2026");
+
+        // 크롭에 원본이 아니라 그 줄의 글자 영역이 들어갔는지 (영역 번호의 순서는 라벨을 읽은 순서라 정해져 있지 않다)
+        foreach (var (path, text) in lines.Select(l => (l[0], l[1])))
+        {
+            await using var crop = zip.GetEntry(path)!.Open();
+            using var bitmap = SKBitmap.Decode(crop);
+            (bitmap.Width, bitmap.Height).Should().Be(text == "LOT-01" ? (128, 48) : (80, 24), path);
+        }
+    }
+
+    [Fact]
+    public async Task Ppocr_upload_accepts_synthdata_output_and_explains_a_wrapped_folder()
+    {
+        var eng = await _f.EngineerAsync();
+
+        // VisionSetup SynthData 가 내는 폴더를 그대로 묶은 zip
+        var ok = await PostDatasetZipAsync(eng, MakePpOcrZip(prefix: ""));
+        ok.StatusCode.Should().Be(HttpStatusCode.Created, await ok.Content.ReadAsStringAsync());
+
+        // 탐색기에서 폴더째 압축하면 한 겹 더 들어간다 — 판으로 굳기 전에 이유와 함께 막는다
+        var wrapped = await PostDatasetZipAsync(eng, MakePpOcrZip(prefix: "ocr_synth/"));
+        wrapped.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ErrorAsync(wrapped))!.Message.Should().Contain("폴더째");
+
+        static async Task<HttpResponseMessage> PostDatasetZipAsync(HttpClient client, byte[] zip)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new ByteArrayContent(zip) { Headers = { ContentType = new MediaTypeHeaderValue("application/zip") } }, "file", "ocr.zip");
+            form.Add(JsonContent.Create(new DatasetVersionUploadMeta("합성 OCR", TaskType.Ocr, "ppocr", 2, ["text"]), options: Json), "meta");
+            return await client.PostAsync("/api/dataset-versions", form);
+        }
+
+        static byte[] MakePpOcrZip(string prefix)
+        {
+            using var ms = new MemoryStream();
+            using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                Write("train_crops/000001.png", "png");
+                Write("val_crops/000002.png", "png");
+                Write("train_rec.txt", "train_crops/000001.png\tAB12\n");
+                Write("val_rec.txt", "val_crops/000002.png\tCD34\n");
+                Write("dict.txt", "1\n2\n3\n4\nA\nB\nC\nD");
+                Write("ppocr_keys_v1.txt", "1\n2\n3\n4\nA\nB\nC\nD");
+
+                void Write(string name, string content)
+                {
+                    using var w = new StreamWriter(zip.CreateEntry(prefix + name).Open());
+                    w.Write(content);
+                }
+            }
+            return ms.ToArray();
+        }
+    }
+
     private static async Task<Dictionary<string, string>> ReadZipAsync(HttpResponseMessage response)
     {
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());

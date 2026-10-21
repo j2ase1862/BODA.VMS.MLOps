@@ -186,7 +186,7 @@ public sealed class DatasetSnapshotService(
         foreach (var entry in manifest.Images)
         {
             var labels = entry.Labels.Select(FromManifestLabel).ToList();
-            // OCR 은 텍스트 영역을 잘라 쓰므로 파일명을 크롭 이름으로 바꾼다
+            // OCR 은 글자 영역마다 크롭을 내므로, 내보내기 쪽이 이 이름 뒤에 영역 번호를 붙인다
             var fileName = manifest.ExportFormat == "ppocr"
                 ? $"{Path.GetFileNameWithoutExtension(entry.FileName)}-{entry.ImageId:N}.jpg"
                 : UniqueFileName(entry);
@@ -200,7 +200,7 @@ public sealed class DatasetSnapshotService(
             using (var file = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
             {
-                var sink = new ZipExportSink(archive, images, storage, processor, manifest, logger);
+                var sink = new ZipExportSink(archive, images, storage, processor, logger);
                 DatasetExportWriter.Write(
                     new ExportManifest(manifest.DatasetName, manifest.TaskType, manifest.Classes, exportImages),
                     manifest.ExportFormat, sink);
@@ -245,14 +245,12 @@ public sealed class DatasetSnapshotService(
 
     /// <summary>
     /// 내보내기 형식이 정한 경로대로 zip 에 담는다. 이미지는 재인코딩하지 않고 원본을 복사한다.
-    /// OCR 만 예외로, 텍스트 영역을 잘라 넣는다 (PP-OCR 인식 학습이 크롭을 쓰기 때문).
+    /// OCR 만 예외로, 내보내기 쪽이 고른 글자 영역을 잘라 넣는다 (PP-OCR 인식 학습이 크롭을 쓰기 때문).
     /// </summary>
     private sealed class ZipExportSink(
         ZipArchive archive, Dictionary<Guid, Image> images, IArtifactStorage storage,
-        ImageProcessor processor, ManifestFile manifest, ILogger logger) : IExportSink
+        ImageProcessor processor, ILogger logger) : IExportSink
     {
-        private readonly Dictionary<Guid, ManifestEntry> _entries = manifest.Images.ToDictionary(e => e.ImageId);
-
         public void WriteText(string path, string content)
         {
             var entry = archive.CreateEntry(path, CompressionLevel.Optimal);
@@ -276,20 +274,33 @@ public sealed class DatasetSnapshotService(
             // 이미지는 이미 압축돼 있어 다시 압축해도 이득이 없다
             var entry = archive.CreateEntry(path, CompressionLevel.NoCompression);
             using var target = entry.Open();
-
-            if (manifest.ExportFormat == "ppocr" && _entries.TryGetValue(imageId, out var e))
-            {
-                var box = e.Labels.FirstOrDefault(l => l.Box is { Length: 4 })?.Box;
-                var local = storage.LocalPath(image.StorageKey);
-                if (box is not null && local is not null && processor.Crop(local, box[0], box[1], box[2], box[3]) is { } crop)
-                {
-                    target.Write(crop, 0, crop.Length);
-                    return;
-                }
-            }
-
             using var source = storage.OpenRead(image.StorageKey);
             source.CopyTo(target);
+        }
+
+        public bool WriteCrop(string path, Guid imageId, NormBox box)
+        {
+            if (!images.TryGetValue(imageId, out var image))
+            {
+                logger.LogWarning("내보내기: 이미지 레코드 없음 {Id}", imageId);
+                return false;
+            }
+            var local = storage.LocalPath(image.StorageKey);
+            if (local is null || !File.Exists(local))
+            {
+                logger.LogWarning("내보내기: 이미지 파일 없음 {Key}", image.StorageKey);
+                return false;
+            }
+            if (processor.Crop(local, box.X, box.Y, box.Width, box.Height) is not { } crop)
+            {
+                logger.LogWarning("내보내기: 글자 영역을 잘라 내지 못해 그 샘플을 뺍니다 {Id} {Path}", imageId, path);
+                return false;
+            }
+
+            var entry = archive.CreateEntry(path, CompressionLevel.NoCompression);
+            using var target = entry.Open();
+            target.Write(crop, 0, crop.Length);
+            return true;
         }
     }
 }
