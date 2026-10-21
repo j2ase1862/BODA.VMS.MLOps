@@ -1,0 +1,238 @@
+@page "/models/{ModelId:guid}/try/{VersionId:guid}"
+@attribute [Authorize(Roles = "Engineer,Admin")]
+@inject MlopsApi Api
+
+@* 모델 돌려 보기 (개발 문서 §5.5 3번) — 승격하는 사람이 지표 숫자만 보고 누르지 않게, 사진 위에 결과를 겹쳐 본다.
+   WPF 도구의 추론 미리보기를 옮긴 것. 서버는 신뢰도 바닥값까지 담아 보내고, 문턱·NMS 는 여기서 바로 건다. *@
+
+<PageTitle>돌려 보기 · MLOps</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+@if (_model is null || _version is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudBreadcrumbs Items="@(new List<BreadcrumbItem> {
+        new("모델", "/models"), new(_model.Name, $"/models/{ModelId}"), new($"v{_version.Number} 돌려 보기", null, disabled: true) })" Class="pa-0 mb-2" />
+
+    <div class="mb-3">
+        <MudText Typo="Typo.h5" HtmlTag="h1">@_model.Name · v@(_version.Number) 돌려 보기</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            @Display.FormatText(_version.Format) · 입력 @(_version.InputSize?.ToString() ?? "640") · 클래스 [@string.Join(", ", _version.Classes)]
+            <MudChip T="string" Size="Size.Small" Color="@Display.StageColor(_version.Stage)">@Display.StageText(_version.Stage)</MudChip>
+        </MudText>
+    </div>
+
+    <MudGrid Class="mb-2">
+        <MudItem xs="12" md="7">
+            <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                <MudText Typo="Typo.subtitle1" Class="mb-2">사진 고르기</MudText>
+                <div class="d-flex flex-wrap gap-3 align-end">
+                    <MudSelect T="Guid?" @bind-Value="_datasetId" Label="데이터셋" Style="min-width:240px" Dense="true">
+                        @foreach (var d in _datasets)
+                        {
+                            <MudSelectItem T="Guid?" Value="@d.Id">@d.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="bool" @bind-Value="_validationFirst" Label="어느 사진" Style="max-width:200px" Dense="true">
+                        <MudSelectItem T="bool" Value="true">검증·시험 사진 먼저</MudSelectItem>
+                        <MudSelectItem T="bool" Value="false">아무 사진</MudSelectItem>
+                    </MudSelect>
+                    <MudNumericField T="int" @bind-Value="_count" Label="장수" Min="1" Max="24" Style="max-width:90px" Dense="true" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow"
+                               Disabled="@(_datasetId is null || _running)" OnClick="RunAsync">
+                        @(_result is null ? "돌려 보기" : "다른 사진으로")
+                    </MudButton>
+                </div>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                    학습에 쓴 사진에서는 잘 맞는 것이 당연합니다. 검증 사진이나 최근 라인 사진으로 보세요.
+                    서버 CPU 로 돌므로 한 번에 24장까지입니다.
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="5">
+            <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                <MudText Typo="Typo.subtitle1" Class="mb-1">문턱</MudText>
+                <MudSlider T="double" @bind-Value="_confidence" Min="0.05" Max="0.95" Step="0.05" Color="Color.Info">
+                    신뢰도 @_confidence.ToString("0.00") 이상
+                </MudSlider>
+                <MudSlider T="double" @bind-Value="_iou" Min="0.1" Max="@IouMax" Step="0.05" Color="Color.Info" Class="mt-2">
+                    겹침(IoU) @_iou.ToString("0.00") 넘으면 같은 물체로 보고 하나만
+                </MudSlider>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                    라인 검사 도구에 넣을 값으로 맞춰 보세요. 겹침은 런타임처럼 클래스마다 따로 거릅니다.
+                </MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @if (_running)
+    {
+        <MudProgressLinear Indeterminate="true" Class="mb-2" />
+    }
+
+    @if (_result is not null)
+    {
+        var shown = _shots.Select(s => (Shot: s, Boxes: Visible(s.Result))).ToList();
+        var hit = shown.Count(x => x.Boxes.Count > 0);
+        <MudText Typo="Typo.body2" Class="mb-2">
+            후보가 있는 사진 @(hit) / @(shown.Count)장 · 후보 @(shown.Sum(x => x.Boxes.Count))개 · 추론 @(_result.ElapsedMs)ms
+        </MudText>
+        <MudGrid Spacing="2">
+            @foreach (var (shot, boxes) in shown)
+            {
+                <MudItem xs="12" sm="6" md="4" lg="3">
+                    <MudPaper Elevation="1" Class="pa-2" Style="cursor:pointer" @onclick="@(() => _open = shot)">
+                        <div style="position:relative; line-height:0">
+                            <img src="@shot.Image.ThumbnailUrl" alt="@shot.Image.FileName" style="width:100%; display:block" />
+                            @foreach (var d in boxes)
+                            {
+                                <div style="@BoxStyle(d)"></div>
+                            }
+                        </div>
+                        <MudText Typo="Typo.caption" Class="d-block mt-1" Style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">@shot.Image.FileName</MudText>
+                        <MudText Typo="Typo.caption" Class="@(boxes.Count == 0 ? "mud-text-secondary" : "")">@Verdict(shot.Result, boxes)</MudText>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+}
+
+<MudDialog Visible="@(_open is not null)" VisibleChanged="@(v => { if (!v) _open = null; })"
+           Options="new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true }">
+    <TitleContent><MudText Typo="Typo.h6">@_open?.Image.FileName</MudText></TitleContent>
+    <DialogContent>
+        @if (_open is { } o)
+        {
+            var boxes = Visible(o.Result);
+            <div style="position:relative; line-height:0; max-height:70vh; display:inline-block">
+                <img src="@o.Image.ViewUrl" alt="@o.Image.FileName" style="max-width:100%; max-height:70vh; display:block" />
+                @foreach (var d in boxes)
+                {
+                    <div style="@BoxStyle(d)">
+                        <span style="@TagStyle(d)">@d.ClassName @d.Score.ToString("0.00")</span>
+                    </div>
+                }
+            </div>
+            <MudText Typo="Typo.body2" Class="mt-2">@Verdict(o.Result, boxes)</MudText>
+            @if (o.Result.Detections.Count > boxes.Count)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    문턱이나 겹침으로 가려진 후보 @(o.Result.Detections.Count - boxes.Count)개 — 신뢰도를 낮추면 보입니다.
+                </MudText>
+            }
+        }
+    </DialogContent>
+</MudDialog>
+
+@code {
+    [Parameter] public Guid ModelId { get; set; }
+    [Parameter] public Guid VersionId { get; set; }
+
+    private sealed record Shot(ImageDto Image, TryImageResultDto Result);
+
+    private ModelDto? _model;
+    private ModelVersionDto? _version;
+    private List<DatasetDto> _datasets = [];
+    private Guid? _datasetId;
+    private bool _validationFirst = true;
+    private int _count = 12;
+    private bool _running;
+    private string? _error;
+
+    private TryModelResultDto? _result;
+    private List<Shot> _shots = [];
+    private Shot? _open;
+
+    private double _confidence = 0.25;
+    private double _iou = 0.45;
+
+    /// <summary>YOLO 는 서버가 이미 느슨한 NMS 를 걸어 보냈으므로 그보다 느슨하게는 못 푼다</summary>
+    private double IouMax => _result?.NmsIou ?? 0.95;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _model = await Api.ModelAsync(ModelId);
+            _version = await Api.VersionAsync(VersionId);
+            // 클래스가 겹치는 데이터셋을 앞에 둔다 — 그 모델이 보던 사진일 가능성이 높다
+            var all = await Api.DatasetListAsync(TaskType.Detection);
+            _datasets = all.OrderByDescending(d => d.Classes.Intersect(_version.Classes).Count()).ThenBy(d => d.Name).ToList();
+            _datasetId ??= _datasets.FirstOrDefault()?.Id;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    private async Task RunAsync()
+    {
+        if (_datasetId is not { } datasetId) return;
+        _running = true;
+        _error = null;
+        try
+        {
+            var page = await Api.ImagesAsync(datasetId, inDataset: true, take: 500);
+            var pool = page.Items.OrderBy(_ => Random.Shared.Next()).ToList();
+            if (_validationFirst)
+                pool = pool.OrderBy(i => i.Split is DatasetSplit.Val or DatasetSplit.Test ? 0 : 1).ToList();
+            var picked = pool.Take(Math.Clamp(_count, 1, 24)).ToList();
+            if (picked.Count == 0)
+            {
+                _error = "그 데이터셋에 사진이 없습니다.";
+                return;
+            }
+
+            _result = await Api.TryModelAsync(VersionId, picked.Select(i => i.Id).ToArray());
+            var byId = _result.Images.ToDictionary(r => r.ImageId);
+            _shots = picked.Where(i => byId.ContainsKey(i.Id)).Select(i => new Shot(i, byId[i.Id])).ToList();
+            if (_iou > IouMax) _iou = IouMax;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _running = false; }
+    }
+
+    /// <summary>신뢰도 문턱을 넘은 것에 클래스별 NMS — 런타임(VMS DetectionTool.GlobalNMS)과 같은 규칙</summary>
+    private List<TryDetectionDto> Visible(TryImageResultDto r)
+    {
+        var kept = new List<TryDetectionDto>();
+        foreach (var d in r.Detections.Where(d => d.Score >= _confidence).OrderByDescending(d => d.Score))
+            if (!kept.Any(k => k.ClassIndex == d.ClassIndex && Iou(k, d) > _iou))
+                kept.Add(d);
+        return kept;
+    }
+
+    private static double Iou(TryDetectionDto a, TryDetectionDto b)
+    {
+        double x1 = Math.Max(a.X, b.X), y1 = Math.Max(a.Y, b.Y);
+        double x2 = Math.Min(a.X + a.W, b.X + b.W), y2 = Math.Min(a.Y + a.H, b.Y + b.H);
+        double inter = Math.Max(0, x2 - x1) * Math.Max(0, y2 - y1);
+        double union = a.W * a.H + b.W * b.H - inter;
+        return union <= 0 ? 0 : inter / union;
+    }
+
+    private string Verdict(TryImageResultDto r, List<TryDetectionDto> boxes)
+    {
+        if (r.Error is not null) return $"돌리지 못함 — {r.Error}";
+        if (boxes.Count > 0)
+            return $"후보 {boxes.Count}개 · 최고 {boxes[0].Score:0.00} · " +
+                   string.Join(", ", boxes.GroupBy(b => b.ClassName).Select(g => $"{g.Key} {g.Count()}"));
+        // WPF 미리보기의 진단과 같다 — 문턱이 높은 것인지, 모델이 정말 못 보는 것인지 가른다
+        return r.MaxScore is { } max
+            ? $"후보 없음 (최고 {max:0.00} — 신뢰도를 낮추면 보입니다)"
+            : $"후보 없음 (모든 후보가 {_result?.ScoreFloor:0.00} 미만)";
+    }
+
+    private static string BoxStyle(TryDetectionDto d) =>
+        FormattableString.Invariant(
+            $"position:absolute; left:{d.X * 100:0.###}%; top:{d.Y * 100:0.###}%; width:{d.W * 100:0.###}%; height:{d.H * 100:0.###}%; border:2px solid {ClassPalette.ColorOf(d.ClassIndex)}; box-sizing:border-box; pointer-events:none");
+
+    private static string TagStyle(TryDetectionDto d) =>
+        $"position:absolute; left:-2px; top:-20px; line-height:18px; padding:0 4px; font-size:12px; white-space:nowrap; color:#fff; background:{ClassPalette.ColorOf(d.ClassIndex)}";
+}

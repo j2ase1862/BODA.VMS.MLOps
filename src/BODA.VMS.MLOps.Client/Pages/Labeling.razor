@@ -721,13 +721,8 @@
             : $"justify-content:flex-start; border-left:6px solid {color}";
     }
 
-    private static string ColorOf(int index)
-    {
-        // 라벨 색은 화면 강조색(#FF4052)과 겹치지 않게 파랑부터 시작한다.
-        // 빨강이 앞에 있으면 "지금 고른 UI 요소" 와 "라벨" 이 같은 색이 되어 구분이 안 된다.
-        string[] palette = ["#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00acc1", "#d81b60", "#6d4c41", "#3949ab", "#c62828", "#00897b"];
-        return palette[(index < 0 ? 0 : index) % palette.Length];
-    }
+    /// <summary>라벨링 캔버스와 같은 색 — 정의는 ClassPalette 한 곳</summary>
+    private static string ColorOf(int index) => ClassPalette.ColorOf(index);
 
     public async ValueTask DisposeAsync()
     {

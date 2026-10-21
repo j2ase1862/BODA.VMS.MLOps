@@ -51,6 +51,9 @@ public sealed class MlopsApi(HttpClient http)
     public Task<ModelVersionDto> VersionAsync(Guid id) => GetAsync<ModelVersionDto>($"/api/model-versions/{id}");
     /// <summary>버전 삭제 — Staging·Production 은 409, Retired 는 Admin 만.</summary>
     public Task DeleteModelVersionAsync(Guid id) => SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/model-versions/{id}"));
+    /// <summary>고른 사진에 그 버전을 돌린다 (검출 · Engineer 이상). 신뢰도 문턱은 화면이 결과에서 바로 거른다.</summary>
+    public Task<TryModelResultDto> TryModelAsync(Guid versionId, Guid[] imageIds) =>
+        PostAsync<TryModelRequest, TryModelResultDto>($"/api/model-versions/{versionId}/try", new TryModelRequest(imageIds));
     public Task<ModelVersionDto> PromoteAsync(Guid versionId, PromoteRequest req) => PostAsync<PromoteRequest, ModelVersionDto>($"/api/model-versions/{versionId}/promote", req);
     /// <summary>라인 배포 이력 — 어느 라인이 어느 버전을 언제 받아 갔는지 (Engineer 이상).</summary>
     public Task<List<ModelDeliveryDto>> DeliveriesAsync(Guid modelId, Guid? versionId = null, int take = 100) =>

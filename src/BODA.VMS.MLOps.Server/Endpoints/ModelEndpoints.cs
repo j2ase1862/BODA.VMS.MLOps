@@ -63,6 +63,11 @@ public static class ModelEndpoints
         versions.MapGet("/{id:guid}", async (Guid id, ModelRegistryService svc, CancellationToken ct) =>
             Results.Ok(await svc.GetVersionAsync(id, ct))).RequireAuthorization(Policies.Viewer);
 
+        // 고른 사진에 이 버전을 돌려 본다 (개발 문서 §5.5 3번). 읽기만 하지만 서버 CPU 로 추론하므로,
+        // 승격을 결정하는 Engineer 이상으로 둔다.
+        versions.MapPost("/{id:guid}/try", async (Guid id, TryModelRequest req, ModelTryService svc, CancellationToken ct) =>
+            Results.Ok(await svc.RunAsync(id, req, ct))).RequireAuthorization(Policies.Engineer);
+
         // ETag = "sha256" · If-None-Match → 304 · Range 지원
         versions.MapGet("/{id:guid}/artifact", async (Guid id, HttpRequest request, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>
         {
