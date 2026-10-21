@@ -120,10 +120,11 @@ long-poll 안에서는 회전마다 `ChangeTracker.Clear()` 로 워커 상태를
 `Monitoring:Audience` 를 명시합니다 — `Jwt:Audience` 를 누가 바꿔도 그 호출이 깨지지 않게.
 그 토큰의 역할은 `Viewer` 하나로 둡니다 — 새더라도 운영 데이터를 고칠 수 없어야 합니다.
 
-**모델 식별자 규약은 두 리포에 두 벌 있습니다.** VMS 의 `DlModelIdentity` 와 여기의 `ModelVersionTag` 가
-같은 `mv:{32자}` 를 만듭니다. 한쪽만 바꾸면 집계가 **조용히 빕니다** — 오류도 없이 모델 줄이 안 나타납니다.
-`ModelVersionTagTests` 가 형식을 글자 그대로 못 박고 있으니 그 시험을 함께 고치지 않으면 못 지나갑니다.
-VMS 쪽 `DlModelVersion` 열은 50자 제한이라, 여기서 형식을 늘리면 라인의 업로드가 400 으로 막힙니다.
+**모델 식별자 규약은 VMS 가 정합니다.** 검사 이력의 `mv:{32자}` 는 `VMS.Core.Contracts` 의 `DlModelIdentity` 하나로
+만들고 읽습니다 (예전에는 여기에 `ModelVersionTag` 가 한 벌 더 있었습니다 — VMS #572 · MLOps #54 로 정리).
+형식이 바뀌면 모니터링 집계가 **조용히 빕니다** — 오류도 없이 모델 줄이 안 나타납니다.
+`DlModelIdentityContractTests` 가 쓰는 쪽에서도 형식을 글자 그대로 못 박습니다. Contracts 를 올렸는데 이 시험이 깨지면 집계가 이어지지 않는 것입니다.
+VMS 쪽 `DlModelVersion` 열은 50자 제한이라, 형식을 늘리면 라인의 업로드가 400 으로 막힙니다.
 
 **사진 파일은 우리가 열고 우리가 닫습니다.** `SKCodec.Create(경로)` 와 `SKBitmap.Decode(경로)` 에
 경로를 그대로 넘기지 마세요. SkiaSharp 이 안에서 스트림을 만들고 그것이 언제 닫히는지 우리가 정할 수 없습니다.
