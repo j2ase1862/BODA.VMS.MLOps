@@ -26,6 +26,8 @@ dotnet run --project src/BODA.VMS.MLOps.Server   # http://localhost:5310/swagger
 **학습 스크립트 stdout 프로토콜은 계약입니다.** `[EPOCH] [LOSS] [ACC] [PROGRESS] [ONNX] [DONE] [ERROR]`.
 워커와 WPF 도구와 CLI 가 같은 `train_*.py` 를 실행합니다. 프로토콜을 바꾸면
 `VMS.Core.Contracts` 패키지, `scripts/` 의 스크립트 5종, VMS 리포의 소비자를 한 번에 갱신해야 합니다.
+WPF 도구를 정리하면서 스크립트 원본을 이 리포로 옮기기로 했습니다(2026-10-21, 개발 문서 §5.5). 옮긴 뒤에는 프로토콜 파서는
+`VMS.Core.Contracts`(VMS 리포)에, 스크립트는 여기에 있으므로 **프로토콜을 바꾸는 변경은 두 리포 PR 이 함께 가야 합니다.**
 
 **모델 규약은 런타임이 정의합니다.** 레지스트리는 판별과 검증만 하고 변환하지 않습니다.
 판별은 `InferenceSession` 없이 protobuf 만 읽습니다. 업로드 경로에서 ONNX 세션을 만들지 마세요.

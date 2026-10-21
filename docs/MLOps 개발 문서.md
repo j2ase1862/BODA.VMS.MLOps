@@ -159,15 +159,20 @@ WPF 에서 올린 버전은 출처가 `Upload` 라 데이터셋 판·seed 가 �
 
 | 순서 | 항목 | 지금 웹 | 범위 |
 |---|---|---|---|
-| 1 | PP-OCR 내보내기 | 이미지당 **첫 Text 박스만** rec 로 낸다(`DatasetExport.WritePpOcr`, `DatasetSnapshotService` 크롭). det 출력 없음 | 박스마다 rec 크롭 · det 라벨 파일. 형식은 `train_ppocr.py` 가 읽는 그대로 |
+| 1 | PP-OCR 내보내기 | 이미지당 **첫 Text 박스만** rec 로 낸다(`DatasetExport.WritePpOcr`, `DatasetSnapshotService` 크롭). 크롭할 박스도 Text 가 아니라 첫 박스다 | 박스마다 rec 크롭. 형식은 `train_ppocr.py` 가 읽는 그대로. **det 은 만들지 않는다** — `train_ppocr.py --target detection` 이 det 설정에 rec 라벨 파일을 넘겨 검출 학습이 돌지 않으므로, 허용 목록의 `detection` 선택지를 닫는다 |
+| 1b | PP-OCR rec 데이터셋 가져오기 | 밖에서 만든 zip 을 `ppocr` 판으로 올리는 길은 있다(`DatasetVersionService.UploadAsync`, 내용 무검사) | VisionSetup SynthData 출력(AiTools 와 함께 학습 카드가 사라진다)을 zip 으로 올려 워커가 그대로 학습하는지 검증하고, 구조가 틀린 zip 은 올릴 때 이유와 함께 거절 |
 | 2 | 데이터셋 클래스 추가 | 생성 후 불변(`UpdateDatasetRequest` 는 이름·설명·보관만) | **끝에 덧붙이기만**. 이름·순서 변경·삭제는 막는다 — 뜬 판과 학습한 모델이 그 순서를 쥐고 있다 |
 | 3 | 모델 돌려 보기 | 없음. 승격하는 사람이 지표 숫자만 본다 | `PrelabelService` 의 검출 추론을 재사용해 사진별 겹쳐 보기 · conf/IoU 조절 (WPF 미리보기도 검출만) |
 | 4 | 폴더 단위 Active Learning | 불확실도로 라벨링 순서만 정하고 보여 주지 않는다 | 이미지 풀 → 후보 모델로 훑기 → 불확실도 순 목록 → 골라 데이터셋에 담기 |
 | 5 | 증강 프리셋 | 값을 하나씩 넣는다 | 제출 화면의 값 묶음 버튼. 화이트리스트 검사는 그대로 |
 
-그 뒤 VMS 리포에서: 학습 스크립트 원본 자리 이전(지금은 `VMS.DeepLearning/scripts`) → `AiTools` Feature 를 워커 설치 패키지로 교체 →
-VisionSetup 의 Deep Learning 메뉴·`VMS.DeepLearning` 프로젝트·이를 참조하는 시험 제거. VisionSetup 안의 별도 `TrainingService`·`AnnotationViewModel`
-경로를 함께 정리할지는 따로 정한다.
+그 뒤 VMS 리포에서 (1·1b·2·3 이 머지된 뒤):
+- **학습 스크립트 원본을 MLOps 리포로 옮긴다** (지금은 `VMS.DeepLearning/scripts`). 그 뒤로는 stdout 프로토콜(`TrainingOutputParser`·`TrainingArgumentBuilder`)은
+  `VMS.Core.Contracts` 에, 스크립트는 MLOps 에 있으므로 **프로토콜을 바꿀 때는 두 리포 PR 이 함께 간다.** 옮기는 시점에 CLAUDE.md 의 "손대면 안 되는 것" 절도 고친다.
+- 마스터 MSI 에서 `AiTools` Feature·체크박스·`ExcludeAiTools` 를 지운다. **워커는 별도 MSI 로 배포한다** — LocalSystem 서비스이고 Python·GPU 환경을 요구해
+  라인 PC 기본 설치와 성격이 다르다. 라인 PC 겸용은 두 MSI 를 각각 설치한다.
+- VisionSetup 의 Deep Learning 메뉴·`VMS.DeepLearning` 프로젝트·이를 참조하는 시험, VisionSetup 의 죽은 `TrainingService`·`AnnotationViewModel`·`AnnotationView`,
+  SynthData 창의 학습 카드(→ MLOps 로 올리는 안내로), 도움말·템플릿 문구의 "VMS.DeepLearning 에서 학습" 안내를 지운다.
 
 ### 5.6 검사 중 학습 막기 (라인 PC 겸용)
 라인 PC 겸용(§3.1)에서 VMS 가 **AutoRun 중이면 그 PC 의 워커는 학습하지 않는다.** 검사가 학습보다 먼저다.
