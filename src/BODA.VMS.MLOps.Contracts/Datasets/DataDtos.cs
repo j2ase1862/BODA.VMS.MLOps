@@ -1,3 +1,4 @@
+using BODA.VMS.MLOps.Contracts.Models;
 using BODA.VMS.MLOps.Core.Domain;
 
 namespace BODA.VMS.MLOps.Contracts.Datasets;
@@ -158,7 +159,31 @@ public sealed record PrelabelRequest(
     /// <summary>이보다 낮은 확신도는 버린다. 낮추면 더 많이 붙지만 사람이 지울 것도 늘어난다.</summary>
     double Confidence = 0.25,
     /// <summary>한 번에 훑을 이미지 수. 남으면 다시 부르면 된다.</summary>
-    int MaxImages = 200);
+    int MaxImages = 200,
+    /// <summary>이 사진들만 채운다 (새 사진 훑기에서 골라 담은 것). 비우면 미라벨 전부가 대상이다.</summary>
+    Guid[]? ImageIds = null);
+
+/// <summary>
+/// 새 사진 훑기 (Active Learning, 개발 문서 §5.4·§5.5 4번) — 데이터셋에 아직 없는 수집 사진을 후보 모델로 훑어,
+/// 모델이 가장 자신 없어 한 사진부터 보여 준다. 사람이 골라 담아야 데이터셋에 들어간다.
+/// </summary>
+public sealed record ActiveLearningScanRequest(
+    Guid ModelVersionId,
+    /// <summary>수집 경로로 좁힌다 (라인 NG · 직접 올림). 비우면 전부.</summary>
+    ImageSource? Source = null,
+    string? Tag = null,
+    /// <summary>이미지 풀에서 몇 장 건너뛸지 — 다음 묶음을 훑을 때 앞 결과의 NextSkip 을 넣는다.</summary>
+    int Skip = 0,
+    int Take = 60);
+
+/// <param name="MaxScore">가장 높은 후보 점수. 후보가 없으면 null — 모델이 그 사진에서 아무것도 못 본 것이다.</param>
+public sealed record ActiveLearningItemDto(ImageDto Image, double? MaxScore, IReadOnlyList<TryDetectionDto> Detections, string? Error = null);
+
+/// <param name="Items">모델이 자신 없어 한 순서 — 후보 없음, 그다음 최고 점수가 낮은 순. 이번 묶음 안에서의 순서다.</param>
+/// <param name="NextSkip">다음 묶음을 훑을 때 넣을 Skip. PoolTotal 이상이면 더 없다.</param>
+public sealed record ActiveLearningScanResultDto(
+    Guid ModelVersionId, string[] ModelClasses, double ScoreFloor,
+    int Scanned, int PoolTotal, int NextSkip, IReadOnlyList<ActiveLearningItemDto> Items, long ElapsedMs);
 
 public sealed record PrelabelResultDto(
     /// <summary>대상으로 고른 미라벨 이미지 수</summary>

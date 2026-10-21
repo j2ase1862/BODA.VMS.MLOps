@@ -136,6 +136,12 @@ public static class DatasetEndpoints
             return Results.Ok(new PrefillResultDto(filled, req.Images.Count));
         }).RequireAuthorization(Policies.WorkerOrEngineer);
 
+        // 새 사진 훑기 — 데이터셋에 없는 수집 사진을 후보 모델로 훑어 자신 없어 한 순서로 돌려준다.
+        // 아무것도 담지 않는다. 사람이 골라 담는다 (§5.5 4번).
+        g.MapPost("/{id:guid}/active-learning/scan", async (Guid id, ActiveLearningScanRequest req,
+            ActiveLearningService svc, CancellationToken ct) => Results.Ok(await svc.ScanAsync(id, req, ct)))
+            .RequireAuthorization(Policies.Engineer);
+
         // 후보 모델을 돌려 초기 라벨과 불확실도를 채운다 (§5.4 Active Learning).
         // 추론이 도는 동안 응답을 붙잡고 있으므로 MaxImages 로 나눠 부른다.
         g.MapPost("/{id:guid}/prelabel", async (Guid id, PrelabelRequest req,
@@ -143,7 +149,7 @@ public static class DatasetEndpoints
         {
             var result = await svc.RunAsync(id, req.ModelVersionId,
                 Math.Clamp(req.Confidence, 0.01, 0.99),
-                req.MaxImages, CurrentUser.From(p), ct);
+                req.MaxImages, CurrentUser.From(p), ct, req.ImageIds);
             return Results.Ok(new PrelabelResultDto(result.Considered, result.Inferred, result.Filled,
                 result.Skipped, result.Annotations, result.Message));
         }).RequireAuthorization(Policies.Engineer);

@@ -49,6 +49,10 @@ const DETAIL = process.env.MLOPS_DOC_DETAIL || "라인A 스크래치 검출";
 // 모델 돌려 보기(18)에 쓸 모델 계열 이름과 신뢰도 문턱. 실제로 무언가를 찾는 검출 모델이어야 그림이 의미가 있다.
 const TRY_MODEL = process.env.MLOPS_DOC_TRY_MODEL || "라인C 각인 검출(실모델)";
 const TRY_CONF = process.env.MLOPS_DOC_TRY_CONF || "0.15";
+// 새 사진 훑기(19)를 열 데이터셋 이름. 그 데이터셋과 클래스가 겹치는 검출 모델이 있어야 한다.
+const AL_DATASET = process.env.MLOPS_DOC_AL_DATASET || "라인C 명판 사진";
+// 새 사진 훑기를 좁힐 태그. 모델이 반응하는 수집 사진에 이 태그를 달아 두고 찍는다.
+const AL_TAG = process.env.MLOPS_DOC_AL_TAG || "명판-신규";
 
 async function fillRecipe(client) {
   // Blazor 는 input 이벤트로 바인딩한다 — value 만 바꾸면 [조회] 가 잠긴 채로 남는다
@@ -115,8 +119,9 @@ async function evaluate(client, expression) {
   return r.result?.value;
 }
 
-async function shoot(client, file) {
-  const { data } = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+// viewportOnly — 결과가 길게 늘어지는 화면은 첫 화면만 찍는다. 문서에 세로로 긴 그림이 들어가면 읽을 수 없다.
+async function shoot(client, file, { viewportOnly = false } = {}) {
+  const { data } = await client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: !viewportOnly });
   const out = path.join(SHOT, file + ".png");
   fs.writeFileSync(out, Buffer.from(data, "base64"));
   const kb = (fs.statSync(out).size / 1024).toFixed(0);
@@ -312,6 +317,63 @@ async function main() {
         })()`);
       await sleep(1500);
       await shoot(client, "18_model_try");
+    }
+  }
+
+  // 새 사진 훑기 — 기본 후보 모델(운영 → 스테이징 → 후보 순 맨 앞)로 훑은 상태를 찍는다.
+  // 시험용 가짜 모델이 맨 앞에 오지 않도록 사본에서 그런 계열은 보관해 두고 찍는다.
+  if (want("19_active_learning")) {
+    const dsId = await evaluate(client, `
+      (async () => {
+        const token = localStorage.getItem('mlops.token');
+        const list = await (await fetch('${BASE}/api/datasets?archived=false', { headers: { Authorization: 'Bearer ' + token } })).json();
+        const d = list.find(x => x.name === ${JSON.stringify(AL_DATASET)}) || list.find(x => x.taskType === 'detection');
+        return d ? d.id : null;
+      })()`);
+    if (!dsId) {
+      console.log("  훑을 검출 데이터셋이 없어 그 그림은 건너뜁니다");
+    } else {
+      process.stdout.write("/datasets/…/active-learning (새 사진 훑기)\n");
+      await client.send("Page.navigate", { url: `${BASE}/datasets/${dsId}/active-learning` });
+      await sleep(4000);
+      // 태그로 좁힌다 — 개발 DB 의 수집 사진은 대부분 시험 패턴이라, 모델이 반응하는 사진만 모아 둔 태그로 훑는다
+      await evaluate(client, `
+        (() => {
+          const label = Array.from(document.querySelectorAll('label')).find(e => e.innerText.trim().startsWith('태그'));
+          const f = label && label.parentElement.querySelector('input');
+          if (!f) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(f, ${JSON.stringify(AL_TAG)});
+          f.dispatchEvent(new Event('input', { bubbles: true }));
+          f.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()`);
+      await sleep(500);
+      await evaluate(client, `
+        (() => {
+          const b = Array.from(document.querySelectorAll('button')).find(e => e.innerText.trim() === '훑기');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`);
+      for (let i = 0; i < 160; i++) {
+        await sleep(500);
+        if (await evaluate(client, "!!document.querySelector('.mud-main-content img[src*=\"/thumb\"]')")) break;
+      }
+      await sleep(2500);
+      // 상자가 보이게 문턱을 낮춘다 (18 과 같은 값)
+      await evaluate(client, `
+        (() => {
+          const r = document.querySelector('input[type=range]');
+          if (!r) return false;
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(r, ${JSON.stringify(TRY_CONF)});
+          r.dispatchEvent(new Event('input', { bubbles: true }));
+          r.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()`);
+      await sleep(1500);
+      await shoot(client, "19_active_learning", { viewportOnly: true });
     }
   }
 

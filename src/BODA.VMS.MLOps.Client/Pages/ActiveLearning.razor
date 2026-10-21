@@ -1,0 +1,239 @@
+@page "/datasets/{Id:guid}/active-learning"
+@attribute [Authorize(Roles = "Engineer,Admin")]
+@inject MlopsApi Api
+@inject ISnackbar Snackbar
+
+@* 새 사진 훑기 (Active Learning, 개발 문서 §5.5 4번) — WPF 도구의 "폴더를 훑어 실패작 고르기" 를 옮긴 것.
+   웹에서 폴더에 해당하는 것은 수집 사진(이미지 풀)이다. 훑기는 아무것도 담지 않는다 — 사람이 골라 담는다. *@
+
+<PageTitle>새 사진 훑기 · MLOps</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+@if (_dataset is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudBreadcrumbs Items="@(new List<BreadcrumbItem> {
+        new("데이터셋", "/datasets"), new(_dataset.Name, $"/datasets/{Id}"), new("새 사진 훑기", null, disabled: true) })" Class="pa-0 mb-2" />
+
+    <div class="mb-3">
+        <MudText Typo="Typo.h5" HtmlTag="h1">새 사진 훑기</MudText>
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            수집 사진 중 이 데이터셋에 아직 없는 것을 후보 모델로 훑어, 모델이 가장 자신 없어 한 사진부터 보여 줍니다.
+            그런 사진이 다음 학습에 가장 도움이 됩니다. 골라서 담아야 데이터셋에 들어갑니다.
+        </MudText>
+    </div>
+
+    <MudGrid Class="mb-2">
+        <MudItem xs="12" md="7">
+            <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                <div class="d-flex flex-wrap gap-3 align-end">
+                    <MudSelect T="Guid?" @bind-Value="_versionId" Label="후보 모델" Style="min-width:260px" Dense="true">
+                        @foreach (var o in _versions)
+                        {
+                            <MudSelectItem T="Guid?" Value="@((Guid?)o.Id)">@o.Label</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="ImageSource?" @bind-Value="_source" Label="수집 경로" Style="max-width:160px" Dense="true" Clearable="true">
+                        <MudSelectItem T="ImageSource?" Value="@((ImageSource?)ImageSource.LineNg)">@Display.ImageSourceText(ImageSource.LineNg)</MudSelectItem>
+                        <MudSelectItem T="ImageSource?" Value="@((ImageSource?)ImageSource.Manual)">@Display.ImageSourceText(ImageSource.Manual)</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="_tag" Label="태그 (선택)" Style="max-width:140px" Dense="true" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ManageSearch"
+                               Disabled="@(_versionId is null || _scanning)" OnClick="@(() => ScanAsync(0))">훑기</MudButton>
+                </div>
+                @if (_versions.Count == 0 && _loaded)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+                        이 데이터셋과 클래스가 겹치는 검출 모델(YOLO · D-FINE)이 없습니다. 먼저 학습해 후보 모델을 만드세요.
+                    </MudText>
+                }
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+                    최근 사진부터 한 번에 @(MaxPerScan)장씩 훑습니다. 서버 CPU 로 돌므로 묶음마다 조금 걸립니다.
+                </MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="5">
+            <MudPaper Class="pa-4" Elevation="1" Style="height:100%">
+                <MudSlider T="double" @bind-Value="_confidence" Min="0.05" Max="0.95" Step="0.05" Color="Color.Info">
+                    신뢰도 @_confidence.ToString("0.00") 이상만 상자로 보기
+                </MudSlider>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">
+                    담을 때 예측을 미리 채우면 이 문턱을 넘은 것만 라벨이 됩니다.
+                </MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @if (_scanning)
+    {
+        <MudProgressLinear Indeterminate="true" Class="mb-2" />
+    }
+
+    @if (_result is not null)
+    {
+        <div class="d-flex flex-wrap align-center gap-3 mb-2">
+            <MudText Typo="Typo.body2">
+                수집 사진 @(_result.PoolTotal)장 중 @(Math.Min(_result.NextSkip, _result.PoolTotal))장 훑음 · 이번 묶음 @(_items.Count)장 · @(_result.ElapsedMs)ms
+            </MudText>
+            <MudSpacer />
+            @if (_result.NextSkip < _result.PoolTotal)
+            {
+                <MudButton Variant="Variant.Outlined" Disabled="@_scanning" OnClick="@(() => ScanAsync(_result.NextSkip))">다음 묶음 훑기</MudButton>
+            }
+        </div>
+
+        @if (_items.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">훑을 사진이 없습니다. 수집 사진이 모두 이 데이터셋에 있거나, 조건에 맞는 것이 없습니다.</MudAlert>
+        }
+        else
+        {
+            <MudPaper Class="pa-3 mb-2 d-flex flex-wrap align-center gap-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.body2">고른 사진 @(_picked.Count)장</MudText>
+                <MudSelect T="DatasetSplit" @bind-Value="_split" Label="담을 곳" Dense="true" Style="max-width:120px">
+                    <MudSelectItem T="DatasetSplit" Value="DatasetSplit.Train">@Display.SplitText(DatasetSplit.Train)</MudSelectItem>
+                    <MudSelectItem T="DatasetSplit" Value="DatasetSplit.Val">@Display.SplitText(DatasetSplit.Val)</MudSelectItem>
+                </MudSelect>
+                <MudCheckBox T="bool" @bind-Value="_prefill" Label="예측을 초기 라벨로 미리 채우기 (검토 전 라벨)" Dense="true" />
+                <MudSpacer />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AddPhotoAlternate"
+                           Disabled="@(_picked.Count == 0 || _adding)" OnClick="AddAsync">데이터셋에 담기</MudButton>
+            </MudPaper>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2">
+                모델이 자신 없어 한 순서입니다 — 후보가 하나도 없는 사진, 그다음 가장 높은 점수가 낮은 사진. 눌러서 고릅니다.
+            </MudText>
+
+            <MudGrid Spacing="2">
+                @foreach (var item in _items)
+                {
+                    var boxes = DetectionOverlay.Visible(item.Detections, _confidence, DetectionPostIou);
+                    var on = _picked.Contains(item.Image.Id);
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudPaper Elevation="@(on ? 4 : 1)" Class="pa-2" @onclick="@(() => Toggle(item.Image.Id))"
+                                  Style="@($"cursor:pointer; border:2px solid {(on ? "var(--mud-palette-primary)" : "transparent")}")">
+                            <div style="position:relative; line-height:0">
+                                <img src="@item.Image.ThumbnailUrl" alt="@item.Image.FileName" loading="lazy" style="width:100%; display:block" />
+                                @foreach (var d in boxes)
+                                {
+                                    <div style="@DetectionOverlay.BoxStyle(d)"></div>
+                                }
+                                @if (on)
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Primary"
+                                             Style="position:absolute; top:6px; right:6px; background:#fff; border-radius:50%" />
+                                }
+                            </div>
+                            <MudText Typo="Typo.caption" Class="d-block mt-1" Style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                                @item.Image.FileName · @Display.ImageSourceText(item.Image.Source)
+                            </MudText>
+                            <MudText Typo="Typo.caption" Class="@(boxes.Count == 0 ? "mud-text-secondary" : "")">
+                                @DetectionOverlay.Verdict(item.Error, item.MaxScore, boxes, _result.ScoreFloor)
+                            </MudText>
+                        </MudPaper>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private sealed record VersionOption(Guid Id, string Label);
+
+    private const int MaxPerScan = 60;
+    /// <summary>표시용 NMS 문턱 — 런타임 기본값과 같다. 이 화면은 고르기용이라 IoU 는 조절하지 않는다.</summary>
+    private const double DetectionPostIou = 0.45;
+
+    private DatasetDto? _dataset;
+    private List<VersionOption> _versions = [];
+    private Guid? _versionId;
+    private ImageSource? _source;
+    private string? _tag;
+    private bool _loaded, _scanning, _adding;
+    private string? _error;
+
+    private ActiveLearningScanResultDto? _result;
+    private List<ActiveLearningItemDto> _items = [];
+    private readonly HashSet<Guid> _picked = [];
+    private DatasetSplit _split = DatasetSplit.Train;
+    private bool _prefill = true;
+    private double _confidence = 0.25;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            _dataset = await Api.DatasetAsync(Id);
+            // 이 데이터셋과 클래스가 겹치는 검출 모델의 버전 — 계열을 가리지 않고 운영 · 스테이징 · 후보 순, 같은 단계면 최근 것.
+            // 라인에서 실제로 도는 모델이 헷갈린 사진이 다음 학습에 가장 쓸모 있으므로 운영 버전이 기본으로 잡힌다.
+            var found = new List<(int Rank, DateTime At, VersionOption Option)>();
+            foreach (var m in await Api.ModelsAsync(TaskType.Detection))
+            {
+                if (!m.Classes.Intersect(_dataset.Classes).Any()) continue;
+                foreach (var v in (await Api.VersionsAsync(m.Id)).Where(v => v.Format is ModelFormat.Yolo or ModelFormat.DFine))
+                {
+                    int rank = v.Stage switch { ModelStage.Production => 0, ModelStage.Staging => 1, ModelStage.Candidate => 2, _ => 3 };
+                    found.Add((rank, v.CreatedAt, new VersionOption(v.Id, $"{m.Name} · v{v.Number} · {Display.StageText(v.Stage)}")));
+                }
+            }
+            _versions = found.OrderBy(x => x.Rank).ThenByDescending(x => x.At).Select(x => x.Option).ToList();
+            _versionId ??= _versions.FirstOrDefault()?.Id;
+            _loaded = true;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+    }
+
+    private async Task ScanAsync(int skip)
+    {
+        if (_versionId is not { } versionId) return;
+        _scanning = true;
+        _error = null;
+        try
+        {
+            _result = await Api.ScanActiveLearningAsync(Id, new ActiveLearningScanRequest(versionId, _source,
+                string.IsNullOrWhiteSpace(_tag) ? null : _tag.Trim(), skip, MaxPerScan));
+            _items = _result.Items.ToList();
+            _picked.Clear();
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _scanning = false; }
+    }
+
+    private void Toggle(Guid id)
+    {
+        if (!_picked.Remove(id)) _picked.Add(id);
+    }
+
+    private async Task AddAsync()
+    {
+        if (_versionId is not { } versionId || _picked.Count == 0) return;
+        _adding = true;
+        _error = null;
+        try
+        {
+            var ids = _picked.ToArray();
+            await Api.AddImagesAsync(Id, ids, _split);
+            var note = "";
+            if (_prefill)
+            {
+                // 고른 사진만 채운다 — 원래 있던 미라벨 사진은 사람이 따로 정한다
+                var r = await Api.PrelabelAsync(Id, new PrelabelRequest(versionId, _confidence, ids.Length, ids));
+                note = $" · 미리 채운 사진 {r.Filled}장 (라벨 {r.Annotations}개, 검토 전)";
+            }
+            Snackbar.Add($"{ids.Length}장을 {Display.SplitText(_split)} 으로 담았습니다{note}", Severity.Success);
+            _items.RemoveAll(i => _picked.Contains(i.Image.Id));
+            _picked.Clear();
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _adding = false; }
+    }
+}

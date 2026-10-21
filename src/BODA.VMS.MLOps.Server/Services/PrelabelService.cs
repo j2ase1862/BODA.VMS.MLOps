@@ -47,7 +47,7 @@ public sealed class PrelabelService(
 
     public async Task<PrelabelResult> RunAsync(
         Guid datasetId, Guid modelVersionId, double confidence, int maxImages,
-        CurrentUser user, CancellationToken ct)
+        CurrentUser user, CancellationToken ct, IReadOnlyCollection<Guid>? onlyImages = null)
     {
         var dataset = await db.Datasets.AsNoTracking().FirstOrDefaultAsync(d => d.Id == datasetId, ct)
                       ?? throw ApiException.NotFound("데이터셋");
@@ -76,7 +76,7 @@ public sealed class PrelabelService(
             throw ApiException.BadRequest(ErrorCodes.ClassMismatch,
                 $"모델 클래스({string.Join(", ", modelClasses)})가 데이터셋 클래스({string.Join(", ", datasetClasses)})와 하나도 겹치지 않습니다.");
 
-        var targets = await UnlabeledImagesAsync(datasetId, Math.Clamp(maxImages, 1, MaxImagesPerCall), ct);
+        var targets = await UnlabeledImagesAsync(datasetId, Math.Clamp(maxImages, 1, MaxImagesPerCall), onlyImages, ct);
         if (targets.Count == 0)
             return new PrelabelResult(0, 0, 0, 0, 0, "채울 미라벨 이미지가 없습니다.");
 
@@ -137,10 +137,12 @@ public sealed class PrelabelService(
     /// 아직 사람이 손대지 않은 이미지만 고른다. 이미 라벨·검토가 끝난 것은 대상이 아니고,
     /// 남이 잠가 둔 것도 건드리지 않는다.
     /// </summary>
-    private async Task<List<Image>> UnlabeledImagesAsync(Guid datasetId, int take, CancellationToken ct)
+    private async Task<List<Image>> UnlabeledImagesAsync(Guid datasetId, int take, IReadOnlyCollection<Guid>? only, CancellationToken ct)
     {
         var memberIds = await db.DatasetImages.AsNoTracking()
             .Where(m => m.DatasetId == datasetId).Select(m => m.ImageId).ToListAsync(ct);
+        // 새 사진 훑기에서 골라 담은 것만 채울 때 — 그 밖의 미라벨은 사람이 따로 정한다
+        if (only is { Count: > 0 }) memberIds = memberIds.Where(only.Contains).ToList();
         if (memberIds.Count == 0) return [];
 
         var states = await db.ImageLabelStates.AsNoTracking()

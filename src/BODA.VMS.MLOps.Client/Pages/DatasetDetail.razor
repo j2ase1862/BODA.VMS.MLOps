@@ -44,6 +44,12 @@ else
             <AuthorizeView Roles="Engineer,Admin" Context="eng">
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AutoFixHigh"
                            OnClick="OpenPrelabelAsync">모델로 미리 채우기</MudButton>
+                @if (_dataset.TaskType == TaskType.Detection)
+                {
+                    @* 수집 사진 중 모델이 헷갈린 것을 골라 담는다 (§5.5 4번) *@
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ManageSearch"
+                               Href="@($"/datasets/{Id}/active-learning")">새 사진 훑기</MudButton>
+                }
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Archive"
                            OnClick="@(() => _snapshotOpen = true)">버전 만들기</MudButton>
             </AuthorizeView>

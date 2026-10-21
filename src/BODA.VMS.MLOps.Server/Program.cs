@@ -86,6 +86,7 @@ builder.Services.AddScoped<DatasetSnapshotService>();
 builder.Services.AddScoped<DetectionInference>();
 builder.Services.AddScoped<PrelabelService>();
 builder.Services.AddScoped<ModelTryService>();
+builder.Services.AddScoped<ActiveLearningService>();
 // 모니터링 (Phase 5). 운영 웹 주소가 없으면 스스로 꺼진 상태로 남는다.
 builder.Services.AddSingleton<ServiceTokenIssuer>();
 builder.Services.AddSingleton<LocalTokenIssuer>();
