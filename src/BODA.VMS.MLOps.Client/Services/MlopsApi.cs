@@ -234,6 +234,10 @@ public sealed class MlopsApi(HttpClient http)
     public Task<PrelabelResultDto> PrelabelAsync(Guid datasetId, PrelabelRequest req) =>
         PostAsync<PrelabelRequest, PrelabelResultDto>($"/api/datasets/{datasetId}/prelabel", req);
 
+    /// <summary>새 사진 훑기 — 데이터셋에 없는 수집 사진을 후보 모델로 훑는다. 아무것도 담지 않는다 (Engineer 이상).</summary>
+    public Task<ActiveLearningScanResultDto> ScanActiveLearningAsync(Guid datasetId, ActiveLearningScanRequest req) =>
+        PostAsync<ActiveLearningScanRequest, ActiveLearningScanResultDto>($"/api/datasets/{datasetId}/active-learning/scan", req);
+
     // ───────────── 라인 PC 서비스 계정 ─────────────
 
     public Task<List<LineClientDto>> LineClientsAsync() => GetAsync<List<LineClientDto>>("/api/line-clients");

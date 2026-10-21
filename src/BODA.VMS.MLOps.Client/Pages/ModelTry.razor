@@ -198,41 +198,11 @@ else
         finally { _running = false; }
     }
 
-    /// <summary>신뢰도 문턱을 넘은 것에 클래스별 NMS — 런타임(VMS DetectionTool.GlobalNMS)과 같은 규칙</summary>
-    private List<TryDetectionDto> Visible(TryImageResultDto r)
-    {
-        var kept = new List<TryDetectionDto>();
-        foreach (var d in r.Detections.Where(d => d.Score >= _confidence).OrderByDescending(d => d.Score))
-            if (!kept.Any(k => k.ClassIndex == d.ClassIndex && Iou(k, d) > _iou))
-                kept.Add(d);
-        return kept;
-    }
+    private List<TryDetectionDto> Visible(TryImageResultDto r) => DetectionOverlay.Visible(r.Detections, _confidence, _iou);
 
-    private static double Iou(TryDetectionDto a, TryDetectionDto b)
-    {
-        double x1 = Math.Max(a.X, b.X), y1 = Math.Max(a.Y, b.Y);
-        double x2 = Math.Min(a.X + a.W, b.X + b.W), y2 = Math.Min(a.Y + a.H, b.Y + b.H);
-        double inter = Math.Max(0, x2 - x1) * Math.Max(0, y2 - y1);
-        double union = a.W * a.H + b.W * b.H - inter;
-        return union <= 0 ? 0 : inter / union;
-    }
+    private string Verdict(TryImageResultDto r, List<TryDetectionDto> boxes) =>
+        DetectionOverlay.Verdict(r.Error, r.MaxScore, boxes, _result?.ScoreFloor ?? 0.05);
 
-    private string Verdict(TryImageResultDto r, List<TryDetectionDto> boxes)
-    {
-        if (r.Error is not null) return $"돌리지 못함 — {r.Error}";
-        if (boxes.Count > 0)
-            return $"후보 {boxes.Count}개 · 최고 {boxes[0].Score:0.00} · " +
-                   string.Join(", ", boxes.GroupBy(b => b.ClassName).Select(g => $"{g.Key} {g.Count()}"));
-        // WPF 미리보기의 진단과 같다 — 문턱이 높은 것인지, 모델이 정말 못 보는 것인지 가른다
-        return r.MaxScore is { } max
-            ? $"후보 없음 (최고 {max:0.00} — 신뢰도를 낮추면 보입니다)"
-            : $"후보 없음 (모든 후보가 {_result?.ScoreFloor:0.00} 미만)";
-    }
-
-    private static string BoxStyle(TryDetectionDto d) =>
-        FormattableString.Invariant(
-            $"position:absolute; left:{d.X * 100:0.###}%; top:{d.Y * 100:0.###}%; width:{d.W * 100:0.###}%; height:{d.H * 100:0.###}%; border:2px solid {ClassPalette.ColorOf(d.ClassIndex)}; box-sizing:border-box; pointer-events:none");
-
-    private static string TagStyle(TryDetectionDto d) =>
-        $"position:absolute; left:-2px; top:-20px; line-height:18px; padding:0 4px; font-size:12px; white-space:nowrap; color:#fff; background:{ClassPalette.ColorOf(d.ClassIndex)}";
+    private static string BoxStyle(TryDetectionDto d) => DetectionOverlay.BoxStyle(d);
+    private static string TagStyle(TryDetectionDto d) => DetectionOverlay.TagStyle(d);
 }
