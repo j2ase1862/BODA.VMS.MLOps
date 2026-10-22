@@ -43,7 +43,7 @@ public static class HyperparamWhitelist
             new("flip", HyperparamType.Float, 0, 1, Default: "0.5"),
             new("weight_decay", HyperparamType.Float, 0, 1, Default: "0.000125"),
             new("warmup_epochs", HyperparamType.Float, 0, 100, Default: "1.0"),
-            new("workers", HyperparamType.Int, 0, 32, Default: "0"),
+            new("workers", HyperparamType.Int, 0, 32, Default: "2"),
         ],
         [TrainingScript.TrainYolo] = [.. Common, .. Aug],
         [TrainingScript.TrainClassifier] = Common,
