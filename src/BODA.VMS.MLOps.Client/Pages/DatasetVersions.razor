@@ -47,7 +47,11 @@
             <MudTd DataLabel="매니페스트 해시"><span class="mono">@Display.Sha(context.ManifestHash)</span></MudTd>
             <MudTd DataLabel="등록">@Display.When(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
             <MudTd>
-                <MudButton Size="Size.Small" Href="@context.ExportUrl" Target="_blank">다운로드</MudButton>
+                @* 서버가 엔지니어 이상에게만 내준다 — 받을 수 없는 사람에게는 버튼을 보이지 않는다.
+                   링크로 받는다: 브라우저가 다운로드 쿠키로 인증하고 디스크로 바로 받는다 (zip 이 커도 된다) *@
+                <AuthorizeView Roles="Engineer,Admin" Context="dl">
+                    <MudButton Size="Size.Small" Href="@context.ExportUrl" download="@true">다운로드</MudButton>
+                </AuthorizeView>
                 <AuthorizeView Roles="Engineer,Admin" Context="del">
                     <MudTooltip Text="버전 삭제">
                         <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small"

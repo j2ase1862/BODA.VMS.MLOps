@@ -61,7 +61,7 @@ public class ImageAuthTests : IClassFixture<MlopsApiFactory>
         var issued = await withBearer.PostAsync("/api/auth/image-cookie", null);
         issued.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
-        var setCookie = issued.Headers.GetValues("Set-Cookie").Single();
+        var setCookie = issued.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith(ImageCookie.Name + "="));
         setCookie.Should().Contain(ImageCookie.Name);
         setCookie.Should().Contain("httponly", "스크립트가 토큰을 읽지 못해야 한다");
         setCookie.Should().Contain($"path={ImageCookie.Path}", "이미지 경로 밖으로 새지 않아야 한다");
@@ -123,7 +123,7 @@ public class ImageAuthTests : IClassFixture<MlopsApiFactory>
     {
         var res = await _f.CreateClient().PostAsync("/api/auth/image-cookie/clear", null);
         res.StatusCode.Should().Be(HttpStatusCode.NoContent);
-        var setCookie = res.Headers.GetValues("Set-Cookie").Single();
+        var setCookie = res.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith(ImageCookie.Name + "="));
         setCookie.Should().Contain(ImageCookie.Name).And.Contain("expires=Thu, 01 Jan 1970");
     }
 }

@@ -47,7 +47,7 @@ public static class TrainingJobEndpoints
         {
             var (fileName, content) = await logs.BuildAsync(id, ct);
             return Results.File(content, "text/plain; charset=utf-8", fileName);
-        }).RequireAuthorization(Policies.Viewer);
+        }).RequireAuthorization(Policies.Viewer).AllowDownloadCookie();
 
         g.MapGet("/{id:guid}/artifacts", async (Guid id, TrainingJobService svc, CancellationToken ct) =>
             Results.Ok(await svc.ArtifactsAsync(id, ct))).RequireAuthorization(Policies.Viewer);
@@ -57,7 +57,7 @@ public static class TrainingJobEndpoints
             var k = EnumBinding.Parse<JobArtifactKind>(kind, "kind");
             var (stream, a) = await svc.OpenArtifactAsync(id, k, ct);
             return Results.File(stream, "application/octet-stream", a.FileName, entityTag: new EntityTagHeaderValue($"\"{a.Sha256}\""));
-        }).RequireAuthorization(Policies.Viewer);
+        }).RequireAuthorization(Policies.Viewer).AllowDownloadCookie();
 
         g.MapPost("/{id:guid}/cancel", async (Guid id, CancelJobRequest? req, TrainingJobService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.CancelAsync(id, req ?? new CancelJobRequest(), CurrentUser.From(p), ct))).RequireAuthorization(Policies.Engineer);

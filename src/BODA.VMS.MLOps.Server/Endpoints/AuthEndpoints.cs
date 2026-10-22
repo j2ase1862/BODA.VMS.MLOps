@@ -107,28 +107,33 @@ public static class AuthEndpoints
         // 브라우저의 <img src> 는 Authorization 헤더를 붙일 수 없다. 이미지 경로에만 쓰이는
         // 쿠키를 하나 내려, 격자 썸네일과 캔버스가 평범한 img 태그로 그려질 수 있게 한다.
         // 토큰을 URL 에 넣는 방법도 있지만 그러면 접근 로그와 방문 기록에 토큰이 남는다.
+        // 같은 자리에서 파일 받기 링크용 쿠키(DownloadCookie)도 함께 내린다 — 둘 다 "헤더를 못 붙이는 브라우저 요청" 이다.
         g.MapPost("/image-cookie", (HttpRequest request, HttpResponse response) =>
         {
             var header = request.Headers.Authorization.ToString();
             if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                 throw ApiException.Forbidden("Bearer 토큰이 필요합니다.");
 
-            response.Cookies.Append(ImageCookie.Name, header[7..].Trim(), new CookieOptions
+            var token = header[7..].Trim();
+            // 만료를 따로 두지 않는다. 브라우저를 닫으면 사라지고, 다시 열면 화면이 다시 받아 간다.
+            // 시간을 박아 두면 탭을 오래 열어 둔 사람의 이미지가 어느 순간부터 안 보인다.
+            // 담긴 토큰 자체가 만료되면 서버가 어차피 거부하므로 수명이 짧아지지는 않는다.
+            CookieOptions Options(string path) => new()
             {
                 HttpOnly = true,                        // 스크립트가 읽지 못한다
                 Secure = request.IsHttps,
                 SameSite = SameSiteMode.Strict,         // 다른 사이트에서 부르는 요청에는 붙지 않는다
-                Path = ImageCookie.Path,                // 이미지 경로 밖으로는 나가지 않는다
-                // 만료를 따로 두지 않는다. 브라우저를 닫으면 사라지고, 다시 열면 화면이 다시 받아 간다.
-                // 시간을 박아 두면 탭을 오래 열어 둔 사람의 이미지가 어느 순간부터 안 보인다.
-                // 담긴 토큰 자체가 만료되면 서버가 어차피 거부하므로 수명이 짧아지지는 않는다.
-            });
+                Path = path,
+            };
+            response.Cookies.Append(ImageCookie.Name, token, Options(ImageCookie.Path));       // 이미지 경로 밖으로는 나가지 않는다
+            response.Cookies.Append(DownloadCookie.Name, token, Options(DownloadCookie.Path)); // 서버가 다운로드 표시 GET 에서만 받는다
             return Results.NoContent();
         }).RequireAuthorization(Policies.Viewer);
 
         g.MapPost("/image-cookie/clear", (HttpResponse response) =>
         {
             response.Cookies.Delete(ImageCookie.Name, new CookieOptions { Path = ImageCookie.Path });
+            response.Cookies.Delete(DownloadCookie.Name, new CookieOptions { Path = DownloadCookie.Path });
             return Results.NoContent();
         }).AllowAnonymous();
 

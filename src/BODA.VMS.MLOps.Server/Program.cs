@@ -172,6 +172,12 @@ builder.Services.AddAuthentication(SmartAuthScheme.Name)
                     && string.IsNullOrEmpty(ctx.Request.Headers.Authorization)
                     && ctx.Request.Cookies.TryGetValue(ImageCookie.Name, out var cookie))
                     ctx.Token = cookie;
+                // 파일 받기 링크도 헤더를 붙일 수 없다. 다운로드 표시가 붙은 GET 에서만 다운로드 쿠키를 받아 준다 (DownloadCookie).
+                else if (string.IsNullOrEmpty(ctx.Request.Headers.Authorization)
+                         && (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method))
+                         && ctx.HttpContext.GetEndpoint()?.Metadata.GetMetadata<DownloadCookieEndpoint>() is not null
+                         && ctx.Request.Cookies.TryGetValue(DownloadCookie.Name, out var download))
+                    ctx.Token = download;
                 return Task.CompletedTask;
             },
 

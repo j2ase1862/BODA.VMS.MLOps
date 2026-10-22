@@ -244,6 +244,7 @@ VMS 쪽 검토 결과 (2026-10-21, VMS PR 머지 때 확정):
 
 ## 7. 보안·권한·감사
 - 인증: 기존 JWT + 리프레시(30일 절대 만료). 워커는 서비스 계정 토큰(장기, 워커 ID 바인딩, 회전 가능).
+- 브라우저 쿠키: 화면은 토큰을 헤더로 보내지만 `<img src>` 와 파일 받기 링크(`<a download>`)는 헤더를 붙일 수 없다. 로그인할 때 `POST /api/auth/image-cookie` 가 HttpOnly·SameSite=Strict 쿠키 두 개를 내린다 — 이미지용(`mlops.img`, Path=/api/images)과 다운로드용(`mlops.dl`, Path=/api). 다운로드 쿠키는 `AllowDownloadCookie()` 표시가 붙은 GET(데이터셋 zip · 모델 ONNX · 사전학습 파일 · 학습 아티팩트 · 학습 로그)에서만, Authorization 헤더가 없을 때만 받는다. 권한은 쿠키 속 토큰의 역할 그대로다 — 엔지니어 이상만 받는 파일의 버튼은 화면도 엔지니어 이상에게만 보인다.
 - 업로드 파일 검증: 이미지는 매직 바이트·크기 상한·재인코딩 없이 저장하되 EXIF 제거. ONNX 는 protobuf 파싱(`OnnxMetadataReader`)으로 구조 검증, 세션 생성은 격리 프로세스에서.
 - 스크립트 실행: 워커는 서버가 서명한 스크립트 해시 목록만 실행(임의 코드 실행 방지). 하이퍼파라미터는 화이트리스트 인자만 전달.
 - 감사: 데이터셋 버전 생성, 모델 승격/바인딩, 라벨 수정은 기존 AuditLogger 카테고리에 `Model`, `Dataset` 추가.

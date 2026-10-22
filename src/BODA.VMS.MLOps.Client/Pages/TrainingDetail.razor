@@ -114,8 +114,9 @@ else
                     <MudText Typo="Typo.subtitle1">로그</MudText>
                     <div class="d-flex align-center gap-2">
                         <MudSwitch T="bool" @bind-Value="_follow" Label="자동 스크롤" Color="Color.Primary" />
+                        @* 링크로 받는다 — 브라우저가 다운로드 쿠키로 인증하고 디스크로 바로 받는다 (서버 DownloadCookie) *@
                         <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Download"
-                                   Disabled="@_downloading" OnClick="DownloadLogAsync">로그 다운로드</MudButton>
+                                   Href="@MlopsApi.JobLogUrl(Id)" download="@true">로그 다운로드</MudButton>
                     </div>
                 </div>
                 <div class="log-console" id="log-console">
@@ -180,15 +181,20 @@ else
             {
                 <MudPaper Class="pa-4 mb-4" Elevation="1">
                     <MudText Typo="Typo.subtitle1" Class="mb-2">아티팩트</MudText>
-                    <MudList T="string" Dense="true">
+                    @* download 속성이 있는 링크는 Blazor 라우터가 가로채지 않고 브라우저가 파일로 받는다 *@
+                    <div class="d-flex flex-column gap-1">
                         @foreach (var a in _artifacts)
                         {
-                            <MudListItem T="string" OnClick="@(() => DownloadArtifactAsync(a))" Icon="@Icons.Material.Filled.Download">
-                                <MudText Typo="Typo.body2">@a.FileName</MudText>
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(a.SizeBytes) · @Display.Sha(a.Sha256)</MudText>
-                            </MudListItem>
+                            <a href="@a.Url" download class="d-flex align-center gap-3 pa-2 mud-ripple" title="@($"{a.FileName} 받기")"
+                               style="color:inherit;text-decoration:none;border-radius:4px">
+                                <MudIcon Icon="@Icons.Material.Filled.Download" Size="Size.Small" Color="Color.Primary" />
+                                <div>
+                                    <MudText Typo="Typo.body2">@a.FileName</MudText>
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(a.SizeBytes) · @Display.Sha(a.Sha256)</MudText>
+                                </div>
+                            </a>
                         }
-                    </MudList>
+                    </div>
                 </MudPaper>
             }
 
@@ -238,9 +244,8 @@ else
     private List<JobArtifactDto> _artifacts = [];
     private string? _curvePng;   // data: URL — <img> 는 Authorization 헤더를 못 붙이므로 Bearer 로 받아 인라인으로 넣는다
     private string? _error;
-    private bool _busy, _follow = true, _hubConnected, _downloading;
+    private bool _busy, _follow = true, _hubConnected;
     private LogArchiveInfo? _archive;
-    private IJSObjectReference? _download;
     private long _lastSeq;
     private IAsyncDisposable? _watch;
     private Timer? _poll;
@@ -339,42 +344,6 @@ else
         catch (MlopsApiException) { return null; }   // 안내 한 줄만 빠진다
     }
 
-    /// <summary>로그 한 벌을 받는다 — 도는 중이면 지금까지의 것. 머리말에 작업·데이터셋·설정·결과가 붙는다.</summary>
-    private async Task DownloadLogAsync()
-    {
-        _downloading = true;
-        try
-        {
-            var (fileName, content) = await Api.JobLogFileAsync(Id);
-            await SaveAsync(fileName, "text/plain;charset=utf-8", content);
-        }
-        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
-        finally { _downloading = false; }
-    }
-
-    /// <summary>
-    /// 아티팩트는 Bearer 로 받아 저장한다. 링크(새 탭)로 열면 토큰이 실리지 않아 401 로 막힌다.
-    /// </summary>
-    private async Task DownloadArtifactAsync(JobArtifactDto a)
-    {
-        if (_downloading) return;
-        _downloading = true;
-        try
-        {
-            var bytes = await Api.JobArtifactBytesAsync(Id, a.Kind);
-            if (bytes is null) { Snackbar.Add("서버에 파일이 없습니다.", Severity.Warning); return; }
-            await SaveAsync(a.FileName, "application/octet-stream", bytes);
-        }
-        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
-        finally { _downloading = false; }
-    }
-
-    private async Task SaveAsync(string fileName, string contentType, byte[] content)
-    {
-        _download ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/download.js");
-        await _download.InvokeVoidAsync("saveBytes", fileName, contentType, content);
-    }
-
     private async Task ScrollAsync()
     {
         if (!_follow) return;
@@ -444,12 +413,5 @@ else
         _poll = null;
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await StopWatchAsync();
-        if (_download is not null)
-        {
-            try { await _download.DisposeAsync(); } catch (JSDisconnectedException) { }
-        }
-    }
+    public async ValueTask DisposeAsync() => await StopWatchAsync();
 }
