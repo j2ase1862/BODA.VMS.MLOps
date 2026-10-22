@@ -1,0 +1,32 @@
+@using BODA.VMS.MLOps.Contracts.Members
+@* [역할 주기] 드롭다운의 운영 웹 계정 한 줄 — 아이디 · 이름 · 운영 웹 역할, 승인 대기 · 이미 붙인 MLOps 역할 *@
+
+@if (Account is not null)
+{
+    <div class="d-flex align-center gap-2" style="width:100%">
+        <div style="min-width:0">
+            <MudText Typo="Typo.body2"><b>@Account.Username</b>
+                @if (!string.IsNullOrWhiteSpace(Account.DisplayName))
+                {
+                    <span class="mud-text-secondary"> · @Account.DisplayName</span>
+                }
+            </MudText>
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">운영 웹 역할 @(string.IsNullOrWhiteSpace(Account.WebRole) ? "—" : Account.WebRole)</MudText>
+        </div>
+        <MudSpacer />
+        @if (!Account.Approved)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">승인 대기</MudChip>
+        }
+        else if (Member is not null)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">현재 @Member.Role</MudChip>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public WebAccountDto? Account { get; set; }
+    /// <summary>이미 역할 표에 있으면 그 줄 — 고르면 역할을 바꾸게 된다</summary>
+    [Parameter] public MemberDto? Member { get; set; }
+}

@@ -19,8 +19,8 @@
         else
         {
             <span>
-                로그인은 BODA VMS Web 이 확인하고, 그 사람이 MLOps 에서 무엇을 할 수 있는지는 여기가 정합니다.
-                운영 웹의 계정 이름을 올리고 역할을 붙이세요. 운영 웹 쪽 설정은 바뀌지 않습니다.
+                계정과 비밀번호는 BODA VMS Web 의 것을 그대로 씁니다 — 여기서 계정을 만들지 않습니다.
+                운영 웹에서 만들고 승인한 계정을 골라 MLOps 역할을 붙이세요. 운영 웹 쪽 설정은 바뀌지 않습니다.
             </span>
         }
     </Lead>
@@ -90,6 +90,13 @@ else
             <RowTemplate>
                 <MudTd DataLabel="계정">
                     <MudText Typo="Typo.body2"><b>@context.Username</b></MudText>
+                    @if (WebStatusOf(context.Username) is { } webStatus)
+                    {
+                        @* 운영 웹 목록을 받았을 때만 — 오타·삭제된 계정·승인 전 계정은 이 줄이 아무에게도 맞지 않는다 *@
+                        <MudTooltip Text="@webStatus.Tip">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">@webStatus.Label</MudChip>
+                        </MudTooltip>
+                    }
                     @if (!string.IsNullOrWhiteSpace(context.DisplayName))
                     {
                         <MudText Typo="Typo.caption" Class="mud-text-secondary">@context.DisplayName</MudText>
@@ -170,8 +177,32 @@ else
 <MudDialog @bind-Visible="_grantOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">@(_editing is null ? "역할 주기" : "역할 바꾸기")</MudText></TitleContent>
     <DialogContent>
-        <MudTextField @bind-Value="_username" Label="@(_local ? "계정 이름" : "운영 웹 계정 이름")" Immediate="true"
-                      Disabled="@(_editing is not null)" HelperText="로그인할 때 쓰는 이름 그대로. 대소문자는 가리지 않습니다." />
+        @if (_editing is null && _web is { Available: true })
+        {
+            @* 운영 웹 계정에서 고른다 — 손으로 치면 오타가 그대로 저장돼 그 사람은 계속 기본 역할로 들어온다 *@
+            <MudAutocomplete T="string" @bind-Value="_username" Label="운영 웹 계정" Variant="Variant.Outlined"
+                             SearchFunc="SearchWebAccountsAsync" ToStringFunc="@(u => u ?? "")" MaxItems="null"
+                             Strict="true" Clearable="true" ResetValueOnEmptyText="true" OpenOnFocus="true"
+                             ItemDisabledFunc="@(u => !IsApproved(u))"
+                             HelperText="@($"운영 웹 계정 {_web.Accounts.Count}개 — 아이디나 이름으로 찾습니다. 승인 대기 계정은 고를 수 없습니다.")">
+                <ItemTemplate Context="u">
+                    <AccountItem Account="@WebAccount(u)" Member="@MemberOf(u)" />
+                </ItemTemplate>
+                <ItemDisabledTemplate Context="u">
+                    <AccountItem Account="@WebAccount(u)" Member="@MemberOf(u)" />
+                </ItemDisabledTemplate>
+            </MudAutocomplete>
+        }
+        else
+        {
+            @if (_editing is null && !_local && _web is { Available: false } web)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">@web.Message</MudAlert>
+            }
+            <MudTextField @bind-Value="_username" Label="@(_local ? "계정 이름" : "운영 웹 계정 이름")" Immediate="true"
+                          Disabled="@(_editing is not null)"
+                          HelperText="@(_local ? "로그인할 때 쓸 이름. 대소문자는 가리지 않습니다." : "운영 웹에서 로그인할 때 쓰는 아이디 그대로. 대소문자는 가리지 않습니다 — 오타는 확인되지 않습니다.")" />
+        }
         <MudSelect T="string" @bind-Value="_role" Label="역할" Class="mt-4">
             @foreach (var r in _assignable)
             {
@@ -197,6 +228,7 @@ else
     private string _passwordUser = "", _passwordValue = "";
 
     private MemberDto? _editing;
+    private WebAccountListDto? _web;   // 운영 웹 계정 목록 (Web 모드). 못 받으면 Available=false
     private string _username = "", _role = "Viewer", _note = "";
 
     protected override Task OnInitializedAsync() => LoadAsync();
@@ -213,6 +245,12 @@ else
 
             _members = await Api.MembersAsync();
             _policy = await Api.MemberPolicyAsync();
+            _web = null;
+            if (!_local)
+            {
+                try { _web = await Api.WebAccountsAsync(); }
+                catch (MlopsApiException ex) { _web = new WebAccountListDto(false, WebAccountUnavailable.Failed, ex.Describe(), []); }
+            }
             if (_policy.AssignableRoles.Length > 0) _assignable = _policy.AssignableRoles;
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
@@ -294,6 +332,40 @@ else
             await LoadAsync();
         }
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+    }
+
+    private WebAccountDto? WebAccount(string? username) =>
+        _web?.Accounts.FirstOrDefault(a => string.Equals(a.Username, username, StringComparison.OrdinalIgnoreCase));
+
+    private MemberDto? MemberOf(string? username) =>
+        _members.FirstOrDefault(m => string.Equals(m.Username, username, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsApproved(string? username) => WebAccount(username)?.Approved == true;
+
+    private Task<IEnumerable<string>> SearchWebAccountsAsync(string? text, CancellationToken ct)
+    {
+        IEnumerable<WebAccountDto> all = _web?.Accounts ?? [];
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var q = text.Trim();
+            all = all.Where(a => a.Username.Contains(q, StringComparison.OrdinalIgnoreCase)
+                                 || (a.DisplayName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+        // 고를 수 있는 계정을 위로, 그 안에서는 아이디 순
+        return Task.FromResult(all.OrderBy(a => a.Approved ? 0 : 1).ThenBy(a => a.Username, StringComparer.OrdinalIgnoreCase)
+            .Select(a => a.Username));
+    }
+
+    /// <summary>역할 표의 줄이 운영 웹에서 어떤 상태인지. 목록을 못 받았으면 판단하지 않는다(null).</summary>
+    private (string Label, string Tip)? WebStatusOf(string username)
+    {
+        if (_local || _web is not { Available: true }) return null;
+        var account = WebAccount(username);
+        if (account is null)
+            return ("운영 웹에 없음", "운영 웹에 이 아이디가 없습니다. 오타이거나 지워진 계정이면 이 줄은 아무에게도 맞지 않습니다 — 거두고 다시 고르세요.");
+        if (!account.Approved)
+            return ("운영 웹 승인 대기", "운영 웹에서 가입 승인을 받기 전이라 아직 로그인할 수 없습니다.");
+        return null;
     }
 
     private static Color ColorOf(string role) => role switch

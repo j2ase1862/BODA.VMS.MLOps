@@ -23,6 +23,12 @@ public static class MemberEndpoints
         g.MapGet("/policy", (MemberService svc) => Results.Ok(svc.Policy()))
             .RequireAuthorization(Policies.Admin);
 
+        // [역할 주기] 에서 고를 운영 웹 계정. 부른 사람의 토큰으로 운영 웹에 묻는다 — 운영 웹 Admin 이어야 받는다.
+        // 못 받아도 200 에 이유를 실어 돌려준다. 화면은 그때 직접 입력으로 돌아간다.
+        g.MapGet("/web-accounts", async (HttpRequest request, ClaimsPrincipal p, WebAccountDirectoryClient web, CancellationToken ct) =>
+            Results.Ok(await web.ListAsync(p, request.Headers.Authorization.ToString() is { Length: > 0 } h ? h : null, ct)))
+            .RequireAuthorization(Policies.Admin);
+
         g.MapPut("/", async (GrantMemberRequest req, MemberService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.GrantAsync(req, CurrentUser.From(p), ct))).RequireAuthorization(Policies.Admin);
 
