@@ -474,6 +474,8 @@ def main():
     parser.add_argument("--device", default="", help="cuda / cpu (기본 자동)")
     parser.add_argument("--weight_decay", type=float, default=1.25e-4)
     parser.add_argument("--warmup_epochs", type=float, default=1.0)
+    parser.add_argument("--patience", type=int, default=0,
+                        help="조기 종료 — best 가 이 에폭 수만큼 나아지지 않으면 멈춘다 (0 이면 끄고 --epochs 를 다 돈다)")
     parser.add_argument("--seed", type=int, default=0)
 
     # Augmentation — TrainingService 가 YOLO 와 같은 이름으로 전달 (mosaic/mixup 은 D-FINE 미적용)
@@ -653,6 +655,14 @@ def main():
             write_history_artifacts(args.output, history, args.epochs, best_epoch)
         except Exception as ex:  # noqa: BLE001
             emit("WARN", f"학습 곡선 기록 실패 (계속 진행): {ex}")
+
+        # 조기 종료 — "나아짐" 은 위 best 선택과 같은 기준(mAP50, 같으면 val loss)이다.
+        # 학습률은 --epochs 기준 코사인이라 일찍 멈추면 덜 내려간 상태로 끝난다 — 그래서 기본은 끈다.
+        if args.patience > 0 and epoch < args.epochs and epoch - best_epoch >= args.patience:
+            emit("INFO", f"조기 종료 — {args.patience} 에폭 동안 나아지지 않음 "
+                         f"(best 에폭 {best_epoch}, {epoch}/{args.epochs} 에서 멈춤)")
+            emit("PROGRESS", "90")
+            break
 
     if args.export_onnx and os.path.isdir(best_dir):
         emit("PROGRESS", "95")
