@@ -132,57 +132,67 @@ def read_yolo_label(path, nc):
     return classes, boxes
 
 
-def build_dataset_class():
+class YoloDetDataset:
+    """YOLO 형식 폴더 → (pixel[3,imgsz,imgsz] RGB 0~1, {class_labels, boxes cxcywh 정규화}).
+
+    모듈 최상위에 둔다 — DataLoader worker(Windows 는 spawn)로 넘기려면 피클이 되어야 하고,
+    함수 안에서 만든 클래스는 피클이 안 돼 workers 를 0 보다 크게 줄 수 없었다.
+    torch.utils.data.Dataset 을 상속하지 않는 것도 같은 이유다 — 모듈을 읽는 시점에 torch 를 import 하지 않으려고.
+    DataLoader 는 __getitem__·__len__ 만 있으면 된다.
+    """
+
+    def __init__(self, img_dir, nc, imgsz, train, hsv_h, hsv_s, hsv_v, flip_p=0.5):
+        from torchvision import transforms as T
+        self.img_dir = img_dir
+        self.lbl_dir = labels_dir_for(img_dir)
+        self.nc = nc
+        self.imgsz = imgsz
+        self.train = train
+        self.flip_p = flip_p if train else 0.0
+        self.files = sorted(f for f in os.listdir(img_dir) if f.lower().endswith(IMG_EXTS))
+        if not self.files:
+            fail(f"이미지가 없습니다: {img_dir}")
+        self.jitter = None
+        if train and (hsv_h > 0 or hsv_s > 0 or hsv_v > 0):
+            self.jitter = T.ColorJitter(brightness=hsv_v, saturation=hsv_s, hue=min(hsv_h, 0.5))
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        import torch
+        from PIL import Image
+        from torchvision import transforms as T
+
+        name = self.files[idx]
+        img = Image.open(os.path.join(self.img_dir, name)).convert("RGB")
+        stem = os.path.splitext(name)[0]
+        classes, boxes = read_yolo_label(os.path.join(self.lbl_dir, stem + ".txt"), self.nc)
+
+        # 줄이고 나서 증강한다. 색 증강·좌우 반전은 화소마다 하는 연산이라 순서를 바꿔도 결과가 사실상 같고,
+        # 상자는 정규화 좌표라 크기와 무관하다. 원본(2448×2048)에 색 증강을 하면 한 장에 0.6~0.8초가 들어
+        # GPU 가 사진을 기다리느라 놀았다 (2026-10-22 실측: 축소 먼저면 0.1~0.18초).
+        img = img.resize((self.imgsz, self.imgsz), Image.BILINEAR)
+        if self.jitter is not None:
+            img = self.jitter(img)
+        if self.flip_p > 0 and random.random() < self.flip_p:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            boxes = [[1.0 - b[0], b[1], b[2], b[3]] for b in boxes]
+
+        pixel = T.functional.to_tensor(img)  # RGB 0~1, 정규화 없음 (D-FINE 규약)
+
+        target = {
+            "class_labels": torch.tensor(classes, dtype=torch.int64),
+            "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
+        }
+        return pixel, target
+
+
+def collate(batch):
     import torch
-    from torch.utils.data import Dataset
-    from PIL import Image
-    from torchvision import transforms as T
-
-    class YoloDetDataset(Dataset):
-        def __init__(self, img_dir, nc, imgsz, train, hsv_h, hsv_s, hsv_v, flip_p=0.5):
-            self.img_dir = img_dir
-            self.lbl_dir = labels_dir_for(img_dir)
-            self.nc = nc
-            self.imgsz = imgsz
-            self.train = train
-            self.flip_p = flip_p if train else 0.0
-            self.files = sorted(f for f in os.listdir(img_dir) if f.lower().endswith(IMG_EXTS))
-            if not self.files:
-                fail(f"이미지가 없습니다: {img_dir}")
-            self.jitter = None
-            if train and (hsv_h > 0 or hsv_s > 0 or hsv_v > 0):
-                self.jitter = T.ColorJitter(brightness=hsv_v, saturation=hsv_s, hue=min(hsv_h, 0.5))
-
-        def __len__(self):
-            return len(self.files)
-
-        def __getitem__(self, idx):
-            name = self.files[idx]
-            img = Image.open(os.path.join(self.img_dir, name)).convert("RGB")
-            stem = os.path.splitext(name)[0]
-            classes, boxes = read_yolo_label(os.path.join(self.lbl_dir, stem + ".txt"), self.nc)
-
-            if self.jitter is not None:
-                img = self.jitter(img)
-            if self.flip_p > 0 and random.random() < self.flip_p:
-                img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                boxes = [[1.0 - b[0], b[1], b[2], b[3]] for b in boxes]
-
-            img = img.resize((self.imgsz, self.imgsz), Image.BILINEAR)
-            pixel = T.functional.to_tensor(img)  # RGB 0~1, 정규화 없음 (D-FINE 규약)
-
-            target = {
-                "class_labels": torch.tensor(classes, dtype=torch.int64),
-                "boxes": torch.tensor(boxes, dtype=torch.float32).reshape(-1, 4),
-            }
-            return pixel, target
-
-    def collate(batch):
-        pixels = torch.stack([b[0] for b in batch])
-        targets = [b[1] for b in batch]
-        return pixels, targets
-
-    return YoloDetDataset, collate
+    pixels = torch.stack([b[0] for b in batch])
+    targets = [b[1] for b in batch]
+    return pixels, targets
 
 
 # ─────────────────────────── EMA ───────────────────────────
@@ -456,7 +466,8 @@ def main():
     parser.add_argument("--lr", type=float, default=0.00025, help="기본 학습률 (D-FINE 권장 2.5e-4, 백본은 ×0.5)")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--imgsz", type=int, default=640)
-    parser.add_argument("--workers", type=int, default=0, help="DataLoader worker (Windows 기본 0)")
+    parser.add_argument("--workers", type=int, default=2,
+                        help="DataLoader worker 수 — 사진 읽기·증강을 GPU 와 겹쳐 돌린다 (0 이면 학습 프로세스 혼자)")
     parser.add_argument("--export_onnx", action="store_true")
     parser.add_argument("--export_only", action="store_true",
                         help="학습 없이 <output>/best_model 을 ONNX 로 다시 export 만 수행")
@@ -531,14 +542,15 @@ def main():
         fail("data.yaml 의 names/nc 가 비어 있습니다")
     emit("INFO", f"classes={nc} {names} train={train_dir} val={val_dir} device={device} transformers={transformers.__version__}")
 
-    YoloDetDataset, collate = build_dataset_class()
     train_ds = YoloDetDataset(train_dir, nc, args.imgsz, True, args.hsv_h, args.hsv_s, args.hsv_v, args.flip)
     val_ds = YoloDetDataset(val_dir, nc, args.imgsz, False, 0, 0, 0, 0)
     pin = device.type == "cuda"
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
-                              collate_fn=collate, pin_memory=pin, drop_last=len(train_ds) > args.batch_size)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
-                            collate_fn=collate, pin_memory=pin)
+    workers = max(0, args.workers)
+    # Windows 는 worker 를 spawn 으로 띄워 하나마다 torch 를 새로 읽는다(수 초). 에폭마다 다시 띄우지 않게 살려 둔다.
+    loader_kw = dict(num_workers=workers, collate_fn=collate, pin_memory=pin, persistent_workers=workers > 0)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                              drop_last=len(train_ds) > args.batch_size, **loader_kw)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, **loader_kw)
 
     pretrained = args.pretrained.strip() or DEFAULT_PRETRAINED
     id2label = {i: n for i, n in enumerate(names)}
