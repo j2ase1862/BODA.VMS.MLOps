@@ -174,6 +174,48 @@ public class HyperparamWhitelistTests
         hp["method"] = "evil";
         HyperparamWhitelist.ValidateNormalized(TrainingScript.TrainAnomaly, hp, out errors).Should().BeFalse();
     }
+
+    /// <summary>
+    /// 화이트리스트는 스크립트 argparse 와 1:1 이어야 한다. 한쪽에만 넣으면 서버는 받는데 스크립트가
+    /// "unrecognized arguments" 로 죽고, 그것은 워커에서 학습을 돌려 봐야 드러난다.
+    /// </summary>
+    [Theory]
+    [InlineData(TrainingScript.TrainDfine)]
+    [InlineData(TrainingScript.TrainYolo)]
+    [InlineData(TrainingScript.TrainClassifier)]
+    [InlineData(TrainingScript.TrainAnomaly)]
+    [InlineData(TrainingScript.TrainPpocr)]
+    [InlineData(TrainingScript.TrainRfdetrSeg)]
+    public void Every_whitelisted_key_is_a_script_argument(TrainingScript script)
+    {
+        var source = File.ReadAllText(Path.Combine(RepoScriptsDir(), script.FileName()));
+        var missing = HyperparamWhitelist.For(script)
+            .Where(s => !System.Text.RegularExpressions.Regex.IsMatch(
+                source, $@"add_argument\(\s*[""']--{System.Text.RegularExpressions.Regex.Escape(s.Key)}[""']"))
+            .Select(s => s.Key)
+            .ToList();
+        missing.Should().BeEmpty($"{script.FileName()} 의 argparse 에 없는 화이트리스트 키");
+    }
+
+    [Fact]
+    public void Dfine_patience_is_accepted_and_bounded()
+    {
+        HyperparamWhitelist.Validate(TrainingScript.TrainDfine, J("""{"patience": 30}"""), out var ok)!["patience"].Should().Be("30");
+        ok.Should().BeEmpty();
+        HyperparamWhitelist.Validate(TrainingScript.TrainDfine, J("""{"patience": -1}"""), out var bad).Should().BeNull();
+        bad.Should().ContainSingle(x => x.Contains("patience"));
+    }
+
+    private static string RepoScriptsDir()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "scripts");
+            if (File.Exists(Path.Combine(candidate, "train_dfine.py")) && Directory.Exists(Path.Combine(dir.FullName, "src")))
+                return candidate;
+        }
+        throw new DirectoryNotFoundException("리포 루트의 scripts 폴더를 찾지 못했습니다");
+    }
 }
 
 public class TrainingArgumentListTests
