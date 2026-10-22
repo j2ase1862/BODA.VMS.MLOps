@@ -121,6 +121,19 @@ public sealed class MlopsApi(HttpClient http)
         return await res.Content.ReadAsByteArrayAsync();
     }
 
+    /// <summary>로그 한 벌(머리말 + 워커 train.log, 없으면 서버 로그 줄). 파일 이름은 서버가 정한다.</summary>
+    public async Task<(string FileName, byte[] Content)> JobLogFileAsync(Guid id)
+    {
+        using var res = await http.GetAsync($"/api/training-jobs/{id}/log");
+        if (!res.IsSuccessStatusCode) throw await ToExceptionAsync(res);
+        var cd = res.Content.Headers.ContentDisposition;
+        var name = (cd?.FileNameStar ?? cd?.FileName)?.Trim('"');
+        return (string.IsNullOrWhiteSpace(name) ? $"train-{id:N}.log" : name, await res.Content.ReadAsByteArrayAsync());
+    }
+
+    /// <summary>서버의 학습 로그 보관 폴더 (Mlops:LogArchiveDir)</summary>
+    public Task<LogArchiveInfo> LogArchiveAsync() => GetAsync<LogArchiveInfo>("/api/training/log-archive");
+
     public sealed record HyperparamSpecDto(string Key, string Type, double? Min, double? Max, string[]? Choices, string? Default);
     public Task<List<HyperparamSpecDto>> HyperparamsAsync(TrainingScript script) => GetAsync<List<HyperparamSpecDto>>($"/api/training/hyperparams/{Camel(script)}");
 

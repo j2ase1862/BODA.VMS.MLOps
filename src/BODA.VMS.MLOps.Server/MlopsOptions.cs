@@ -8,6 +8,15 @@ public sealed class MlopsOptions
     /// <summary>아티팩트 스토리지 루트. 기본 %ProgramData%\BODA VMS MLOps\storage (Phase 1 §3)</summary>
     public string StorageRoot { get; set; } = "";
 
+    /// <summary>
+    /// 학습 로그 보관 폴더. 작업이 끝날 때마다(성공·실패·취소) 머리말을 붙인 로그 한 벌을
+    /// <c>{종료 시각}_{모델 계열}_{결과}_{작업id 앞 8자}.log</c> 로 남긴다. 비우면 보관하지 않는다.
+    ///
+    /// <para>저장소(<see cref="StorageRoot"/>)의 train.log 는 작업 id 폴더 안에 흩어져 찾기 어렵고 작업을 지우면
+    /// 함께 지워진다. 이 폴더는 작업 삭제와 무관하게 남고, 서버가 지우지도 않는다 — 정리는 사람이 한다.</para>
+    /// </summary>
+    public string LogArchiveDir { get; set; } = "";
+
     /// <summary>워커에 배포하는 학습 스크립트 폴더. 기본 {BaseDirectory}\scripts</summary>
     public string ScriptsRoot { get; set; } = "";
 

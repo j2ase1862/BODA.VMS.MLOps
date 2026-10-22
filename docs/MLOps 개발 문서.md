@@ -228,7 +228,8 @@ VMS 쪽 검토 결과 (2026-10-21, VMS PR 머지 때 확정):
 | `POST /api/training-jobs` | 작업 생성 (datasetVersionId, script, hyperparams) | Engineer |
 | `GET /api/training-jobs/next?worker=…` | 워커 long-poll | Worker |
 | `PATCH /api/training-jobs/{id}/progress` | 진행률·지표·로그 청크 | Worker |
-| `POST /api/training-jobs/{id}/artifacts` | best.onnx·지표 업로드 → ModelVersion 생성 | Worker |
+| `POST /api/training-jobs/{id}/artifacts` | best.onnx·지표 업로드 → ModelVersion 생성 (실패·취소 때는 train.log 만) | Worker |
+| `GET /api/training-jobs/{id}/log` | 로그 한 벌 다운로드 — 머리말 + train.log(없으면 서버 로그 줄). 끝난 작업은 `Mlops:LogArchiveDir` 에도 같은 파일 | Viewer |
 | `POST /api/models/{id}/versions` | 외부 ONNX 수동 등록 (규약 검증) | Engineer |
 | `POST /api/model-versions/{id}/promote` | 스테이지 승격/강등 | Engineer(Staging), Admin(Production) |
 | `GET /api/model-versions/{id}/artifact` | 아티팩트 다운로드 (ETag = sha256) | Line, Engineer |

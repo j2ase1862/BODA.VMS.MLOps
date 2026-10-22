@@ -74,7 +74,7 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 | `GET /api/training-jobs/next?workerId=` | long-poll 25s (Idle 일 때) | 없으면 204. 있으면 Job 전체 + `datasetExportUrl` + `pretrainedFiles[]` + `scriptSha256` |
 | `POST /api/training-jobs/{id}/ack` | 배정 직후 | Assigned → Preparing. 60s 내 ack 없으면 서버가 재큐 |
 | `PATCH /api/training-jobs/{id}/progress` | 이벤트마다(최대 1/s 코얼레싱) | `{state?, progress, epoch, totalEpochs, loss?, metric?, logChunks[]}` |
-| `POST /api/training-jobs/{id}/artifacts` (multipart) | 완료 시 | best.onnx · metrics.json · curves.png · vms_train_info.json · train.log → 서버가 ModelVersion(Candidate) 생성 후 `{modelVersionId}` |
+| `POST /api/training-jobs/{id}/artifacts` (multipart) | 완료 시 · 실패/취소 직전(train.log 만) | best.onnx · metrics.json · curves.png · vms_train_info.json · train.log → 서버가 ModelVersion(Candidate) 생성 후 `{modelVersionId}`. train.log 만 올리면 준비 단계에서도 받고 상태는 바꾸지 않는다 (0.1.5) |
 | `POST /api/training-jobs/{id}/finish` | 마지막 | `{state: Succeeded|Failed|Cancelled, error?, reproducibility}` |
 | `GET /api/dataset-versions/{id}/export?format=…` | Preparing | zip 스트림, `ETag: manifestHash` (Phase 2 API) |
 | `GET /api/pretrained/{ref}/{file}` | Preparing | 사전학습 파일, `ETag: sha256` |
@@ -146,6 +146,9 @@ Queued ─assign→ Assigned ─worker ack→ Preparing ─script start→ Runni
 - 설치: `BODA-VMS-TrainWorker-x.y.z.msi`(프로젝트 `src/BODA.VMS.MLOps.TrainWorker.Setup`, WiX 6, self-contained win-x64 publish 수확) → 서비스 `BodaVmsTrainWorker`(자동·지연 시작, **계정 기본 LocalSystem** — 세션 0 CUDA 가 막히는 환경만 지정 계정으로 바꾼다), 설정 파일 `%ProgramData%\BODA VMS TrainWorker\worker.json`(서버 URL·토큰(DPAPI)·캐시 경로·GPU 인덱스·상한값). 설정 경로 2가지: 마법사 "워커 연결 설정" 화면 또는 무인 `msiexec … SERVERURL= WORKERTOKEN=` → 둘 다 deferred CA 로 `configure` 를 부른다. 설정 없이 설치하면 서비스는 등록만 되고 시작하지 않는다(토큰 없이 뜨면 곧 종료하므로). 업그레이드는 기존 `worker.json` 존재(AppSearch)로 시작 조건을 만족한다.
 - 오프라인: `scripts/make-wheel-bundle.ps1`(pip wheel + 번들만으로 설치 검증 + torch CUDA 빌드 검사) → `WheelBundle\` → `*-offline.msi`(`[설치 폴더]\wheels`, configure `--wheels`).
 - 로그: `%ProgramData%\BODA VMS TrainWorker\logs\worker-yyyyMMdd.log`(워커 자체 파일 로거, 14일 보존) + 작업별 `jobs\{id}\train.log`.
+  train.log 는 성공·실패·취소 모두 서버에 올린다. 서버는 작업이 끝날 때 머리말(작업·모델 계열·데이터셋·하이퍼파라미터·결과)을 붙인 한 벌을
+  `Mlops:LogArchiveDir`(설치 스크립트 `-LogArchiveDir`, 기본 `{DataDir}\job-logs`)에 `{종료 시각}_{모델 계열}_{결과}_{작업id 8자}.log` 로 남긴다 —
+  작업을 지워도 남는다. train.log 가 없으면(하트비트 소실·0.1.5 전 워커의 실패) 서버 DB 의 로그 줄로 대신한다. 화면은 `GET /api/training-jobs/{id}/log` 로 같은 내용을 받는다.
 - CLI: `configure`(--server --token [--name --python --wheels --cache --gpu --cpu]) · `diag`(venv 부트스트랩 + 자기진단 출력).
 - 업데이트: 워커 MSI 독립 배포. 프로토콜 버전(`X-Worker-Protocol: 1`)으로 서버가 호환 검사, 불일치 시 `Disabled(업데이트 필요)`.
 - 올인원 형태(관리 서버 = 워커 PC): 같은 MSI 를 설치하고 서버 URL 을 `http://localhost:5310` 로.

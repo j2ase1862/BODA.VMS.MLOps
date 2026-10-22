@@ -74,6 +74,7 @@ builder.Services.AddScoped<WorkerRegistryService>();
 builder.Services.AddScoped<LineClientService>();
 builder.Services.AddScoped<MemberService>();
 builder.Services.AddScoped<TrainingJobService>();
+builder.Services.AddScoped<JobLogArchiveService>();
 builder.Services.AddScoped<PretrainedMirrorService>();
 builder.Services.AddScoped<DatasetVersionService>();
 // 데이터 관리·라벨링 (개발 문서 §5.2·§5.4)

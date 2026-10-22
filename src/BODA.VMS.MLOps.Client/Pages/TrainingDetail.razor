@@ -112,7 +112,11 @@ else
             <MudPaper Class="pa-4" Elevation="1">
                 <div class="d-flex justify-space-between align-center mb-2">
                     <MudText Typo="Typo.subtitle1">로그</MudText>
-                    <MudSwitch T="bool" @bind-Value="_follow" Label="자동 스크롤" Color="Color.Primary" />
+                    <div class="d-flex align-center gap-2">
+                        <MudSwitch T="bool" @bind-Value="_follow" Label="자동 스크롤" Color="Color.Primary" />
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Download"
+                                   Disabled="@_downloading" OnClick="DownloadLogAsync">로그 다운로드</MudButton>
+                    </div>
                 </div>
                 <div class="log-console" id="log-console">
                     @if (_logs.Count == 0)
@@ -124,6 +128,12 @@ else
                         <div class="@($"lvl-{line.Level}")">@line.Text</div>
                     }
                 </div>
+                @if (_archive is { Enabled: true } archive)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                        작업이 끝나면 서버 PC 의 <span class="mono">@archive.Dir</span> 폴더에도 한 벌 남습니다. 작업을 지워도 그 파일은 남습니다.
+                    </MudText>
+                }
             </MudPaper>
         </MudItem>
 
@@ -173,7 +183,7 @@ else
                     <MudList T="string" Dense="true">
                         @foreach (var a in _artifacts)
                         {
-                            <MudListItem T="string" Href="@a.Url" Target="_blank" Icon="@Icons.Material.Filled.Download">
+                            <MudListItem T="string" OnClick="@(() => DownloadArtifactAsync(a))" Icon="@Icons.Material.Filled.Download">
                                 <MudText Typo="Typo.body2">@a.FileName</MudText>
                                 <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(a.SizeBytes) · @Display.Sha(a.Sha256)</MudText>
                             </MudListItem>
@@ -228,7 +238,9 @@ else
     private List<JobArtifactDto> _artifacts = [];
     private string? _curvePng;   // data: URL — <img> 는 Authorization 헤더를 못 붙이므로 Bearer 로 받아 인라인으로 넣는다
     private string? _error;
-    private bool _busy, _follow = true, _hubConnected;
+    private bool _busy, _follow = true, _hubConnected, _downloading;
+    private LogArchiveInfo? _archive;
+    private IJSObjectReference? _download;
     private long _lastSeq;
     private IAsyncDisposable? _watch;
     private Timer? _poll;
@@ -259,6 +271,7 @@ else
             }
             _artifacts = await Api.JobArtifactsAsync(Id);
             await LoadCurveAsync();
+            _archive ??= await SafeArchiveAsync();
             _error = null;
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
@@ -320,6 +333,48 @@ else
         catch (MlopsApiException) { return _artifacts; }
     }
 
+    private async Task<LogArchiveInfo?> SafeArchiveAsync()
+    {
+        try { return await Api.LogArchiveAsync(); }
+        catch (MlopsApiException) { return null; }   // 안내 한 줄만 빠진다
+    }
+
+    /// <summary>로그 한 벌을 받는다 — 도는 중이면 지금까지의 것. 머리말에 작업·데이터셋·설정·결과가 붙는다.</summary>
+    private async Task DownloadLogAsync()
+    {
+        _downloading = true;
+        try
+        {
+            var (fileName, content) = await Api.JobLogFileAsync(Id);
+            await SaveAsync(fileName, "text/plain;charset=utf-8", content);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _downloading = false; }
+    }
+
+    /// <summary>
+    /// 아티팩트는 Bearer 로 받아 저장한다. 링크(새 탭)로 열면 토큰이 실리지 않아 401 로 막힌다.
+    /// </summary>
+    private async Task DownloadArtifactAsync(JobArtifactDto a)
+    {
+        if (_downloading) return;
+        _downloading = true;
+        try
+        {
+            var bytes = await Api.JobArtifactBytesAsync(Id, a.Kind);
+            if (bytes is null) { Snackbar.Add("서버에 파일이 없습니다.", Severity.Warning); return; }
+            await SaveAsync(a.FileName, "application/octet-stream", bytes);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _downloading = false; }
+    }
+
+    private async Task SaveAsync(string fileName, string contentType, byte[] content)
+    {
+        _download ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/download.js");
+        await _download.InvokeVoidAsync("saveBytes", fileName, contentType, content);
+    }
+
     private async Task ScrollAsync()
     {
         if (!_follow) return;
@@ -366,7 +421,8 @@ else
         }
 
         var ok = await Dialogs.ShowMessageBox("학습 작업 삭제",
-            "이 작업의 기록을 지웁니다. 로그와 아티팩트(ONNX·지표·곡선) 파일이 함께 사라집니다. 되돌릴 수 없습니다.",
+            "이 작업의 기록을 지웁니다. 로그와 아티팩트(ONNX·지표·곡선) 파일이 함께 사라집니다. 되돌릴 수 없습니다."
+            + (_archive is { Enabled: true } ? " 로그 보관 폴더의 사본은 남습니다." : ""),
             yesText: "삭제", cancelText: "취소");
         if (ok != true) return;
 
@@ -388,5 +444,12 @@ else
         _poll = null;
     }
 
-    public async ValueTask DisposeAsync() => await StopWatchAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await StopWatchAsync();
+        if (_download is not null)
+        {
+            try { await _download.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+    }
 }
