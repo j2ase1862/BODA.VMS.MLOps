@@ -97,7 +97,10 @@ else
                 <MudTd>
                     <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
                         <MudButton OnClick="@(() => OpenDetail(context))">상세</MudButton>
-                        <MudButton Href="@MlopsApi.ArtifactUrl(context.Id)" Target="_blank">다운로드</MudButton>
+                        @* 서버가 엔지니어 이상(과 라인 PC)에게만 내준다. 링크로 받는다 — 다운로드 쿠키로 인증 *@
+                        <AuthorizeView Roles="Engineer,Admin" Context="dl">
+                            <MudButton Href="@MlopsApi.ArtifactUrl(context.Id)" download="@true">다운로드</MudButton>
+                        </AuthorizeView>
                         <AuthorizeView Roles="Engineer,Admin" Context="auth">
                             @if (_model.TaskType == TaskType.Detection && context.Format is ModelFormat.Yolo or ModelFormat.DFine)
                             {

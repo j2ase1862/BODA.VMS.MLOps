@@ -34,6 +34,7 @@ public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "mlops-tests", Guid.NewGuid().ToString("N"));
     public string ScriptsRoot => Path.Combine(Root, "scripts");
     public string StorageRoot => Path.Combine(Root, "storage");
+    public string LogArchiveDir => Path.Combine(Root, "job-logs");
     public ManualTimeProvider Clock { get; } = new();
     public static readonly JsonSerializerOptions Json = MlopsJson.Options;
 
@@ -52,6 +53,7 @@ public class MlopsApiFactory : WebApplicationFactory<ServerEntryPoint>
         builder.UseSetting("Auth:EnableDevTokens", "true");
         builder.UseSetting("Mlops:StorageRoot", StorageRoot);
         builder.UseSetting("Mlops:ScriptsRoot", ScriptsRoot);
+        builder.UseSetting("Mlops:LogArchiveDir", LogArchiveDir);
         builder.UseSetting("Mlops:SupervisorIntervalSec", "3600");
         // 시험에서는 모든 스크립트를 열어 둔다. 운영 기본값은 train_yolo 를 막지만(ultralytics 는
         // AGPL 이라 워커 허용 목록에 없다), 라이선스 규칙 같은 기존 검증이 그 앞에서 끊기면 안 된다.

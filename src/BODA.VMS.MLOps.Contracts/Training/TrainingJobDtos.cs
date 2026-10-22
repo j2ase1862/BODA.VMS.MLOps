@@ -66,6 +66,9 @@ public sealed record JobLogPage(Guid JobId, long FromSeq, IReadOnlyList<JobLogLi
 
 public sealed record JobLogLineDto(long Seq, JobLogLevel Level, string Text, DateTime At);
 
+/// <summary>학습 로그 보관 폴더 (서버 설정 Mlops:LogArchiveDir). 서버 PC 기준 경로다.</summary>
+public sealed record LogArchiveInfo(bool Enabled, string Dir);
+
 public sealed record CancelJobRequest(string? Reason = null);
 
 /// <summary>실패 종류 (Phase 3 §3): WorkerLost 만 재큐 대상</summary>

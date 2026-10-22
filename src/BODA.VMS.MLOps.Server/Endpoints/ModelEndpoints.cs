@@ -77,7 +77,7 @@ public static class ModelEndpoints
             var (stream, v) = await svc.OpenArtifactAsync(id, ct, CurrentUser.From(p), firstChunk);
             return Results.File(stream, "application/octet-stream", $"{v.Sha256}.onnx", enableRangeProcessing: true,
                 entityTag: new EntityTagHeaderValue($"\"{v.Sha256}\""));
-        }).RequireAuthorization(Policies.Line);
+        }).RequireAuthorization(Policies.Line).AllowDownloadCookie();
 
         // Candidate 는 Engineer, Retired 는 Admin. Staging·Production 은 스테이지를 내린 뒤에야 지워진다.
         versions.MapDelete("/{id:guid}", async (Guid id, ModelRegistryService svc, ClaimsPrincipal p, CancellationToken ct) =>

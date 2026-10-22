@@ -22,7 +22,8 @@ namespace BODA.VMS.MLOps.Server.Services;
 /// </summary>
 public sealed class TrainingJobService(
     MlopsDbContext db, IArtifactStorage storage, AuditService audit, IMlopsNotifier notifier, ScriptManifestService scripts,
-    ModelRegistryService registry, IOptions<MlopsOptions> options, TimeProvider clock, ILogger<TrainingJobService> logger)
+    ModelRegistryService registry, JobLogArchiveService logArchive, IOptions<MlopsOptions> options, TimeProvider clock,
+    ILogger<TrainingJobService> logger)
 {
     private static readonly SemaphoreSlim AssignLock = new(1, 1);
     private static readonly TrainingJobState[] ActiveStates =
@@ -147,6 +148,7 @@ public sealed class TrainingJobService(
             job.FinishedAt = Now;
             audit.Record(AuditService.Training, "JobCancelled", user.Name, job.Id.ToString(), new { req.Reason });
             await db.SaveChangesAsync(ct);
+            await logArchive.ArchiveAsync(job.Id, CancellationToken.None);
             var done = job.ToDto();
             await notifier.JobDone(done);
             return done;
@@ -288,6 +290,7 @@ public sealed class TrainingJobService(
                 job.Error = $"서버에 스크립트가 없습니다: {job.Script.FileName()}";
                 job.FinishedAt = Now;
                 await db.SaveChangesAsync(ct);
+                await logArchive.ArchiveAsync(job.Id, CancellationToken.None);
                 await notifier.JobDone(job.ToDto());
                 return null;
             }
@@ -423,12 +426,19 @@ public sealed class TrainingJobService(
     public async Task<ArtifactsResponse> UploadArtifactsAsync(Guid jobId, Guid workerId, IFormCollection form, CurrentUser user, CancellationToken ct)
     {
         var job = await LoadOwnedAsync(jobId, workerId, ct);
-        // 학습을 시작하지도 않은 작업이 아티팩트만 올려 Succeeded 로 건너뛰지 못하게 한다
-        if (job.State is not (TrainingJobState.Running or TrainingJobState.Exporting or TrainingJobState.Uploading))
-            throw ApiException.Conflict(ErrorCodes.InvalidJobTransition,
-                $"아티팩트는 Running 이후에만 올릴 수 있습니다 (현재 {job.State}).");
         if (form.Files.Count == 0)
             throw ApiException.BadRequest(ErrorCodes.Validation, "아티팩트 파일이 없습니다 (onnx|metrics|curve|train_info|log).");
+        // 로그만 올리는 것은 워커가 실패·취소로 끝내기 직전이다 — 준비 단계에서 실패해도 받는다. 상태는 건드리지 않는다.
+        var logOnly = form.Files.All(f => KindFromField(f.Name) == JobArtifactKind.Log);
+        if (logOnly)
+        {
+            if (!TrainingJobStateMachine.IsActiveOnWorker(job.State))
+                throw ApiException.Conflict(ErrorCodes.InvalidJobTransition, $"진행 중인 작업이 아닙니다 (현재 {job.State}).");
+        }
+        // 학습을 시작하지도 않은 작업이 아티팩트만 올려 Succeeded 로 건너뛰지 못하게 한다
+        else if (job.State is not (TrainingJobState.Running or TrainingJobState.Exporting or TrainingJobState.Uploading))
+            throw ApiException.Conflict(ErrorCodes.InvalidJobTransition,
+                $"아티팩트는 Running 이후에만 올릴 수 있습니다 (현재 {job.State}).");
 
         var warnings = new List<string>();
         var dtos = new List<JobArtifactDto>();
@@ -488,7 +498,7 @@ public sealed class TrainingJobService(
             warnings.AddRange(vdto.Warnings);
         }
 
-        if (TrainingJobStateMachine.CanTransition(job.State, TrainingJobState.Uploading))
+        if (!logOnly && TrainingJobStateMachine.CanTransition(job.State, TrainingJobState.Uploading))
             job.State = TrainingJobState.Uploading;
         job.LastProgressAt = Now;
         await SaveWorkerReportAsync(ct);
@@ -540,6 +550,7 @@ public sealed class TrainingJobService(
         audit.Record(AuditService.Training, "Job" + req.State, $"worker:{worker?.Name ?? workerId.ToString()}", job.Id.ToString(),
             new { req.State, req.Error, job.FailureKind, job.ResultModelVersionId, job.Attempt });
         await SaveWorkerReportAsync(ct);
+        await logArchive.ArchiveAsync(job.Id, CancellationToken.None);
         var dto = job.ToDto();
         await notifier.JobDone(dto);
         return dto;
@@ -590,6 +601,7 @@ public sealed class TrainingJobService(
         audit.Record(AuditService.Training, target == TrainingJobState.Queued ? "JobYielded" : "JobCancelled",
             $"worker:{worker?.Name ?? workerId.ToString()}", job.Id.ToString(), new { job.Attempt, reason = req.Reason });
         await SaveWorkerReportAsync(ct);
+        if (target == TrainingJobState.Cancelled) await logArchive.ArchiveAsync(job.Id, CancellationToken.None);
         var dto = job.ToDto();
         if (target == TrainingJobState.Queued) await notifier.JobQueued(dto);
         else await notifier.JobDone(dto);
@@ -662,7 +674,11 @@ public sealed class TrainingJobService(
                 return 0;
             }
             foreach (var d in updated) await notifier.JobQueued(d);
-            foreach (var d in done) await notifier.JobDone(d);
+            foreach (var d in done)
+            {
+                await logArchive.ArchiveAsync(d.Id, CancellationToken.None);
+                await notifier.JobDone(d);
+            }
         }
         return changes;
     }

@@ -68,7 +68,12 @@ else
                                     <td class="mono">@f.FileName</td>
                                     <td>@Display.Size(f.SizeBytes)</td>
                                     <td class="mono">@Display.Sha(f.Sha256)</td>
-                                    <td><MudButton Size="Size.Small" Href="@f.Url" Target="_blank">다운로드</MudButton></td>
+                                    <td>
+                                        @* 서버가 엔지니어 이상(과 워커)에게만 내준다. 링크로 받는다 — 다운로드 쿠키로 인증 *@
+                                        <AuthorizeView Roles="Engineer,Admin" Context="dl">
+                                            <MudButton Size="Size.Small" Href="@f.Url" download="@true">다운로드</MudButton>
+                                        </AuthorizeView>
+                                    </td>
                                 </tr>
                             }
                         </tbody>

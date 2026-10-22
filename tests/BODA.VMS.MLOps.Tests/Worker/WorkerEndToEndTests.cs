@@ -146,6 +146,16 @@ public class WorkerEndToEndTests : IClassFixture<MlopsApiFactory>, IDisposable
         done.FailureKind.Should().Be(FailureKinds.ScriptError);
         done.Error.Should().Contain("simulated failure");
         done.ResultModelVersionId.Should().BeNull();
+
+        // 실패해도 train.log 는 서버에 올라가고, 보관 폴더에 머리말과 함께 한 벌 남는다
+        var artifacts = await eng.GetFromJsonAsync<List<JobArtifactDto>>($"/api/training-jobs/{job.Id}/artifacts", Json);
+        artifacts!.Should().ContainSingle(a => a.Kind == JobArtifactKind.Log);
+        var archived = Directory.GetFiles(_f.LogArchiveDir, $"*_실패_{job.Id.ToString("N")[..8]}.log").Should().ContainSingle().Subject;
+        var text = await File.ReadAllTextAsync(archived);
+        text.Should().Contain("# 본문       : 워커가 올린 train.log")
+            .And.Contain("[worker] 준비 완료")
+            .And.Contain("simulated failure")
+            .And.Contain("[worker] Failed (ScriptError)");
     }
 
     private async Task<(HttpClient Eng, TrainingJobDto Job, CreateWorkerResponse Worker)> SubmitAsync(string name, int seedByte, int epochs, int priority)

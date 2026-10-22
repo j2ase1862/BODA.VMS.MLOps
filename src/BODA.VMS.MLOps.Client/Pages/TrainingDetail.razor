@@ -112,7 +112,12 @@ else
             <MudPaper Class="pa-4" Elevation="1">
                 <div class="d-flex justify-space-between align-center mb-2">
                     <MudText Typo="Typo.subtitle1">로그</MudText>
-                    <MudSwitch T="bool" @bind-Value="_follow" Label="자동 스크롤" Color="Color.Primary" />
+                    <div class="d-flex align-center gap-2">
+                        <MudSwitch T="bool" @bind-Value="_follow" Label="자동 스크롤" Color="Color.Primary" />
+                        @* 링크로 받는다 — 브라우저가 다운로드 쿠키로 인증하고 디스크로 바로 받는다 (서버 DownloadCookie) *@
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Download"
+                                   Href="@MlopsApi.JobLogUrl(Id)" download="@true">로그 다운로드</MudButton>
+                    </div>
                 </div>
                 <div class="log-console" id="log-console">
                     @if (_logs.Count == 0)
@@ -124,6 +129,12 @@ else
                         <div class="@($"lvl-{line.Level}")">@line.Text</div>
                     }
                 </div>
+                @if (_archive is { Enabled: true } archive)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2 d-block">
+                        작업이 끝나면 서버 PC 의 <span class="mono">@archive.Dir</span> 폴더에도 한 벌 남습니다. 작업을 지워도 그 파일은 남습니다.
+                    </MudText>
+                }
             </MudPaper>
         </MudItem>
 
@@ -170,15 +181,20 @@ else
             {
                 <MudPaper Class="pa-4 mb-4" Elevation="1">
                     <MudText Typo="Typo.subtitle1" Class="mb-2">아티팩트</MudText>
-                    <MudList T="string" Dense="true">
+                    @* download 속성이 있는 링크는 Blazor 라우터가 가로채지 않고 브라우저가 파일로 받는다 *@
+                    <div class="d-flex flex-column gap-1">
                         @foreach (var a in _artifacts)
                         {
-                            <MudListItem T="string" Href="@a.Url" Target="_blank" Icon="@Icons.Material.Filled.Download">
-                                <MudText Typo="Typo.body2">@a.FileName</MudText>
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(a.SizeBytes) · @Display.Sha(a.Sha256)</MudText>
-                            </MudListItem>
+                            <a href="@a.Url" download class="d-flex align-center gap-3 pa-2 mud-ripple" title="@($"{a.FileName} 받기")"
+                               style="color:inherit;text-decoration:none;border-radius:4px">
+                                <MudIcon Icon="@Icons.Material.Filled.Download" Size="Size.Small" Color="Color.Primary" />
+                                <div>
+                                    <MudText Typo="Typo.body2">@a.FileName</MudText>
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@Display.Size(a.SizeBytes) · @Display.Sha(a.Sha256)</MudText>
+                                </div>
+                            </a>
                         }
-                    </MudList>
+                    </div>
                 </MudPaper>
             }
 
@@ -229,6 +245,7 @@ else
     private string? _curvePng;   // data: URL — <img> 는 Authorization 헤더를 못 붙이므로 Bearer 로 받아 인라인으로 넣는다
     private string? _error;
     private bool _busy, _follow = true, _hubConnected;
+    private LogArchiveInfo? _archive;
     private long _lastSeq;
     private IAsyncDisposable? _watch;
     private Timer? _poll;
@@ -259,6 +276,7 @@ else
             }
             _artifacts = await Api.JobArtifactsAsync(Id);
             await LoadCurveAsync();
+            _archive ??= await SafeArchiveAsync();
             _error = null;
         }
         catch (MlopsApiException ex) { _error = ex.Describe(); }
@@ -320,6 +338,12 @@ else
         catch (MlopsApiException) { return _artifacts; }
     }
 
+    private async Task<LogArchiveInfo?> SafeArchiveAsync()
+    {
+        try { return await Api.LogArchiveAsync(); }
+        catch (MlopsApiException) { return null; }   // 안내 한 줄만 빠진다
+    }
+
     private async Task ScrollAsync()
     {
         if (!_follow) return;
@@ -366,7 +390,8 @@ else
         }
 
         var ok = await Dialogs.ShowMessageBox("학습 작업 삭제",
-            "이 작업의 기록을 지웁니다. 로그와 아티팩트(ONNX·지표·곡선) 파일이 함께 사라집니다. 되돌릴 수 없습니다.",
+            "이 작업의 기록을 지웁니다. 로그와 아티팩트(ONNX·지표·곡선) 파일이 함께 사라집니다. 되돌릴 수 없습니다."
+            + (_archive is { Enabled: true } ? " 로그 보관 폴더의 사본은 남습니다." : ""),
             yesText: "삭제", cancelText: "취소");
         if (ok != true) return;
 

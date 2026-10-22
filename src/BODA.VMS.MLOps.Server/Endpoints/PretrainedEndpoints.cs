@@ -54,7 +54,7 @@ public static class PretrainedEndpoints
             var (stream, entry) = await svc.OpenFileAsync(PretrainedMirrorService.ValidateRef(@ref), file, ct);
             return Results.File(stream, "application/octet-stream", entry.FileName, enableRangeProcessing: true,
                 entityTag: new EntityTagHeaderValue($"\"{entry.Sha256}\""));
-        }).RequireAuthorization(Policies.WorkerOrEngineer);
+        }).RequireAuthorization(Policies.WorkerOrEngineer).AllowDownloadCookie();
 
         return api;
     }

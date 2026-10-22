@@ -13,6 +13,7 @@ namespace BODA.VMS.MLOps.TrainWorker.Jobs;
 /// <summary>
 /// JobRunner (Phase 3 §5): Preparing(데이터셋·사전학습·스크립트·출력 폴더·디스크) → Running(TrainingProcessHost, 1/s 코얼레싱 보고)
 /// → Exporting/Uploading(best.onnx 검증·아티팩트 업로드 재시도 3회) → finish(재현성 레코드).
+/// 실패·취소로 끝낼 때도 train.log 는 올린다 (<see cref="EndWithLogAsync"/>).
 /// CUDA OOM 은 batch_size 반감으로 1회 재실행, 취소는 하트비트 응답 또는 progress 응답으로 전달된다.
 /// 같은 PC 의 VMS 가 검사를 시작하면 학습 프로세스를 끝내고 작업을 대기열로 돌려보낸다 (개발 문서 §5.6) —
 /// GPU 를 쓰는 것은 학습 프로세스뿐이라, 준비(데이터셋 받기)와 업로드는 멈추지 않는다. 업로드 중에 멈추면 다 끝난 학습을 버린다.
@@ -52,11 +53,11 @@ public sealed class JobRunner(
             if (free < a.DatasetSizeBytes * 3L)
                 throw new PrepareException($"디스크 여유 부족: {free / 1e9:0.0}GB < 데이터셋 ×3 ({a.DatasetSizeBytes * 3 / 1e9:0.0}GB)");
 
-            await reporter.LogAsync(JobLogLevel.Info, "데이터셋 준비 중", ct);
+            await NoteAsync(reporter, logWriter, JobLogLevel.Info, "데이터셋 준비 중", ct);
             datasetDir = await datasets.EnsureAsync(a, ct);
             pretrainedDir = await pretrained.EnsureAsync(a.PretrainedFiles, ct);
             scriptPath = await scripts.EnsureAsync(a.ScriptName, a.ScriptSha256, a.ScriptUrl, ct);
-            await reporter.LogAsync(JobLogLevel.Info, $"준비 완료 · dataset={datasetDir} · script={Path.GetFileName(scriptPath)}", ct);
+            await NoteAsync(reporter, logWriter, JobLogLevel.Info, $"준비 완료 · dataset={datasetDir} · script={Path.GetFileName(scriptPath)}", ct);
             await reporter.FlushAsync(null, ct);
 
             // ── Running (OOM 시 batch 반감 1회) ──
@@ -73,7 +74,7 @@ public sealed class JobRunner(
                 {
                     localAttempt++;
                     hyperparams["batch_size"] = (b / 2).ToString(CultureInfo.InvariantCulture);
-                    await reporter.LogAsync(JobLogLevel.Warn, $"CUDA OOM 감지 → batch_size {b} → {b / 2} 로 1회 재시도", ct);
+                    await NoteAsync(reporter, logWriter, JobLogLevel.Warn, $"CUDA OOM 감지 → batch_size {b} → {b / 2} 로 1회 재시도", ct);
                     continue;
                 }
                 break;
@@ -81,13 +82,13 @@ public sealed class JobRunner(
 
             if (result.Cancelled || cancelJob.IsCancellationRequested)
             {
-                await FinishAsync(job.Id, TrainingJobState.Cancelled, "취소됨", null, null, shutdown);
+                await EndWithLogAsync(job.Id, TrainingJobState.Cancelled, "취소됨", null, logWriter, localLog, shutdown);
                 return;
             }
             if (!result.Succeeded || !result.SawDone)
             {
                 var kind = result.Stalled ? FailureKinds.Stalled : result.TimedOut ? FailureKinds.Timeout : result.OomDetected ? FailureKinds.Oom : FailureKinds.ScriptError;
-                await FinishAsync(job.Id, TrainingJobState.Failed, result.Error ?? "학습 실패", kind, null, shutdown);
+                await EndWithLogAsync(job.Id, TrainingJobState.Failed, result.Error ?? "학습 실패", kind, logWriter, localLog, shutdown);
                 return;
             }
 
@@ -108,7 +109,7 @@ public sealed class JobRunner(
         }
         catch (OperationCanceledException) when (cancelJob.IsCancellationRequested && !shutdown.IsCancellationRequested)
         {
-            await FinishAsync(job.Id, TrainingJobState.Cancelled, "취소됨", null, null, shutdown);
+            await EndWithLogAsync(job.Id, TrainingJobState.Cancelled, "취소됨", null, logWriter, localLog, shutdown);
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
         {
@@ -118,29 +119,29 @@ public sealed class JobRunner(
         {
             logger.LogWarning("작업 {Job}: {Reason}", job.Id, ex.Message);
             // 되돌린 뒤에는 이 작업이 이 워커 것이 아니라 progress 가 거부된다 — 로그는 먼저 보낸다
-            await reporter.LogAsync(JobLogLevel.Warn, ex.Message, CancellationToken.None);
+            await NoteAsync(reporter, logWriter, JobLogLevel.Warn, ex.Message, CancellationToken.None);
             await reporter.FlushAsync(null, CancellationToken.None);
             await YieldAsync(job.Id, ex.Message, shutdown);
         }
         catch (PrepareException ex)
         {
             logger.LogError(ex, "준비 실패");
-            await FinishAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.PrepareError, null, shutdown);
+            await EndWithLogAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.PrepareError, logWriter, localLog, shutdown);
         }
         catch (UploadException ex)
         {
             logger.LogError(ex, "업로드 실패");
-            await FinishAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.UploadError, null, shutdown);
+            await EndWithLogAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.UploadError, logWriter, localLog, shutdown);
         }
         catch (ServerApiException ex) when (ex.IsClientError)
         {
             logger.LogError(ex, "서버 거부");
-            await FinishAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.UploadError, null, shutdown);
+            await EndWithLogAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.UploadError, logWriter, localLog, shutdown);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "작업 실행 오류");
-            await FinishAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.PrepareError, null, shutdown);
+            await EndWithLogAsync(job.Id, TrainingJobState.Failed, ex.Message, FailureKinds.PrepareError, logWriter, localLog, shutdown);
         }
         finally
         {
@@ -262,6 +263,36 @@ public sealed class JobRunner(
             }
         }
         throw new UploadException("아티팩트 업로드 3회 실패: " + last?.Message, last);
+    }
+
+    /// <summary>워커 안내 줄 — 화면(서버 로그)과 train.log 양쪽에 남긴다. train.log 가 서버 로그를 빠짐없이 품게 한다.</summary>
+    private static async Task NoteAsync(ProgressReporter reporter, StreamWriter logWriter, JobLogLevel level, string text, CancellationToken ct)
+    {
+        await logWriter.WriteLineAsync($"[worker] {text}");
+        await reporter.LogAsync(level, text, ct);
+    }
+
+    /// <summary>
+    /// 실패·취소로 끝낼 때도 train.log 를 서버에 올린다 — 원인을 봐야 하는 건 대개 실패한 작업인데,
+    /// 성공했을 때만 올리면 워커 PC 의 사본(JobRetentionHours 뒤 삭제)에만 남는다.
+    /// 올리기는 한 번만 시도한다. 못 올려도 끝내기는 해야 하고, 서버는 자기 DB 의 로그 줄로 대신 보관한다.
+    /// </summary>
+    private async Task EndWithLogAsync(Guid jobId, TrainingJobState state, string? error, string? kind,
+        StreamWriter logWriter, string localLog, CancellationToken shutdown)
+    {
+        try
+        {
+            await logWriter.WriteLineAsync($"[worker] {state}{(kind is null ? "" : $" ({kind})")}: {error}");
+            await logWriter.FlushAsync(CancellationToken.None);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            await server.UploadArtifactsAsync(jobId, [("log", localLog)], timeout.Token);
+        }
+        catch (Exception ex) when (!shutdown.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "작업 {Job}: train.log 업로드 실패 — 서버가 자기 로그 줄로 대신 보관한다", jobId);
+        }
+        await FinishAsync(jobId, state, error, kind, null, shutdown);
     }
 
     private async Task FinishAsync(Guid jobId, TrainingJobState state, string? error, string? kind, ReproducibilityRecord? repro, CancellationToken ct)

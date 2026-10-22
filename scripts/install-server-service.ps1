@@ -5,7 +5,7 @@
 .DESCRIPTION
   1) 서버를 self-contained win-x64 로 publish (-SkipPublish 로 생략, -PublishDir 로 기존 산출물 지정)
   2) 설치 폴더로 복사 (appsettings.Production.json 과 models\ 는 보존)
-  3) appsettings.Production.template.json 의 {{Port}} {{DataDir}} {{ProductionWebUrl}} {{AuthMode}} 를 채워 appsettings.Production.json 생성
+  3) appsettings.Production.template.json 의 {{Port}} {{DataDir}} {{ProductionWebUrl}} {{AuthMode}} {{LogArchiveDir}} 를 채워 appsettings.Production.json 생성
   4) 서비스 등록 (자동·지연 시작, 실패 시 재시작) + 서비스 환경변수 Jwt__Key / DOTNET_ENVIRONMENT=Production
   5) 방화벽 인바운드 규칙 (라인 PC·브라우저·워커가 붙는 포트)
   6) SAM 모델(있으면) 복사, 서비스 시작, 응답 확인
@@ -28,6 +28,8 @@
 param(
     [string]$InstallDir = "C:\Program Files\BODA Vision AI\BODA VMS MLOps Server",
     [string]$DataDir = "C:\ProgramData\BODA VMS MLOps",
+    # 학습 로그 보관 폴더. 주지 않으면 $DataDir\job-logs. "none" 이면 보관하지 않는다.
+    [string]$LogArchiveDir = "",
     [int]$Port = 5310,
     [string]$ProductionWebUrl = "http://localhost:5292",
     # 운영 웹의 기계용 API 키(X-API-Key). 모니터링이 검사 이력을 당겨 올 때 쓴다 —
@@ -138,6 +140,9 @@ if ((Test-Path $samSrc) -and -not (Test-Path (Join-Path $samDst "mobile_sam_enco
 $cfg = Get-Content $template -Raw -Encoding UTF8
 $cfg = $cfg.Replace("{{Port}}", "$Port").Replace("{{DataDir}}", $DataDir.Replace("\", "/")).Replace("{{ProductionWebUrl}}", $ProductionWebUrl)
 $cfg = $cfg.Replace("{{AuthMode}}", $(if ($Local) { "Local" } else { "Web" }))
+if (-not $LogArchiveDir) { $LogArchiveDir = Join-Path $DataDir "job-logs" }
+if ($LogArchiveDir -eq "none") { $LogArchiveDir = "" }
+$cfg = $cfg.Replace("{{LogArchiveDir}}", $LogArchiveDir.Replace("\", "/"))
 $cfgPath = Join-Path $InstallDir "appsettings.Production.json"
 [IO.File]::WriteAllText($cfgPath, $cfg, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "설정: $cfgPath"
@@ -199,6 +204,7 @@ Write-Host "  화면/API : http://localhost:$Port  (다른 PC 에서는 http://<
 Write-Host "  서비스   : $ServiceName (자동·지연 시작, LocalSystem)"
 Write-Host "  설치 폴더: $InstallDir"
 Write-Host "  데이터   : $DataDir  (mlops.db · storage\ · logs\)  ← 백업 대상"
+Write-Host "  학습 로그: $(if ($LogArchiveDir) { "$LogArchiveDir  (작업이 끝날 때마다 한 벌씩, 서버가 지우지 않음)" } else { '보관하지 않음' })"
 if ($Local) {
     Write-Host "  로그인   : 이 서버의 계정 — 아이디·비밀번호 (dev 토큰 꺼짐)"
 } else {

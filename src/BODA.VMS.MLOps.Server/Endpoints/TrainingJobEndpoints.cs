@@ -42,6 +42,13 @@ public static class TrainingJobEndpoints
         g.MapGet("/{id:guid}/logs", async (Guid id, long? from, int? take, TrainingJobService svc, CancellationToken ct) =>
             Results.Ok(await svc.LogsAsync(id, from ?? 0, take ?? 500, ct))).RequireAuthorization(Policies.Viewer);
 
+        // 로그 한 벌(머리말 + 워커 train.log, 없으면 서버 로그 줄) — 도는 중이면 지금까지의 것
+        g.MapGet("/{id:guid}/log", async (Guid id, JobLogArchiveService logs, CancellationToken ct) =>
+        {
+            var (fileName, content) = await logs.BuildAsync(id, ct);
+            return Results.File(content, "text/plain; charset=utf-8", fileName);
+        }).RequireAuthorization(Policies.Viewer).AllowDownloadCookie();
+
         g.MapGet("/{id:guid}/artifacts", async (Guid id, TrainingJobService svc, CancellationToken ct) =>
             Results.Ok(await svc.ArtifactsAsync(id, ct))).RequireAuthorization(Policies.Viewer);
 
@@ -50,7 +57,7 @@ public static class TrainingJobEndpoints
             var k = EnumBinding.Parse<JobArtifactKind>(kind, "kind");
             var (stream, a) = await svc.OpenArtifactAsync(id, k, ct);
             return Results.File(stream, "application/octet-stream", a.FileName, entityTag: new EntityTagHeaderValue($"\"{a.Sha256}\""));
-        }).RequireAuthorization(Policies.Viewer);
+        }).RequireAuthorization(Policies.Viewer).AllowDownloadCookie();
 
         g.MapPost("/{id:guid}/cancel", async (Guid id, CancelJobRequest? req, TrainingJobService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(await svc.CancelAsync(id, req ?? new CancelJobRequest(), CurrentUser.From(p), ct))).RequireAuthorization(Policies.Engineer);
@@ -108,6 +115,11 @@ public static class TrainingJobEndpoints
             Results.Ok(Enum.GetValues<TrainingScript>()
                 .Where(s => opt.Value.IsScriptEnabled(s))
                 .Select(s => s.ToString())))
+            .WithTags("TrainingJobs").RequireAuthorization(Policies.Viewer);
+
+        // ── 화면용: 학습 로그 보관 폴더 (서버 설정 Mlops:LogArchiveDir, 비면 보관하지 않음) ──
+        api.MapGet("/training/log-archive", (IOptions<MlopsOptions> opt) =>
+            Results.Ok(new LogArchiveInfo(!string.IsNullOrWhiteSpace(opt.Value.LogArchiveDir), opt.Value.LogArchiveDir)))
             .WithTags("TrainingJobs").RequireAuthorization(Policies.Viewer);
 
         return api;

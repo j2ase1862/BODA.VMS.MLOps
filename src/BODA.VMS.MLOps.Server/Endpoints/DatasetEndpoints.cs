@@ -202,6 +202,6 @@ public static class DatasetEndpoints
             return Results.File(stream, "application/zip",
                 $"{Core.Export.DatasetExportWriter.SafeSegment(dv.Name)}-{dv.ManifestHash[..12]}.zip",
                 enableRangeProcessing: true, entityTag: new EntityTagHeaderValue($"\"{dv.ManifestHash}\""));
-        }).RequireAuthorization(Policies.WorkerOrEngineer);
+        }).RequireAuthorization(Policies.WorkerOrEngineer).AllowDownloadCookie();
     }
 }
