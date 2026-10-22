@@ -382,6 +382,8 @@ public sealed class MlopsApi(HttpClient http)
     public Task<List<MemberDto>> MembersAsync() => GetAsync<List<MemberDto>>("/api/members");
 
     public Task<MemberPolicyDto> MemberPolicyAsync() => GetAsync<MemberPolicyDto>("/api/members/policy");
+    /// <summary>[역할 주기] 에서 고를 운영 웹 계정. 받지 못하면 Available=false 와 이유가 온다.</summary>
+    public Task<WebAccountListDto> WebAccountsAsync() => GetAsync<WebAccountListDto>("/api/members/web-accounts");
 
     public Task<MemberDto> GrantMemberAsync(GrantMemberRequest req) =>
         SendJsonAsync<GrantMemberRequest, MemberDto>(HttpMethod.Put, "/api/members", req);

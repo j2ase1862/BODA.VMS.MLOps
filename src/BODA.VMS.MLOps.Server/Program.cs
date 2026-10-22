@@ -95,6 +95,7 @@ builder.Services.AddScoped<LocalAccountService>();
 builder.Services.AddHttpClient<ProductionOutcomeClient>(http => http.Timeout = TimeSpan.FromSeconds(30));
 // 운영 웹에서 끊긴 토큰을 걸러낸다 (Auth:RevocationCheckSeconds).
 builder.Services.AddHttpClient<WebTokenRevocationClient>(http => http.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddHttpClient<WebAccountDirectoryClient>(http => http.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddScoped<ModelMonitorService>();
 
 // SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
