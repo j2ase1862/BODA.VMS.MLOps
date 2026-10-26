@@ -229,6 +229,8 @@ public sealed class MlopsApi(HttpClient http)
 
     public Task<ImageLabelsDto> ReviewAsync(Guid datasetId, Guid imageId, bool approved) =>
         PostAsync<ReviewRequest, ImageLabelsDto>($"/api/datasets/{datasetId}/images/{imageId}/review", new ReviewRequest(approved));
+    public Task<ApproveImagesResultDto> ApproveImagesAsync(Guid datasetId, Guid[] imageIds) =>
+        PostAsync<ApproveImagesRequest, ApproveImagesResultDto>($"/api/datasets/{datasetId}/images/approve", new ApproveImagesRequest(imageIds));
 
     public Task<NextImageDto> NextToLabelAsync(Guid datasetId, Guid? after) =>
         GetAsync<NextImageDto>($"/api/datasets/{datasetId}/next-to-label{(after is null ? "" : $"?after={after}")}");

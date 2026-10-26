@@ -36,12 +36,13 @@
                 @if (_takeNewSnapshot)
                 {
                     <MudItem xs="12" md="6">
-                        @* 사전 라벨은 사람이 검토해야 학습에 들어간다. 이 상자를 끄면 검토 전 라벨도
-                           함께 담기므로, 그때는 무엇이 들어가는지 사람이 알고 끄는 것이어야 한다. *@
+                        @* 이 상자를 끄면 라벨링을 마쳤지만 검토하지 않은 사진도 담기므로, 그때는 무엇이
+                           들어가는지 사람이 알고 끄는 것이어야 한다. 작업 중(확인하지 않은 사전 라벨)은
+                           서버가 어느 쪽이든 빼므로 여기서 따로 막지 않는다. *@
                         <MudCheckBox T="bool" @bind-Value="_snapshotReviewedOnly" Dense="true"
                                      Label="검토를 마친 사진만 담기" />
                         <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                            끄면 검토하지 않은 사전 라벨도 학습에 들어갑니다.
+                            끄면 라벨링을 마쳤지만 검토하지 않은 사진도 들어갑니다. 작업 중인 사진은 어느 쪽이든 들어가지 않습니다.
                         </MudText>
                     </MudItem>
                 }

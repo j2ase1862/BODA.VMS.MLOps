@@ -100,7 +100,12 @@ public static class DatasetEndpoints
             Results.Ok((await svc.ReviewAsync(id, imageId, req.Approved, CurrentUser.From(p), ct)).ToDto()))
             .RequireAuthorization(Policies.Engineer);
 
-        g.MapGet("/{id:guid}/next-to-label", async (Guid id, Guid? after,
+        g.MapPost("/{id:guid}/images/approve", async (Guid id, ApproveImagesRequest req,
+            LabelingService svc, ClaimsPrincipal p, CancellationToken ct) =>
+            Results.Ok(await svc.ApproveManyAsync(id, req.ImageIds ?? [], CurrentUser.From(p), ct)))
+            .RequireAuthorization(Policies.Engineer);
+
+        g.MapGet("/{id:guid}/next-to-label",async (Guid id, Guid? after,
             LabelingService svc, ClaimsPrincipal p, CancellationToken ct) =>
             Results.Ok(new NextImageDto(await svc.NextToLabelAsync(id, after, CurrentUser.From(p), ct))))
             .RequireAuthorization(Policies.Labeler);

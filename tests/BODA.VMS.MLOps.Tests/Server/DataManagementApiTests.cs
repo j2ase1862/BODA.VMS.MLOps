@@ -410,6 +410,99 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         all.ImageCount.Should().Be(2);
     }
 
+    /// <summary>
+    /// 작업 중인 사진은 <c>ReviewedOnly</c> 를 꺼도 판에 들어가지 않는다.
+    ///
+    /// <para>
+    /// 작업 중은 사전 라벨이 채워지고 아무도 보지 않았거나, 사람이 [저장하고 다음] 으로 마치지 않은 상태다.
+    /// 예전에는 라벨이 하나라도 있으면 담겨, 검토를 끄고 뜬 판에 확인되지 않은 사전 라벨이 섞였다.
+    /// 배경 샘플로도 담지 않는다 — 상자가 덜 쳐진 사진을 배경으로 넣으면 결함을 정상으로 가르친다.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_snapshot_never_takes_unfinished_labels()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("작업 중 경계", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var upload = await UploadAsync(eng,
+            ("finished.png", MakePng(200, 200, SKColors.Teal, 83)),
+            ("unfinished.png", MakePng(200, 200, SKColors.Olive, 84)),
+            ("background.png", MakePng(200, 200, SKColors.Navy, 85)));
+        var (finishedId, unfinishedId, backgroundId) =
+            (upload.Results[0].Image.Id, upload.Results[1].Image.Id, upload.Results[2].Image.Id);
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images",
+            new AddImagesRequest([finishedId, unfinishedId, backgroundId]), Json);
+
+        // 라벨만 있고 마치지 않은 사진 하나만 있으면 판을 뜰 수 없고, 무엇을 하면 되는지 말해 준다
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{unfinishedId}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.3, 0.3)], MarkLabeled: false), Json);
+        var none = await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions", new CreateSnapshotRequest(), Json);
+        none.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ErrorAsync(none))!.Message.Should().Contain("작업 중인 1장");
+
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{finishedId}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.3, 0.3)], MarkLabeled: true), Json);
+        var version = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(IncludeUnlabeled: true), Json))
+            .Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        version.ImageCount.Should().Be(2, "마친 사진과 배경 사진만 — 작업 중인 사진은 배경으로도 들어가지 않는다");
+        version.AnnotationCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// 격자에서 고른 사진을 한꺼번에 승인한다. 한 장씩 승인할 때와 같은 규칙으로 거르고,
+    /// 남이 라벨링 중인 사진은 건너뛴다 — 고치고 있는 라벨을 승인하게 된다.
+    /// </summary>
+    [Fact]
+    public async Task Bulk_approve_takes_what_a_single_approve_would_and_skips_others_work()
+    {
+        var eng = await _f.EngineerAsync();
+        var labeler = await _f.ClientAsAsync("labeler-bulk", "Labeler");
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("한꺼번에 승인", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var upload = await UploadAsync(eng,
+            ("bulk-labeled.png", MakePng(200, 200, SKColors.Teal, 91)),
+            ("bulk-inprogress.png", MakePng(200, 200, SKColors.Olive, 92)),
+            ("bulk-unlabeled.png", MakePng(200, 200, SKColors.Navy, 93)),
+            ("bulk-reviewed.png", MakePng(200, 200, SKColors.Maroon, 94)),
+            ("bulk-locked.png", MakePng(200, 200, SKColors.Gray, 95)));
+        var ids = upload.Results.Select(r => r.Image.Id).ToArray();
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest(ids), Json);
+
+        var box = new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.3, 0.3);
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{ids[0]}/labels", new SaveLabelsRequest([box], true), Json);
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{ids[1]}/labels", new SaveLabelsRequest([box], false), Json);
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{ids[3]}/labels", new SaveLabelsRequest([box], true), Json);
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/{ids[3]}/review", new ReviewRequest(true), Json);
+        // 라벨러가 저장하면 그 사진은 라벨러가 잠근 채다
+        (await labeler.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{ids[4]}/labels", new SaveLabelsRequest([box], true), Json))
+            .EnsureSuccessStatusCode();
+
+        // 라벨러는 한꺼번에도 승인할 수 없다
+        (await labeler.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/approve", new ApproveImagesRequest(ids), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/approve", new ApproveImagesRequest([]), Json))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var result = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/approve",
+            new ApproveImagesRequest([.. ids, Guid.NewGuid()]), Json))
+            .Content.ReadFromJsonAsync<ApproveImagesResultDto>(Json))!;
+        result.Should().Be(new ApproveImagesResultDto(Approved: 2, AlreadyReviewed: 1, Unlabeled: 1, LockedByOthers: 1));
+
+        var approved = (await (await eng.GetAsync($"/api/datasets/{dataset.Id}/images/{ids[1]}/labels"))
+            .Content.ReadFromJsonAsync<ImageLabelsDto>(Json))!;
+        approved.Status.Should().Be(LabelStatus.Reviewed);
+        approved.ReviewedBy.Should().Be("engineer");
+
+        var reviewedOnly = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(ReviewedOnly: true), Json))
+            .Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        reviewedOnly.ImageCount.Should().Be(3, "새로 승인한 두 장과 원래 검토 완료였던 한 장");
+    }
+
     [Fact]
     public async Task Same_content_gives_the_same_manifest_hash()
     {

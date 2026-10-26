@@ -122,6 +122,15 @@ public sealed record SaveLabelsRequest(IReadOnlyList<AnnotationDto> Annotations,
 
 public sealed record ReviewRequest(bool Approved);
 
+/// <summary>격자에서 고른 이미지를 한꺼번에 승인한다. 반려는 한 장씩만 한다 — 왜 돌려보내는지 그 사진을 보고 정해야 해서.</summary>
+public sealed record ApproveImagesRequest(Guid[] ImageIds);
+
+/// <param name="Approved">이번에 승인한 장수</param>
+/// <param name="AlreadyReviewed">이미 검토 완료여서 그대로 둔 장수</param>
+/// <param name="Unlabeled">라벨이 없어 건너뛴 장수</param>
+/// <param name="LockedByOthers">다른 사람이 라벨링 중이라 건너뛴 장수</param>
+public sealed record ApproveImagesResultDto(int Approved, int AlreadyReviewed, int Unlabeled, int LockedByOthers);
+
 public sealed record NextImageDto(Guid? ImageId);
 
 /// <summary>
