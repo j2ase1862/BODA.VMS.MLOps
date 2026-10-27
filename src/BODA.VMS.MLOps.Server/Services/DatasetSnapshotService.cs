@@ -42,6 +42,10 @@ public sealed class DatasetSnapshotService(
     /// <summary>
     /// 지금의 데이터셋으로 버전을 만든다. 라벨이 붙은 이미지만 담는다
     /// (라벨 없는 이미지는 검출에서는 배경 샘플로 쓸 수 있지만, 실수로 섞이는 쪽이 더 흔하다).
+    /// 작업 중(<see cref="LabelStatus.InProgress"/>)인 이미지는 <paramref name="reviewedOnly"/> 를 꺼도 담지 않는다 —
+    /// 사전 라벨이 채워지고 아무도 보지 않은 것이거나, 사람이 [저장하고 다음] 으로 마치지 않은 것이다.
+    /// 그 라벨을 학습에 흘리면 오염은 모델이 나온 뒤에야 드러난다. 배경 샘플(<paramref name="includeUnlabeled"/>)로도 쓰지 않는다 —
+    /// 상자가 덜 쳐진 사진을 배경으로 넣으면 결함을 정상으로 가르친다.
     /// </summary>
     public async Task<DatasetVersion> CreateSnapshotAsync(
         Guid datasetId, string? name, bool includeUnlabeled, bool reviewedOnly, CurrentUser user, CancellationToken ct)
@@ -64,12 +68,14 @@ public sealed class DatasetSnapshotService(
             .ToDictionaryAsync(s => s.ImageId, ct);
 
         var entries = new List<ManifestEntry>();
+        var inProgress = 0;
         foreach (var m in members.OrderBy(m => m.ImageId.ToString(), StringComparer.Ordinal))
         {
             if (!images.TryGetValue(m.ImageId, out var image)) continue;
 
             var status = states.GetValueOrDefault(m.ImageId)?.Status ?? LabelStatus.Unlabeled;
             if (reviewedOnly && status != LabelStatus.Reviewed) continue;
+            if (status == LabelStatus.InProgress) { inProgress++; continue; }
 
             var labels = annotations.GetValueOrDefault(m.ImageId, [])
                 .Select(a => AnnotationPayload.FromJson(a.Shape, a.ClassName, a.PayloadJson))
@@ -84,7 +90,9 @@ public sealed class DatasetSnapshotService(
 
         if (entries.Count == 0)
             throw ApiException.BadRequest(ErrorCodes.Validation,
-                reviewedOnly ? "검토를 마친 이미지가 없습니다." : "라벨이 붙은 이미지가 없습니다.");
+                reviewedOnly ? "검토를 마친 이미지가 없습니다."
+                : inProgress > 0 ? $"라벨을 마친 이미지가 없습니다. 작업 중인 {inProgress}장은 [저장하고 다음] 이나 [검토 승인] 으로 마쳐야 담깁니다."
+                : "라벨이 붙은 이미지가 없습니다.");
 
         var format = DatasetExportWriter.DefaultFormat(dataset.TaskType);
         var manifest = new ManifestFile(dataset.Name, dataset.TaskType, classes, format, Now, entries.ToArray());

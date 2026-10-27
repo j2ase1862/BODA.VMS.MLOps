@@ -1,4 +1,5 @@
 using BODA.VMS.MLOps.Contracts;
+using BODA.VMS.MLOps.Contracts.Datasets;
 using BODA.VMS.MLOps.Core.Domain;
 using BODA.VMS.MLOps.Core.Labeling;
 using BODA.VMS.MLOps.Server.Auth;
@@ -165,6 +166,43 @@ public sealed class LabelingService(
         var annotations = await db.Annotations.AsNoTracking()
             .Where(a => a.DatasetId == datasetId && a.ImageId == imageId).ToListAsync(ct);
         return ToLabels(datasetId, imageId, annotations, state, user);
+    }
+
+    /// <summary>
+    /// 고른 이미지를 한꺼번에 승인한다. 한 장씩 승인할 때와 규칙이 같다 — 라벨이 없는 이미지는 건너뛴다.
+    /// 남이 잠근 이미지도 건너뛴다: 그 사람이 고치고 있는 라벨을 승인하게 되고, 그 사람이 저장하면 승인이 풀린다.
+    /// 데이터셋에 없는 id 는 세지 않는다 (격자가 보낸 선택이 그새 빠졌을 수 있다).
+    /// </summary>
+    public async Task<ApproveImagesResultDto> ApproveManyAsync(
+        Guid datasetId, IReadOnlyCollection<Guid> imageIds, CurrentUser user, CancellationToken ct)
+    {
+        if (!user.IsEngineer)
+            throw ApiException.Forbidden("검토는 Engineer 이상 권한이 필요합니다.");
+        var ids = imageIds.Distinct().ToList();
+        if (ids.Count == 0)
+            throw ApiException.BadRequest(ErrorCodes.Validation, "승인할 이미지를 고르세요.");
+
+        var members = await db.DatasetImages.AsNoTracking()
+            .Where(m => m.DatasetId == datasetId && ids.Contains(m.ImageId)).Select(m => m.ImageId).ToListAsync(ct);
+        var states = await db.ImageLabelStates
+            .Where(s => s.DatasetId == datasetId && ids.Contains(s.ImageId)).ToDictionaryAsync(s => s.ImageId, ct);
+
+        int approved = 0, already = 0, unlabeled = 0, locked = 0;
+        foreach (var imageId in members)
+        {
+            var state = states.GetValueOrDefault(imageId);
+            if (state is null || state.Status is LabelStatus.Unlabeled) { unlabeled++; continue; }
+            if (state.Status is LabelStatus.Reviewed) { already++; continue; }
+            if (IsLockedByOther(state, user)) { locked++; continue; }
+
+            state.Status = LabelStatus.Reviewed;
+            state.ReviewedBy = user.Name;
+            state.ReviewedAt = Now;
+            audit.Record(AuditService.Dataset, "LabelApproved", user.Name, imageId.ToString(), new { datasetId, bulk = true });
+            approved++;
+        }
+        await SaveStateAsync(ct);
+        return new ApproveImagesResultDto(approved, already, unlabeled, locked);
     }
 
     /// <summary>
