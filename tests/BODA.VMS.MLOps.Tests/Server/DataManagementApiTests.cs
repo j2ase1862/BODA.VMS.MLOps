@@ -452,6 +452,53 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
     }
 
     /// <summary>
+    /// 배경 사진도 검토할 수 있다 — 상자 없이 [저장하고 다음] 하면 라벨 완료(라벨 0개)가 되고, 그것을 승인하면
+    /// [검토를 마친 이미지만 담기] 와 [라벨 없는 이미지도 담기] 를 함께 켠 판에 들어간다.
+    ///
+    /// <para>
+    /// 매뉴얼 4.1 이 이 길을 권한다. 손대지 않은 미라벨 사진은 두 옵션을 함께 켜면 빠지므로,
+    /// 이 길이 막히면 검증 사진을 검토한 판에 배경 샘플을 넣을 방법이 없어진다.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_reviewed_background_image_goes_into_a_reviewed_only_snapshot()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("검토한 배경", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var upload = await UploadAsync(eng,
+            ("bg-defect.png", MakePng(200, 200, SKColors.Teal, 86)),
+            ("bg-checked.png", MakePng(200, 200, SKColors.Olive, 87)),
+            ("bg-untouched.png", MakePng(200, 200, SKColors.Navy, 88)));
+        var (defectId, checkedId, untouchedId) =
+            (upload.Results[0].Image.Id, upload.Results[1].Image.Id, upload.Results[2].Image.Id);
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images",
+            new AddImagesRequest([defectId, checkedId, untouchedId]), Json);
+
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{defectId}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.3, 0.3)], MarkLabeled: true), Json);
+        var empty = (await (await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{checkedId}/labels",
+            new SaveLabelsRequest([], MarkLabeled: true), Json)).Content.ReadFromJsonAsync<ImageLabelsDto>(Json))!;
+        empty.Status.Should().Be(LabelStatus.Labeled, "상자 없이 마친 사진은 \"찾을 것이 없다\" 로 확인한 것이다");
+
+        var approved = await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/approve",
+            new ApproveImagesRequest([defectId, checkedId, untouchedId]), Json);
+        (await approved.Content.ReadFromJsonAsync<ApproveImagesResultDto>(Json))!
+            .Should().Be(new ApproveImagesResultDto(Approved: 2, AlreadyReviewed: 0, Unlabeled: 1, LockedByOthers: 0));
+
+        var both = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(IncludeUnlabeled: true, ReviewedOnly: true), Json))
+            .Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        both.ImageCount.Should().Be(2, "결함 사진과 검토한 배경 사진 — 손대지 않은 미라벨 사진은 빠진다");
+
+        var reviewedOnly = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/versions",
+            new CreateSnapshotRequest(ReviewedOnly: true), Json))
+            .Content.ReadFromJsonAsync<DatasetVersionDto>(Json))!;
+        reviewedOnly.ImageCount.Should().Be(1, "라벨이 0개인 사진은 [라벨 없는 이미지도 담기] 를 켜야 들어간다");
+    }
+
+    /// <summary>
     /// 격자에서 고른 사진을 한꺼번에 승인한다. 한 장씩 승인할 때와 같은 규칙으로 거르고,
     /// 남이 라벨링 중인 사진은 건너뛴다 — 고치고 있는 라벨을 승인하게 된다.
     /// </summary>
