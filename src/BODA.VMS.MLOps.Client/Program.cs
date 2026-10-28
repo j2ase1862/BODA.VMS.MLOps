@@ -21,6 +21,7 @@ builder.Services.AddMudServices(o =>
 });
 
 builder.Services.AddScoped<TokenStore>();
+builder.Services.AddScoped<LabelingScopeStore>();
 builder.Services.AddScoped<JwtAuthenticationStateProvider>();
 builder.Services.AddScoped<AuthenticationStateProvider>(sp => sp.GetRequiredService<JwtAuthenticationStateProvider>());
 builder.Services.AddAuthorizationCore();

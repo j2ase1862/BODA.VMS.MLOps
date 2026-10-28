@@ -146,6 +146,13 @@ public sealed record NextImageDto(Guid? ImageId);
 public sealed record LabelQueueDto(
     int Total, int Labeled, int Position, Guid? Previous, Guid? Next, Guid? NextToLabel);
 
+/// <summary>
+/// 고른 사진 안에서만 오가는 자리표. <see cref="LabelQueueDto"/> 의 숫자와 앞뒤가 모두 범위 기준이 된다.
+/// </summary>
+/// <param name="Current">지금 이미지 (막 들어왔으면 없음)</param>
+/// <param name="Scope">[라벨링 시작] 을 누를 때 격자에서 고르거나 거른 사진. 없으면 데이터셋 전체</param>
+public sealed record LabelQueueRequest(Guid? Current, IReadOnlyList<Guid>? Scope);
+
 // ───────────── Active Learning ─────────────
 
 /// <summary>후보 모델이 한 장에 대해 내놓은 것. 사람이 손댄 이미지에는 채우지 않는다.</summary>

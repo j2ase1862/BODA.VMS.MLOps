@@ -6,6 +6,7 @@
 @inject IDialogService Dialogs
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject LabelingScopeStore ScopeStore
 
 <PageTitle>@(_dataset?.Name ?? "데이터셋") · MLOps</PageTitle>
 
@@ -36,7 +37,10 @@ else
         <div class="d-flex gap-2">
             <AuthorizeView Roles="Labeler,Engineer,Admin">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Draw"
-                           Href="@($"/datasets/{Id}/label")">라벨링 시작</MudButton>
+                           Disabled="@_startingLabeling" OnClick="StartLabelingAsync">
+                    @* 거름을 바꾼 직후에는 _total 이 아직 바꾸기 전 숫자다 — 다시 읽는 동안은 숫자를 내지 않는다 *@
+                    @(_selection.Count > 0 ? $"고른 {_selection.Count}장 라벨링" : IsFiltered && !_loadingImages ? $"걸러진 {_total}장 라벨링" : "라벨링 시작")
+                </MudButton>
             </AuthorizeView>
             <AuthorizeView Roles="Labeler,Engineer,Admin" Context="lab">
                 <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PhotoCamera"
@@ -439,6 +443,44 @@ else
     }
 
     private Task LoadMoreAsync() => LoadImagesAsync(append: true);
+
+    private bool IsFiltered => _status is not null || !string.IsNullOrWhiteSpace(_search);
+    private bool _startingLabeling;
+
+    /// <summary>
+    /// 라벨링 화면이 오갈 사진을 지금 정해 넘긴다 — 고른 것이 있으면 그것, 없고 걸러 두었으면 걸러진 것 전부,
+    /// 둘 다 아니면 데이터셋 전체. 넘기지 않던 동안에는 미라벨만 골라 시작해도 [다음] 이 데이터셋 전체를 돌아
+    /// 사이사이의 검토 완료 사진이 나왔다.
+    /// 걸러진 것은 화면에 아직 불러오지 않은 쪽까지 담는다 — 격자는 60장씩 읽지만 사람이 본 조건은 전부다.
+    /// </summary>
+    private async Task StartLabelingAsync()
+    {
+        _startingLabeling = true;
+        try
+        {
+            List<Guid>? scope = null;
+            if (_selection.Count > 0)
+                scope = _images.Where(i => _selection.Contains(i.Id)).Select(i => i.Id).ToList();
+            else if (IsFiltered)
+            {
+                scope = [];
+                for (int skip = 0; ; skip += 500)
+                {
+                    var page = await Api.ImagesAsync(Id, inDataset: true, labelStatus: _status,
+                        search: string.IsNullOrWhiteSpace(_search) ? null : _search, skip: skip, take: 500);
+                    scope.AddRange(page.Items.Select(i => i.Id));
+                    if (page.Items.Count == 0 || scope.Count >= page.Total) break;
+                }
+                if (scope.Count == 0) { Snackbar.Add("조건에 맞는 사진이 없습니다", Severity.Info); return; }
+            }
+
+            var url = $"/datasets/{Id}/label";
+            if (scope is not null) url += $"?scope={await ScopeStore.SaveAsync(Id, scope)}";
+            Nav.NavigateTo(url);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
+        finally { _startingLabeling = false; }
+    }
 
     private async Task OnStatusChanged(LabelStatus? status)
     {

@@ -238,11 +238,18 @@ public sealed class LabelingService(
     /// 라벨링 화면이 딛고 설 자리표. 앞뒤 이미지는 <b>라벨 상태와 무관하게</b> 목록 순서로 준다 —
     /// 다 라벨링한 뒤에도 되돌아가 고칠 수 있어야 하기 때문이다.
     /// 순서는 데이터셋 화면의 사진 목록과 같다 (올라온 순서의 역순).
+    ///
+    /// <paramref name="scope"/> 가 있으면 그 사진들만 오간다 — 격자에서 미라벨만 걸러 고르고
+    /// [라벨링 시작] 을 눌렀는데 [다음] 이 사이사이의 검토 완료 사진을 내놓던 것을 막는다.
+    /// 범위는 시작할 때 굳힌 목록이라 방금 끝낸 사진도 남아 [이전] 으로 되돌아볼 수 있다.
+    /// 데이터셋에서 빠진 사진은 범위에 있어도 세지 않는다.
     /// </summary>
-    public async Task<LabelQueue> QueueAsync(Guid datasetId, Guid? currentImageId, CurrentUser user, CancellationToken ct)
+    public async Task<LabelQueue> QueueAsync(Guid datasetId, Guid? currentImageId, CurrentUser user, CancellationToken ct,
+        IReadOnlyCollection<Guid>? scope = null)
     {
         var memberIds = await db.DatasetImages.AsNoTracking().Where(m => m.DatasetId == datasetId)
             .Select(m => m.ImageId).ToListAsync(ct);
+        if (scope is not null) memberIds = memberIds.Intersect(scope).ToList();
         if (memberIds.Count == 0) return new LabelQueue(0, 0, 0, null, null, null);
 
         // 같은 순간에 올라온 사진들은 CreatedAt 이 같다 — Id 로 한 번 더 갈라야 순서가 흔들리지 않는다.
@@ -262,9 +269,30 @@ public sealed class LabelingService(
         var next = index < 0 ? ordered[0]
             : index < ordered.Count - 1 ? ordered[index + 1] : (Guid?)null;
 
-        return new LabelQueue(
-            ordered.Count, labeled, index + 1, previous, next,
-            await NextToLabelAsync(datasetId, currentImageId, user, ct));
+        var nextToLabel = scope is null
+            ? await NextToLabelAsync(datasetId, currentImageId, user, ct)
+            : NextToLabelInOrder(ordered, index, states.ToDictionary(s => s.ImageId), user);
+
+        return new LabelQueue(ordered.Count, labeled, index + 1, previous, next, nextToLabel);
+    }
+
+    /// <summary>
+    /// 범위 안에서 남은 다음 사진 — 지금 자리 뒤부터 목록 순서로 찾고, 끝에 닿으면 앞에서 다시 찾는다.
+    /// 사람이 골라 둔 순서를 따라가야 [저장하고 다음] 이 격자에서 여기저기 건너뛰지 않는다.
+    /// 남이 잠근 것은 <see cref="NextToLabelAsync"/> 와 같은 규칙으로 건너뛴다.
+    /// </summary>
+    private Guid? NextToLabelInOrder(List<Guid> ordered, int index, Dictionary<Guid, ImageLabelState> byImage, CurrentUser user)
+    {
+        for (int step = 1; step <= ordered.Count; step++)
+        {
+            var id = ordered[(index + step + ordered.Count) % ordered.Count];
+            if (index >= 0 && id == ordered[index]) continue;
+            var state = byImage.GetValueOrDefault(id);
+            if (state is not null && state.Status is not (LabelStatus.Unlabeled or LabelStatus.InProgress)) continue;
+            if (state is not null && IsLockedByOther(state, user)) continue;
+            return id;
+        }
+        return null;
     }
 
     /// <summary>후보 모델의 추론 결과를 초기 라벨로 채워 넣는다 (개발 문서 §5.4 Active Learning)</summary>

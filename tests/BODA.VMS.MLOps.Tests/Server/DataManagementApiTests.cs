@@ -737,6 +737,83 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         again.Next.Should().Be(order[0]);
     }
 
+    /// <summary>
+    /// 격자에서 미라벨만 걸러 고르고 [라벨링 시작] 을 누르면 그 사진 안에서만 오가야 한다.
+    /// 범위를 넘기지 않던 동안에는 [다음] 이 데이터셋 전체를 돌아 사이사이의 검토 완료 사진이 나왔다.
+    /// 범위는 시작할 때 굳힌 목록이라 끝낸 사진도 남는다 — [이전] 으로 되돌아볼 수 있어야 한다.
+    /// </summary>
+    [Fact]
+    public async Task Label_queue_stays_inside_the_scope_picked_on_the_grid()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("고른 것만", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var ids = (await UploadAsync(eng,
+            ("s1.png", MakePng(64, 64, SKColors.Silver, 411)),
+            ("s2.png", MakePng(64, 64, SKColors.Sienna, 412)),
+            ("s3.png", MakePng(64, 64, SKColors.Teal, 413)),
+            ("s4.png", MakePng(64, 64, SKColors.Olive, 414)),
+            ("s5.png", MakePng(64, 64, SKColors.Navy, 415)))).Results.Select(r => r.Image.Id).ToArray();
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest(ids), Json);
+
+        // 격자 순서 그대로 (데이터셋 전체 자리표가 격자와 같은 순서다)
+        var order = new List<Guid>();
+        for (Guid? at = null; ;)
+        {
+            var q = await eng.GetFromJsonAsync<LabelQueueDto>(
+                $"/api/datasets/{dataset.Id}/label-queue{(at is null ? "" : $"?current={at}")}", Json);
+            if (q!.Next is not { } n) break;
+            order.Add(n);
+            at = n;
+        }
+        order.Should().HaveCount(5);
+
+        Task Label(Guid id) => eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{id}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.2, 0.2)], true), Json);
+
+        // 사이사이 두 장은 이미 검토까지 끝났다
+        await Label(order[1]);
+        await Label(order[3]);
+        (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/approve",
+            new ApproveImagesRequest([order[1], order[3]]), Json)).EnsureSuccessStatusCode();
+
+        // 미라벨로 걸러 고른 세 장 — 데이터셋에 없는 id 가 섞여도 세지 않는다
+        Guid[] scope = [order[0], order[2], order[4], Guid.NewGuid()];
+        async Task<LabelQueueDto> Queue(Guid? current) =>
+            (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/label-queue",
+                new LabelQueueRequest(current, scope), Json)).Content.ReadFromJsonAsync<LabelQueueDto>(Json))!;
+
+        var start = await Queue(null);
+        start.Total.Should().Be(3, "고른 것 중 데이터셋에 있는 것만 센다");
+        start.Labeled.Should().Be(0);
+        start.NextToLabel.Should().Be(order[0]);
+
+        var walked = new List<Guid>();
+        for (Guid? at = start.Next; at is { } id;)
+        {
+            walked.Add(id);
+            var q = await Queue(id);
+            q.Position.Should().Be(walked.Count);
+            at = q.Next;
+        }
+        walked.Should().Equal([order[0], order[2], order[4]], "[다음] 이 검토 완료 사진으로 새면 안 된다");
+
+        // 끝을 넘으면 처음의 남은 것으로 돌아간다 — 고른 순서를 따라야 격자에서 건너뛰지 않는다
+        await Label(order[4]);
+        var middle = await Queue(order[2]);
+        middle.NextToLabel.Should().Be(order[0]);
+        middle.Previous.Should().Be(order[0]);
+        middle.Next.Should().Be(order[4], "끝낸 사진도 범위에 남아 되돌아볼 수 있다");
+        middle.Labeled.Should().Be(1);
+
+        await Label(order[0]);
+        await Label(order[2]);
+        var done = await Queue(order[2]);
+        done.NextToLabel.Should().BeNull();
+        done.Labeled.Should().Be(3);
+    }
+
     /// <summary>사진이 하나도 없는 데이터셋은 갈 곳이 없다 — 그때만 화면이 오류를 낸다.</summary>
     [Fact]
     public async Task Label_queue_of_an_empty_dataset_has_nowhere_to_go()
