@@ -118,6 +118,14 @@ public static class DatasetEndpoints
             return Results.Ok(new LabelQueueDto(q.Total, q.Labeled, q.Position, q.Previous, q.Next, q.NextToLabel));
         }).RequireAuthorization(Policies.Labeler);
 
+        // 같은 자리표를 고른 사진 안에서만. 범위가 길어 쿼리 문자열 대신 본문으로 받는다.
+        g.MapPost("/{id:guid}/label-queue", async (Guid id, LabelQueueRequest req,
+            LabelingService svc, ClaimsPrincipal p, CancellationToken ct) =>
+        {
+            var q = await svc.QueueAsync(id, req.Current, CurrentUser.From(p), ct, req.Scope);
+            return Results.Ok(new LabelQueueDto(q.Total, q.Labeled, q.Position, q.Previous, q.Next, q.NextToLabel));
+        }).RequireAuthorization(Policies.Labeler);
+
         // 후보 모델의 추론 결과를 초기 라벨로 채운다 (개발 문서 §5.4 Active Learning).
         // 부르는 쪽은 보통 워커의 사전 라벨링 작업이다. 사람이 이미 손댄 이미지는 건드리지 않는다.
         g.MapPost("/{id:guid}/prefill", async (Guid id, PrefillRequest req,
