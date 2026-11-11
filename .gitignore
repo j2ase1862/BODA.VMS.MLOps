@@ -24,6 +24,7 @@ __pycache__/
 docs/manual/screenshots/
 docs/manual/*.docx
 docs/manual/*.pdf
+docs/manual/*.html
 
 # 워커 설치 패키지: 오프라인 wheel 번들(수 GB, scripts/make-wheel-bundle.ps1 로 생성)과 publish 중간 산출물
 src/BODA.VMS.MLOps.TrainWorker.Setup/WheelBundle/

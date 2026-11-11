@@ -37,9 +37,24 @@ node docs/manual/gen_manual.js install.json   # 설치 가이드
 
 **docx 를 직접 편집하지 마세요.** 다시 만들면 사라집니다. 본문은 json 을 고칩니다.
 
+## v2.0 에서 바뀐 것
+
+- **번호는 생성기가 붙입니다.** `manual.json` 에 `"autoNumber": true` 가 있으면 장 · 절의 `heading` · `text` 에 번호를 쓰지 않습니다.
+  장에 `front`(번호 없는 머리말) · `appendix`(부록 A, B …) · `part`(앞에 부 표지) · `video`(영상 번호) · `id`(책갈피)를 줄 수 있고,
+  `h2` 에 `level: 3` 을 주면 x.y.z 가 됩니다. 규칙은 `lib/model.js` 맨 위에 있습니다 — docx 와 html 이 같이 씁니다.
+- **본문 속 링크.** `[보이는 글](#id)` 는 문서 안 책갈피(용어 `g-…` · 절 id), `[보이는 글](https://…)` 는 바깥 링크,
+  `[[id]]` 는 그 절의 번호로 바뀝니다. 화면 버튼 표기 `[저장하고 다음]` 처럼 대괄호 뒤에 `(#` 나 `(http` 가 붙지 않으면 그냥 글자입니다.
+  없는 id 로 가는 링크는 생성이 멈추며 알려 줍니다.
+- **새 블록:** `ul`(점 목록), `terms`(용어집 — 용어마다 `id` · `term` · `en` · `desc` · `where` · `links`).
+- **html 도 만듭니다.** `node docs/manual/gen_manual_html.js` → 그림을 품은 한 파일. 화면에서 링크를 따라가며 읽거나 영상 원고를 쓸 때 씁니다. docx 가 정본입니다.
+- **PDF 는 Word 로.** docx 를 Word 로 열어 목차를 갱신하고 PDF 로 저장합니다(`Ctrl+A` → `F9`, 다른 이름으로 저장 → PDF).
+- **새 그림 20~32 는 `capture_v2.mjs`(Playwright)** 로 데모 서버에서 찍습니다. 사용법은 파일 맨 위에 있습니다.
+  이 스크립트는 데모 데이터를 바꾸므로(OCR 데이터셋 · 라인 PC 를 만듦) 찍은 뒤 데모 DB 를 되돌리세요. 라인 토큰 원문은 찍기 전에 가립니다.
+- 원고를 쓰다 찾은 제품 동작은 `REVIEW_NOTES_v2.0.md` 에 모았습니다.
+
 ## 블록 종류
 
-`p` · `h2` · `steps` · `table` · `figure` · `note` · `warn` · `code`.
+`p` · `h2` · `steps` · `ul` · `table` · `figure` · `note` · `warn` · `code` · `terms`.
 `code` 의 `text` 는 문자열도 되고 줄 배열도 됩니다(배열이 고치기 쉽습니다). `caption` 은 선택입니다.
 본문 어디서나 `` `…` `` 로 감싼 토막은 고정폭으로 나갑니다 — 경로·옵션·서비스 이름에 씁니다.
 
