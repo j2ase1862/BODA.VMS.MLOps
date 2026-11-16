@@ -653,6 +653,38 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         tagged!.Items.Select(i => i.Id).Should().Contain(ids[1]).And.NotContain(ids[0]);
     }
 
+    /// <summary>
+    /// 태그 거르기는 세는 것과 보이는 것이 같은 규칙(정확 일치)이어야 한다 (ML-17).
+    /// 부분 일치로 세고 정확 일치로 보여 주던 동안 "N 장" 과 보이는 장수가 달랐다.
+    /// </summary>
+    [Fact]
+    public async Task Tag_filter_counts_exactly_what_it_shows()
+    {
+        var eng = await _f.EngineerAsync();
+        var ids = (await UploadAsync(eng,
+            ("t1.png", MakePng(64, 64, SKColors.Aqua, 211)),
+            ("t2.png", MakePng(64, 64, SKColors.Coral, 212)),
+            ("t3.png", MakePng(64, 64, SKColors.Khaki, 213)))).Results.Select(r => r.Image.Id).ToArray();
+
+        // 고유한 태그 — 다른 시험의 사진이 섞이지 않게
+        var tag = $"lot:{Guid.NewGuid():N}"[..20];
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest([ids[0]], [tag]), Json);
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest([ids[1]], [tag + "-b"]), Json);   // 부분 일치만
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest([ids[2]], ["x" + tag]), Json);    // 부분 일치만
+
+        var page = await eng.GetFromJsonAsync<ImagePageDto>($"/api/images?tag={Uri.EscapeDataString(tag)}", Json);
+        page!.Items.Select(i => i.Id).Should().Equal([ids[0]]);
+        page.Total.Should().Be(1, "세는 것도 보이는 것과 같은 정확 일치");
+
+        // 대소문자는 가리지 않는다 (예전 거르기와 같다)
+        var upper = await eng.GetFromJsonAsync<ImagePageDto>($"/api/images?tag={Uri.EscapeDataString(tag.ToUpperInvariant())}", Json);
+        upper!.Total.Should().Be(1);
+
+        // LIKE 의 와일드카드는 글자 그대로
+        var wild = await eng.GetFromJsonAsync<ImagePageDto>($"/api/images?tag={Uri.EscapeDataString(tag[..8] + "%")}", Json);
+        wild!.Total.Should().Be(0);
+    }
+
     [Fact]
     public async Task Next_to_label_skips_finished_and_locked_images()
     {
