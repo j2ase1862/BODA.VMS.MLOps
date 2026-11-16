@@ -64,10 +64,11 @@
             <MudChip T="string" Color="Color.Warning" Icon="@Icons.Material.Filled.Lock">@_labels.LockedBy 작업 중</MudChip>
         }
         <MudChip T="string" Size="Size.Small" Color="@StatusColor">@Display.LabelStatusText(_labels?.Status ?? LabelStatus.Unlabeled)</MudChip>
+        @* ←/→ 와 같은 길 — 고치던 라벨을 저장하고 넘어간다 (ML-03) *@
         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.NavigateBefore"
-                   Disabled="@(_queue?.Previous is null)" OnClick="@(() => GoToAsync(_queue?.Previous))">이전</MudButton>
+                   Disabled="@(_queue?.Previous is null || _saving)" OnClick="@(() => OnNavigateRequested(-1))">이전</MudButton>
         <MudButton Variant="Variant.Outlined" EndIcon="@Icons.Material.Filled.NavigateNext"
-                   Disabled="@(_queue?.Next is null)" OnClick="@(() => GoToAsync(_queue?.Next))">다음</MudButton>
+                   Disabled="@(_queue?.Next is null || _saving)" OnClick="@(() => OnNavigateRequested(1))">다음</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Check"
                    Disabled="@(_saving || ReadOnly)" OnClick="SaveAndNextAsync">
             @(_saving ? "저장 중…" : "저장하고 다음")
@@ -128,7 +129,14 @@
             <canvas id="@CanvasId" style="width:100%; height:calc(100vh - 300px); min-height:420px; border:1px solid var(--line); touch-action:none;"></canvas>
 
             <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1 d-block">
-                ←/→ 이전·다음 이미지 · 끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음 클래스 · Delete 삭제 · Esc 선택 해제
+                @if (_mode == "classification")
+                {
+                    <span>←/→ 이전·다음 이미지(저장하고 넘어감) · 숫자키나 클래스 버튼으로 이 사진의 클래스 붙이기 · 휠 확대 · Alt+끌기 이동</span>
+                }
+                else
+                {
+                    <span>←/→ 이전·다음 이미지(저장하고 넘어감) · 끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음에 그릴 클래스 · Delete 삭제 · Esc 선택 해제</span>
+                }
                 @if (_mode == "polygon")
                 {
                     <span> · 클릭으로 점 추가, 오른쪽 클릭이나 Enter 로 닫기</span>
