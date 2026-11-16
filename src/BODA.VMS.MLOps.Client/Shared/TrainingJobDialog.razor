@@ -54,7 +54,7 @@
                             @foreach (var d in _datasets)
                             {
                                 <MudSelectItem T="Guid?" Value="@d.Id">
-                                    @d.Name — @Display.TaskTypeText(d.TaskType) / @d.ExportFormat (@Display.Size(d.SizeBytes))
+                                    @d.Name — @Display.TaskTypeText(d.TaskType) / @d.ExportFormat (@Display.VersionSize(d.SizeBytes, d.ExportReady))
                                 </MudSelectItem>
                             }
                         </MudSelect>
@@ -100,7 +100,11 @@
                     <MudTextField @bind-Value="_backbone" Label="백본 (선택)" HelperText="예: dfine-small" />
                 </MudItem>
                 <MudItem xs="12" md="4">
-                    <MudNumericField T="int" @bind-Value="_seed" Label="Seed" HelperText="같은 입력·seed 면 같은 결과" />
+                    @* seed 를 실제로 받는 스크립트는 일부뿐이다 — 받지 않는 스크립트에 "같은 결과" 라 말하면 거짓말이다 (ML-20) *@
+                    <MudNumericField T="int" @bind-Value="_seed" Label="Seed"
+                                     HelperText="@(TrainingArgumentList.SupportsSeed(_script)
+                                         ? "같은 판·설정·seed 면 같은 결과를 내도록 고정합니다"
+                                         : $"{_script.FileName()} 은(는) seed 를 받지 않아 기록으로만 남습니다 — 다시 돌리면 결과가 조금 다를 수 있습니다")" />
                 </MudItem>
                 <MudItem xs="12" md="4">
                     <MudNumericField T="int" @bind-Value="_priority" Label="우선순위" HelperText="큰 값이 먼저 배정됩니다" />

@@ -167,6 +167,34 @@ public class DeletionApiTests : IClassFixture<MlopsApiFactory>
     }
 
     /// <summary>
+    /// 대기 중이거나 도는 학습이 쓰는 사전학습 자산은 지워지지 않는다 (ML-26) — 워커가 받으려는 순간
+    /// 파일이 사라지면 그 학습이 준비 단계에서 실패한다. 학습이 끝나면(여기서는 취소) 지워진다.
+    /// </summary>
+    [Fact]
+    public async Task Pretrained_asset_in_use_by_a_waiting_job_cannot_be_deleted()
+    {
+        var admin = await _f.AdminAsync();
+        var eng = await _f.EngineerAsync();
+        var @ref = await EnsurePretrainedAsync(admin, "dfine-del-guard-test");
+
+        var model = await CreateModelAsync(eng, "m-pretrained-guard");
+        var ds = await UploadDatasetAsync(eng, "ds-pretrained-guard", zip: MakeYoloDatasetZip(41));
+        var job = (await (await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: @ref,
+                Hyperparams: JsonDocument.Parse("""{"epochs": 2}""").RootElement.Clone()), Json))
+            .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
+
+        var blocked = await admin.DeleteAsync($"/api/pretrained/{@ref}");
+        blocked.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await ErrorAsync(blocked))!.Message.Should().Contain("1건");
+
+        (await eng.PostAsJsonAsync($"/api/training-jobs/{job.Id}/cancel", new CancelJobRequest("guard test"), Json))
+            .EnsureSuccessStatusCode();
+        (await admin.DeleteAsync($"/api/pretrained/{@ref}")).IsSuccessStatusCode.Should().BeTrue();
+        (await admin.GetAsync($"/api/pretrained/{@ref}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
     /// 라인이 받아 갈 수 있는 버전(Staging·Production)은 지워지지 않고, 한 번 나갔던 것(Retired)은 Admin 만 지운다.
     /// 레시피가 묶고 있어도 막는다.
     /// </summary>
@@ -299,5 +327,34 @@ public class DeletionApiTests : IClassFixture<MlopsApiFactory>
         (await eng.GetFromJsonAsync<ModelDto>($"/api/models/{model.Id}", Json))!.Name.Should().Be("GS-B 이상탐지");
         var versions = (await eng.GetFromJsonAsync<List<ModelVersionDto>>($"/api/models/{model.Id}/versions", Json))!;
         versions.Should().ContainSingle(v => v.Id == version.Id);
+    }
+
+    /// <summary>
+    /// 모델 상세의 [보관]·[보관 풀기] 가 쓰는 길 (ML-24). Engineer 이상만 되고(화면도 같은 사람에게만 보인다),
+    /// 보관하면 기본 목록에서 빠져 '보관된 모델' 목록으로 가고 버전은 그대로다.
+    /// </summary>
+    [Fact]
+    public async Task Model_family_archive_and_unarchive_needs_engineer_and_keeps_versions()
+    {
+        var eng = await _f.EngineerAsync();
+        var model = await CreateModelAsync(eng, "m-archive-toggle");
+        var version = (await (await UploadVersionAsync(eng, model.Id, OnnxStubs.Bytes(OnnxStubs.DeployWithMeta)))
+            .Content.ReadFromJsonAsync<ModelVersionDto>(Json))!;
+
+        var labeler = await _f.ClientAsAsync("labeler-archive", "Labeler");
+        (await labeler.PatchAsJsonAsync($"/api/models/{model.Id}", new UpdateModelRequest(IsArchived: true), Json))
+            .StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        var archived = await eng.PatchAsJsonAsync($"/api/models/{model.Id}", new UpdateModelRequest(IsArchived: true), Json);
+        archived.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await archived.Content.ReadFromJsonAsync<ModelDto>(Json))!.IsArchived.Should().BeTrue();
+        (await eng.GetFromJsonAsync<List<ModelDto>>("/api/models", Json))!.Should().NotContain(m => m.Id == model.Id);
+        (await eng.GetFromJsonAsync<List<ModelDto>>("/api/models?archived=true", Json))!.Should().Contain(m => m.Id == model.Id);
+        (await eng.GetFromJsonAsync<List<ModelVersionDto>>($"/api/models/{model.Id}/versions", Json))!
+            .Should().ContainSingle(v => v.Id == version.Id);
+
+        (await eng.PatchAsJsonAsync($"/api/models/{model.Id}", new UpdateModelRequest(IsArchived: false), Json))
+            .EnsureSuccessStatusCode();
+        (await eng.GetFromJsonAsync<List<ModelDto>>("/api/models", Json))!.Should().Contain(m => m.Id == model.Id);
     }
 }

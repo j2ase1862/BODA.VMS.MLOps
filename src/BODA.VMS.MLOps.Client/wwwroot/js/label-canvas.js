@@ -421,12 +421,15 @@ class LabelCanvas {
         if (e.key === 'Enter' && this.samPreview) { this.confirmSam(); e.preventDefault(); return; }
         if (e.key === 'Enter' && this.draftPolygon) { this.finishPolygon(); e.preventDefault(); return; }
 
-        // 숫자키로 클래스 선택 (1~9)
+        // 숫자키로 클래스 선택 (1~9). 그리는 도형에서는 다음에 그릴 것만 정한다.
+        // 분류·이상탐지는 그릴 것이 없으므로 클래스 버튼과 같이 곧 이 사진의 라벨이다 (ML-04).
         if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey) {
             const index = parseInt(e.key, 10) - 1;
             if (index < this.classes.length) {
-                this.setActiveClass(this.classes[index]);
-                this.dotNet?.invokeMethodAsync('OnClassChanged', this.classes[index]);
+                const cls = this.classes[index];
+                this.setActiveClass(cls);
+                if (this.mode === 'classification') this.setClassification(cls);
+                this.dotNet?.invokeMethodAsync('OnClassChanged', cls);
                 e.preventDefault();
             }
         }

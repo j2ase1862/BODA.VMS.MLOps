@@ -60,6 +60,23 @@ def emit(tag: str, value=""):
     print(f"[{tag}] {value}".rstrip(), flush=True)
 
 
+def resolve_pretrained_prefix(path: str) -> str:
+    """PaddleOCR 의 pretrained_model 은 확장자를 뺀 prefix 다. 폴더(MLOps 워커가 넘기는 사전학습 미러)면
+    그 안의 .pdparams 하나를 찾아 prefix 로 바꾸고, .pdparams 까지 붙은 경로면 확장자를 뗀다.
+    폴더를 그대로 넘기던 동안 미러를 고르면 '<폴더>.pdparams' 를 찾다 가중치 없이 돌거나 실패했다 (ML-22)."""
+    if not path:
+        return ""
+    if os.path.isdir(path):
+        files = sorted(f for f in os.listdir(path) if f.lower().endswith(".pdparams"))
+        if len(files) != 1:
+            emit("ERROR", f"사전학습 폴더에 .pdparams 파일이 하나만 있어야 합니다: {path} → {files or '없음'}")
+            sys.exit(1)
+        path = os.path.join(path, files[0])
+    if path.lower().endswith(".pdparams"):
+        path = path[: -len(".pdparams")]
+    return path
+
+
 def check_deps():
     missing = []
     for mod in ["paddle", "paddleocr"]:
@@ -188,7 +205,7 @@ def build_runtime_yaml(args, base_yaml_path: str) -> str:
     g["epoch_num"] = args.epochs
     g["save_model_dir"] = output_dir
     g["save_inference_dir"] = os.path.join(output_dir, "inference")
-    g["pretrained_model"] = args.pretrained or ""
+    g["pretrained_model"] = resolve_pretrained_prefix(args.pretrained)
     g["save_epoch_step"] = max(1, args.epochs // 5)
     g["eval_batch_step"] = [0, max(50, args.epochs * 5)]
     # 사전 경로 — VMS SynthData가 dict.txt + ppocr_keys_v1.txt 모두 출력

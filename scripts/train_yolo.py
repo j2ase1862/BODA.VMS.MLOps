@@ -154,6 +154,21 @@ def write_history_artifacts(output, history, epochs):
     os.replace(tmp_png, os.path.join(output, "curves.png"))
 
 
+def resolve_pretrained(path):
+    """파일 이름·경로면 그대로, 폴더(MLOps 워커가 넘기는 사전학습 미러)면 그 안의 .pt 하나.
+
+    워커는 --pretrained 에 미러를 내려받은 폴더를 준다. ultralytics 의 YOLO() 는 폴더를 받지 못하므로
+    여기서 가중치 파일로 바꾼다 — 바꾸지 않던 동안 미러를 고르면 학습이 시작도 못 하고 실패했다 (ML-22).
+    """
+    if not path or not os.path.isdir(path):
+        return path
+    files = sorted(f for f in os.listdir(path) if f.lower().endswith(".pt"))
+    if len(files) != 1:
+        print(f"[ERROR] 사전학습 폴더에 .pt 가중치 파일이 하나만 있어야 합니다: {path} → {files or '없음'}", flush=True)
+        sys.exit(1)
+    return os.path.join(path, files[0])
+
+
 def main():
     parser = argparse.ArgumentParser(description="VMS YOLO Training")
     parser.add_argument("--dataset", required=True, help="Dataset path (YOLO format with data.yaml)")
@@ -198,7 +213,7 @@ def main():
           flush=True)
 
     # 모델 로드
-    model = YOLO(args.pretrained)
+    model = YOLO(resolve_pretrained(args.pretrained))
 
     run_dir = os.path.join(args.output, "train")
 
