@@ -47,10 +47,11 @@ else
                            OnClick="@(() => _uploadOpen = true)">사진 올리기</MudButton>
             </AuthorizeView>
             <AuthorizeView Roles="Engineer,Admin" Context="eng">
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AutoFixHigh"
-                           OnClick="OpenPrelabelAsync">모델로 미리 채우기</MudButton>
                 @if (_dataset.TaskType == TaskType.Detection)
                 {
+                    @* 사전 라벨링은 검출만 지원한다(서버도 다른 유형은 거절) — 누를 수 없는 일을 버튼으로 두지 않는다 (ML-16) *@
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                               OnClick="OpenPrelabelAsync">모델로 미리 채우기</MudButton>
                     @* 수집 사진 중 모델이 헷갈린 것을 골라 담는다 (§5.5 4번) *@
                     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ManageSearch"
                                Href="@($"/datasets/{Id}/active-learning")">새 사진 훑기</MudButton>
@@ -262,7 +263,7 @@ else
             @if (_versionOptions.Count == 0)
             {
                 <MudAlert Severity="Severity.Info">
-                    이 데이터셋과 같은 작업 유형·클래스를 가진 검출 모델 버전이 없습니다.
+                    이 데이터셋과 클래스가 하나라도 겹치는 검출 모델 버전이 없습니다.
                     먼저 모델을 등록하거나 학습을 돌려 후보를 만드세요.
                 </MudAlert>
             }
@@ -278,7 +279,7 @@ else
 
                 <MudSlider T="double" Value="_prelabelConfidence" ValueChanged="@(v => _prelabelConfidence = v)"
                            Min="0.05" Max="0.9" Step="0.05" Class="mt-4">
-                    확신도 문턱: @_prelabelConfidence.ToString("0.00")
+                    신뢰도 @_prelabelConfidence.ToString("0.00") 이상만 라벨로 붙이기
                 </MudSlider>
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">
                     낮추면 더 많이 붙지만 사람이 지울 것도 늘어납니다.
