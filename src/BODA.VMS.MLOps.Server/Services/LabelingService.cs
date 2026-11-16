@@ -207,30 +207,37 @@ public sealed class LabelingService(
 
     /// <summary>
     /// 다음에 라벨링할 이미지. 불확실도가 매겨져 있으면 큰 것부터 (Active Learning),
-    /// 없으면 담긴 순서대로. 남이 잠근 것은 건너뛴다.
+    /// 같으면(대개 매겨진 것이 없으면) <b>격자 순서</b>로 지금 사진 뒤부터 찾고, 끝에 닿으면 앞에서 다시 찾는다.
+    /// 남이 잠근 것은 건너뛴다.
+    ///
+    /// 예전에는 불확실도가 같을 때 id 문자열 순서였다 — 고른 범위 없이 [저장하고 다음] 을 쓰면
+    /// 격자에서 여기저기 뛰어, 사람이 어디까지 했는지 따라갈 수 없었다 (ML-09).
     /// </summary>
     public async Task<Guid?> NextToLabelAsync(Guid datasetId, Guid? afterImageId, CurrentUser user, CancellationToken ct)
     {
-        var members = await db.DatasetImages.AsNoTracking().Where(m => m.DatasetId == datasetId)
+        var memberIds = await db.DatasetImages.AsNoTracking().Where(m => m.DatasetId == datasetId)
             .Select(m => m.ImageId).ToListAsync(ct);
-        if (members.Count == 0) return null;
+        if (memberIds.Count == 0) return null;
 
+        var ordered = await GridOrderAsync(memberIds, ct);
         var states = await db.ImageLabelStates.AsNoTracking().Where(s => s.DatasetId == datasetId).ToListAsync(ct);
         var byImage = states.ToDictionary(s => s.ImageId);
-        var now = Now;
+        int index = afterImageId is { } after ? ordered.IndexOf(after) : -1;
 
-        var candidates = members
+        // 격자 순서로 고른 뒤 불확실도로 안정 정렬한다 — 같은 불확실도 안에서는 격자 순서가 남는다.
+        return RemainingInOrder(ordered, index, byImage, user)
             .Where(id => id != afterImageId)
-            .Select(id => (Id: id, State: byImage.GetValueOrDefault(id)))
-            .Where(x => x.State is null || x.State.Status is LabelStatus.Unlabeled or LabelStatus.InProgress)
-            .Where(x => x.State is null || x.State.LockedBy is null || x.State.LockedBy == user.Name
-                        || x.State.LockExpiresAt is null || x.State.LockExpiresAt <= now)
-            .OrderByDescending(x => x.State?.Uncertainty ?? -1)
-            .ThenBy(x => x.Id.ToString(), StringComparer.Ordinal)
-            .ToList();
-
-        return candidates.Count > 0 ? candidates[0].Id : null;
+            .OrderByDescending(id => byImage.GetValueOrDefault(id)?.Uncertainty ?? -1)
+            .Cast<Guid?>()
+            .FirstOrDefault();
     }
+
+    /// <summary>데이터셋 화면의 사진 격자와 같은 순서 (올라온 순서의 역순, 같은 순간이면 Id).</summary>
+    private Task<List<Guid>> GridOrderAsync(IReadOnlyCollection<Guid> imageIds, CancellationToken ct) =>
+        // 같은 순간에 올라온 사진들은 CreatedAt 이 같다 — Id 로 한 번 더 갈라야 순서가 흔들리지 않는다.
+        db.Images.AsNoTracking().Where(i => imageIds.Contains(i.Id))
+            .OrderByDescending(i => i.CreatedAt).ThenBy(i => i.Id)
+            .Select(i => i.Id).ToListAsync(ct);
 
     public sealed record LabelQueue(int Total, int Labeled, int Position, Guid? Previous, Guid? Next, Guid? NextToLabel);
 
@@ -252,10 +259,7 @@ public sealed class LabelingService(
         if (scope is not null) memberIds = memberIds.Intersect(scope).ToList();
         if (memberIds.Count == 0) return new LabelQueue(0, 0, 0, null, null, null);
 
-        // 같은 순간에 올라온 사진들은 CreatedAt 이 같다 — Id 로 한 번 더 갈라야 순서가 흔들리지 않는다.
-        var ordered = await db.Images.AsNoTracking().Where(i => memberIds.Contains(i.Id))
-            .OrderByDescending(i => i.CreatedAt).ThenBy(i => i.Id)
-            .Select(i => i.Id).ToListAsync(ct);
+        var ordered = await GridOrderAsync(memberIds, ct);
 
         // 데이터셋에서 빠진 뒤에도 상태 행은 남으므로, 지금 담겨 있는 것만 센다.
         var inDataset = ordered.ToHashSet();
@@ -271,17 +275,17 @@ public sealed class LabelingService(
 
         var nextToLabel = scope is null
             ? await NextToLabelAsync(datasetId, currentImageId, user, ct)
-            : NextToLabelInOrder(ordered, index, states.ToDictionary(s => s.ImageId), user);
+            : RemainingInOrder(ordered, index, states.ToDictionary(s => s.ImageId), user).Cast<Guid?>().FirstOrDefault();
 
         return new LabelQueue(ordered.Count, labeled, index + 1, previous, next, nextToLabel);
     }
 
     /// <summary>
-    /// 범위 안에서 남은 다음 사진 — 지금 자리 뒤부터 목록 순서로 찾고, 끝에 닿으면 앞에서 다시 찾는다.
-    /// 사람이 골라 둔 순서를 따라가야 [저장하고 다음] 이 격자에서 여기저기 건너뛰지 않는다.
-    /// 남이 잠근 것은 <see cref="NextToLabelAsync"/> 와 같은 규칙으로 건너뛴다.
+    /// 남은 사진 — 지금 자리 뒤부터 목록 순서로, 끝에 닿으면 앞에서 다시. 지금 사진은 빼고 준다.
+    /// 사람이 보는 순서를 따라가야 [저장하고 다음] 이 격자에서 여기저기 건너뛰지 않는다.
+    /// 끝낸 사진과 남이 잠근 사진은 건너뛴다.
     /// </summary>
-    private Guid? NextToLabelInOrder(List<Guid> ordered, int index, Dictionary<Guid, ImageLabelState> byImage, CurrentUser user)
+    private IEnumerable<Guid> RemainingInOrder(List<Guid> ordered, int index, Dictionary<Guid, ImageLabelState> byImage, CurrentUser user)
     {
         for (int step = 1; step <= ordered.Count; step++)
         {
@@ -290,9 +294,8 @@ public sealed class LabelingService(
             var state = byImage.GetValueOrDefault(id);
             if (state is not null && state.Status is not (LabelStatus.Unlabeled or LabelStatus.InProgress)) continue;
             if (state is not null && IsLockedByOther(state, user)) continue;
-            return id;
+            yield return id;
         }
-        return null;
     }
 
     /// <summary>후보 모델의 추론 결과를 초기 라벨로 채워 넣는다 (개발 문서 §5.4 Active Learning)</summary>

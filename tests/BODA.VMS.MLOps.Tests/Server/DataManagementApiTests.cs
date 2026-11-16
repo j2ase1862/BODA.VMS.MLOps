@@ -814,6 +814,54 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         done.Labeled.Should().Be(3);
     }
 
+    /// <summary>
+    /// 고른 범위 없이 [저장하고 다음] 을 써도 격자 순서로 간다 (ML-09). 불확실도가 매겨지지 않은 동안
+    /// id 문자열 순서로 고르던 때는 격자에서 여기저기 뛰었다.
+    /// </summary>
+    [Fact]
+    public async Task Next_to_label_without_scope_follows_the_grid_order()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("격자 순서", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var ids = (await UploadAsync(eng,
+            ("g1.png", MakePng(64, 64, SKColors.Silver, 421)),
+            ("g2.png", MakePng(64, 64, SKColors.Sienna, 422)),
+            ("g3.png", MakePng(64, 64, SKColors.Teal, 423)),
+            ("g4.png", MakePng(64, 64, SKColors.Olive, 424)),
+            ("g5.png", MakePng(64, 64, SKColors.Navy, 425)))).Results.Select(r => r.Image.Id).ToArray();
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest(ids), Json);
+
+        var order = new List<Guid>();
+        for (Guid? at = null; ;)
+        {
+            var q = await eng.GetFromJsonAsync<LabelQueueDto>(
+                $"/api/datasets/{dataset.Id}/label-queue{(at is null ? "" : $"?current={at}")}", Json);
+            if (q!.Next is not { } n) break;
+            order.Add(n);
+            at = n;
+        }
+        order.Should().HaveCount(5);
+
+        Task<LabelQueueDto?> Queue(Guid? current) => eng.GetFromJsonAsync<LabelQueueDto>(
+            $"/api/datasets/{dataset.Id}/label-queue{(current is null ? "" : $"?current={current}")}", Json);
+
+        (await Queue(null))!.NextToLabel.Should().Be(order[0], "막 들어오면 격자 첫 장부터");
+        for (int i = 0; i < order.Count - 1; i++)
+            (await Queue(order[i]))!.NextToLabel.Should().Be(order[i + 1], "격자에서 바로 다음 장");
+
+        // 끝낸 사진은 건너뛰고, 끝에 닿으면 앞의 남은 것으로 돌아간다
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{order[3]}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.2, 0.2)], true), Json);
+        (await Queue(order[2]))!.NextToLabel.Should().Be(order[4]);
+        (await Queue(order[4]))!.NextToLabel.Should().Be(order[0]);
+
+        // 예전 단독 엔드포인트도 같은 순서를 따른다
+        (await eng.GetFromJsonAsync<NextImageDto>($"/api/datasets/{dataset.Id}/next-to-label?after={order[1]}", Json))!
+            .ImageId.Should().Be(order[2]);
+    }
+
     /// <summary>사진이 하나도 없는 데이터셋은 갈 곳이 없다 — 그때만 화면이 오류를 낸다.</summary>
     [Fact]
     public async Task Label_queue_of_an_empty_dataset_has_nowhere_to_go()
