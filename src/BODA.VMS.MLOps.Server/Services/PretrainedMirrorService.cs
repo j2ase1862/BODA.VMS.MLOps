@@ -62,9 +62,18 @@ public sealed partial class PretrainedMirrorService(
         return ToDto(asset);
     }
 
+    /// <summary>
+    /// 자산을 지운다. 대기 중이거나 도는 학습이 이 가중치를 쓰고 있으면 막는다 — 워커가 받으려는 순간
+    /// 파일이 사라져 그 학습이 준비 단계에서 실패한다 (ML-26). 끝난 학습은 막지 않는다(화면이 확인 창에서 알린다).
+    /// </summary>
     public async Task DeleteAsync(string @ref, CurrentUser user, CancellationToken ct)
     {
         var asset = await db.PretrainedAssets.FirstOrDefaultAsync(a => a.Ref == @ref, ct) ?? throw ApiException.NotFound("사전학습 자산");
+        var states = await db.TrainingJobs.AsNoTracking().Where(j => j.PretrainedRef == @ref).Select(j => j.State).ToListAsync(ct);
+        var active = states.Count(s => !Core.Domain.TrainingJobStateMachine.IsTerminal(s));
+        if (active > 0)
+            throw ApiException.Conflict(ErrorCodes.Validation,
+                $"이 가중치를 쓰는 학습 {active}건이 대기 중이거나 도는 중입니다. 끝나거나 취소한 뒤 지우세요.");
         foreach (var f in Mapping.Json(asset.FilesJson, new List<FileEntry>()))
             await storage.DeleteAsync(StorageKeys.Pretrained(@ref, f.FileName), ct);
         db.PretrainedAssets.Remove(asset);

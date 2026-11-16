@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @inject MlopsApi Api
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>사전학습 미러 · MLOps</PageTitle>
 
@@ -175,8 +176,19 @@ else
         finally { _uploadingRef = null; }
     }
 
+    /// <summary>
+    /// 되돌릴 수 없으므로 먼저 묻는다 (ML-26). 대기 중이거나 도는 학습이 쓰고 있으면 서버가 거절한다.
+    /// </summary>
     private async Task DeleteAsync(string @ref)
     {
+        var asset = _assets.FirstOrDefault(a => a.Ref == @ref);
+        var ok = await Dialogs.ShowMessageBox("사전학습 자산 삭제",
+            $"'{@ref}' 와 그 파일 {asset?.Files.Count ?? 0}개({Display.Size(asset?.TotalBytes ?? 0)})를 지웁니다. 되돌릴 수 없습니다. "
+            + "이 가중치로 돌린 지난 학습은 같은 설정으로 다시 돌릴 수 없게 됩니다. "
+            + "대기 중이거나 도는 학습이 쓰고 있으면 지워지지 않습니다.",
+            yesText: "삭제", cancelText: "취소");
+        if (ok != true) return;
+
         try
         {
             await Api.DeletePretrainedAsync(@ref);

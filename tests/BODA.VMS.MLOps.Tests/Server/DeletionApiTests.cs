@@ -167,6 +167,34 @@ public class DeletionApiTests : IClassFixture<MlopsApiFactory>
     }
 
     /// <summary>
+    /// 대기 중이거나 도는 학습이 쓰는 사전학습 자산은 지워지지 않는다 (ML-26) — 워커가 받으려는 순간
+    /// 파일이 사라지면 그 학습이 준비 단계에서 실패한다. 학습이 끝나면(여기서는 취소) 지워진다.
+    /// </summary>
+    [Fact]
+    public async Task Pretrained_asset_in_use_by_a_waiting_job_cannot_be_deleted()
+    {
+        var admin = await _f.AdminAsync();
+        var eng = await _f.EngineerAsync();
+        var @ref = await EnsurePretrainedAsync(admin, "dfine-del-guard-test");
+
+        var model = await CreateModelAsync(eng, "m-pretrained-guard");
+        var ds = await UploadDatasetAsync(eng, "ds-pretrained-guard", zip: MakeYoloDatasetZip(41));
+        var job = (await (await eng.PostAsJsonAsync("/api/training-jobs",
+            new CreateTrainingJobRequest(ds.Id, model.Id, TrainingScript.TrainDfine, PretrainedRef: @ref,
+                Hyperparams: JsonDocument.Parse("""{"epochs": 2}""").RootElement.Clone()), Json))
+            .Content.ReadFromJsonAsync<TrainingJobDto>(Json))!;
+
+        var blocked = await admin.DeleteAsync($"/api/pretrained/{@ref}");
+        blocked.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await ErrorAsync(blocked))!.Message.Should().Contain("1건");
+
+        (await eng.PostAsJsonAsync($"/api/training-jobs/{job.Id}/cancel", new CancelJobRequest("guard test"), Json))
+            .EnsureSuccessStatusCode();
+        (await admin.DeleteAsync($"/api/pretrained/{@ref}")).IsSuccessStatusCode.Should().BeTrue();
+        (await admin.GetAsync($"/api/pretrained/{@ref}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
     /// 라인이 받아 갈 수 있는 버전(Staging·Production)은 지워지지 않고, 한 번 나갔던 것(Retired)은 Admin 만 지운다.
     /// 레시피가 묶고 있어도 막는다.
     /// </summary>
