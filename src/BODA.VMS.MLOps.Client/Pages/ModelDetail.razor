@@ -22,7 +22,13 @@ else
 
     <div class="d-flex justify-space-between align-start mb-4">
         <div>
-            <MudText Typo="Typo.h5" HtmlTag="h1">@_model.Name</MudText>
+            <MudText Typo="Typo.h5" HtmlTag="h1">
+                @_model.Name
+                @if (_model.IsArchived)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Dark" Class="ml-2">보관됨</MudChip>
+                }
+            </MudText>
             <MudText Typo="Typo.body2" Class="mud-text-secondary">
                 @Display.TaskTypeText(_model.TaskType) · 클래스 [@string.Join(", ", _model.Classes)]
             </MudText>
@@ -38,6 +44,13 @@ else
                 <MudTooltip Text="이름 변경">
                     <MudIconButton Icon="@Icons.Material.Filled.DriveFileRenameOutline" aria-label="이름 변경"
                                    Disabled="@_busy" OnClick="OpenRename" />
+                </MudTooltip>
+                @* 보관은 API 로만 할 수 있었다 (ML-24). 서버 권한(Engineer 이상)과 같은 사람에게만 보인다. *@
+                <MudTooltip Text="@(_model.IsArchived ? "보관을 풀어 모델 목록에 다시 보입니다" : "모델 목록에서 숨깁니다 — 버전·라인 배포는 그대로입니다")">
+                    <MudButton Variant="Variant.Outlined" Disabled="@_busy" OnClick="ToggleArchiveAsync"
+                               StartIcon="@(_model.IsArchived ? Icons.Material.Filled.Unarchive : Icons.Material.Filled.Archive)">
+                        @(_model.IsArchived ? "보관 풀기" : "보관")
+                    </MudButton>
                 </MudTooltip>
                 @* 버전이 하나라도 있으면 서버가 막는다 — 그때는 버튼을 아예 보이지 않는다 *@
                 @if (!_loadingVersions && _versions.Count == 0)
@@ -517,6 +530,33 @@ else
             Snackbar.Add($"이름을 '{_model.Name}' 으로 바꿨습니다", Severity.Success);
         }
         catch (MlopsApiException ex) { _renameError = ex.Describe(); }
+        finally { _busy = false; }
+    }
+
+    /// <summary>
+    /// 보관 / 보관 풀기 (ML-24). 목록에서 숨기기만 한다 — 버전·스테이지·라인 배포는 그대로라 되돌릴 수 있다.
+    /// 운영 중인 버전이 있으면 숨겨도 라인은 계속 그 버전을 받으므로 한 번 더 묻는다.
+    /// </summary>
+    private async Task ToggleArchiveAsync()
+    {
+        if (_model is null) return;
+        var archive = !_model.IsArchived;
+        if (archive && _versions.Any(v => v.Stage is ModelStage.Production or ModelStage.Staging))
+        {
+            var ok = await Dialogs.ShowMessageBox("모델 계열 보관",
+                $"'{_model.Name}' 에 스테이징·운영 버전이 있습니다. 보관해도 라인은 계속 그 버전을 받고, 모델 목록에서만 숨겨집니다.",
+                yesText: "보관", cancelText: "취소");
+            if (ok != true) return;
+        }
+
+        _busy = true;
+        try
+        {
+            _model = await Api.UpdateModelAsync(_model.Id, new UpdateModelRequest(IsArchived: archive));
+            Snackbar.Add(archive ? $"'{_model.Name}' 을 보관했습니다 — 모델 목록의 '보관된 모델' 에서 볼 수 있습니다"
+                                 : $"'{_model.Name}' 의 보관을 풀었습니다", Severity.Success);
+        }
+        catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
         finally { _busy = false; }
     }
 
