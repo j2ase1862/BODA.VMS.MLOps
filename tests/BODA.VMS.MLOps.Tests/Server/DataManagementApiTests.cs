@@ -334,6 +334,11 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         edited.Status.Should().Be(LabelStatus.Labeled);
         edited.ReviewedBy.Should().BeNull();
 
+        // 검토 전(라벨 완료)이라도 반려하면 '작업 중' 으로 돌아간다 (ML-08)
+        var rejected = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/review",
+            new ReviewRequest(false), Json)).Content.ReadFromJsonAsync<ImageLabelsDto>(Json))!;
+        rejected.Status.Should().Be(LabelStatus.InProgress);
+
         // 라벨러는 검토할 수 없다
         var labeler = await _f.ClientAsAsync("labeler-4", "Labeler");
         (await labeler.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/review", new ReviewRequest(true), Json))

@@ -248,8 +248,12 @@
                 <div class="d-flex gap-2 mt-3">
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
                                Disabled="@(!CanApprove)" OnClick="@(() => ReviewAsync(true))">검토 승인</MudButton>
-                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
-                               Disabled="@(_labels?.Status != LabelStatus.Reviewed)" OnClick="@(() => ReviewAsync(false))">반려</MudButton>
+                    @* 라벨 완료도 돌려보낼 수 있다 — 검토 전에 틀린 것을 봤을 때 '작업 중' 으로 되돌린다 (ML-08) *@
+                    <MudTooltip Text="'작업 중' 으로 되돌려 다시 라벨링하게 합니다. 누가 언제 반려했는지 감사 로그에 남습니다">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                   Disabled="@(_labels?.Status is not (LabelStatus.Labeled or LabelStatus.Reviewed))"
+                                   OnClick="@(() => ReviewAsync(false))">반려</MudButton>
+                    </MudTooltip>
                 </div>
             </AuthorizeView>
         </MudPaper>
@@ -320,8 +324,48 @@
     private bool ReadOnly => _labels is { LockedByMe: false, LockedBy: not null };
     private Color StatusColor => Display.LabelStatusColor(_labels?.Status ?? LabelStatus.Unlabeled);
 
+    // ───────────── 잠금 연장 (ML-06) ─────────────
+    // 잠금은 10분(Mlops:LabelLockMinutes)이고 저장할 때만 늘었다. 오래 들여다보고만 있으면 잠금이 풀려
+    // 남이 가져가고, 그 뒤 내 저장은 거절됐다. 화면이 열려 있는 동안 몇 분마다 같은 잠금 요청으로 늘린다.
+    // 서버는 그대로다 — 잠금 요청이 곧 연장이다.
+    private static readonly TimeSpan LockRenewEvery = TimeSpan.FromMinutes(4);
+    private readonly CancellationTokenSource _lifetime = new();
+
+    private async Task RenewLockLoopAsync()
+    {
+        using var timer = new PeriodicTimer(LockRenewEvery);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_lifetime.Token))
+            {
+                if (ImageId is not { } id || _labels is not { LockedByMe: true } || _saving) continue;
+                try
+                {
+                    var renewed = await Api.LockImageAsync(DatasetId, id);
+                    // 잠금 칸만 새로 받는다. 라벨은 화면에 고치던 것이 있으므로 덮어쓰지 않는다.
+                    if (ImageId == id) _labels = renewed;
+                }
+                catch (MlopsApiException ex) when (ex.Status == System.Net.HttpStatusCode.Conflict)
+                {
+                    // 그사이 남이 가져갔다 — 읽기 전용으로 바꾸고 알린다 (저장해도 거절된다)
+                    if (ImageId == id)
+                    {
+                        _labels = await Api.LabelsAsync(DatasetId, id);
+                        if (_module is not null) await _module.InvokeVoidAsync("setReadOnly", CanvasId, ReadOnly);
+                        Snackbar.Add(ex.Message, Severity.Warning);
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch (MlopsApiException) { /* 다음 차례에 다시 해 본다 */ }
+                catch (HttpRequestException) { }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        _ = RenewLockLoopAsync();
         _self = DotNetObjectReference.Create(this);
         _samStatus = await Api.SamStatusAsync();
         try
@@ -827,6 +871,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         try
         {
             if (ImageId is { } id && _labels?.LockedByMe == true) await Api.UnlockImageAsync(DatasetId, id);

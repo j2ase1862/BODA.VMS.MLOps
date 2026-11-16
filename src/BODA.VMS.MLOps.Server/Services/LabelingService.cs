@@ -144,6 +144,7 @@ public sealed class LabelingService(
         await EnsureMemberAsync(datasetId, imageId, ct);
 
         var state = await LoadOrCreateStateAsync(datasetId, imageId, ct);
+        var before = state.Status;
         if (approved)
         {
             if (state.Status is LabelStatus.Unlabeled)
@@ -160,7 +161,9 @@ public sealed class LabelingService(
             state.ReviewedAt = null;
         }
         await SaveStateAsync(ct);
-        audit.Record(AuditService.Dataset, approved ? "LabelApproved" : "LabelRejected", user.Name, imageId.ToString(), new { datasetId });
+        // 반려는 라벨 완료·검토 완료 어느 쪽에서도 온다 (ML-08) — 어디서 되돌렸는지 함께 남긴다.
+        audit.Record(AuditService.Dataset, approved ? "LabelApproved" : "LabelRejected", user.Name, imageId.ToString(),
+            new { datasetId, from = before.ToString(), to = state.Status.ToString() });
         await db.SaveChangesAsync(ct);
 
         var annotations = await db.Annotations.AsNoTracking()
