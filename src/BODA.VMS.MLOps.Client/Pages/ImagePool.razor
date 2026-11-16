@@ -148,7 +148,7 @@ else
         <MudSelect T="Guid?" @bind-Value="_targetDatasetId" Label="데이터셋" Margin="Margin.Dense">
             @foreach (var d in _datasets)
             {
-                <MudSelectItem T="Guid?" Value="@d.Id">@d.Name (@d.TaskType, @d.Classes.Length 클래스)</MudSelectItem>
+                <MudSelectItem T="Guid?" Value="@d.Id">@d.Name (@Display.TaskTypeText(d.TaskType), 클래스 @(d.Classes.Length)개)</MudSelectItem>
             }
         </MudSelect>
         <MudSelect T="DatasetSplit" @bind-Value="_targetSplit" Label="분할" Margin="Margin.Dense" Class="mt-2">
