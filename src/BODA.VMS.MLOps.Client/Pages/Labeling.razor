@@ -251,15 +251,17 @@
     </MudItem>
 </MudGrid>
 
-<MudDialog @bind-Visible="_textOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+<MudDialog Visible="_textOpen" VisibleChanged="OnTextDialogVisibleChanged"
+           Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">텍스트 입력</MudText></TitleContent>
     <DialogContent>
         <MudTextField @bind-Value="_textValue" Label="인식 문자열" Immediate="true" AutoFocus="true"
-                      HelperText="이 영역이 담고 있는 글자를 그대로 적습니다" />
+                      HelperText="@(_textIsNew ? "이 영역이 담고 있는 글자를 그대로 적습니다. 취소하면 방금 그린 상자를 지웁니다" : "이 영역이 담고 있는 글자를 그대로 적습니다")" />
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="@(() => _textOpen = false)">취소</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="ApplyTextAsync">적용</MudButton>
+        <MudButton OnClick="CancelTextAsync">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@string.IsNullOrEmpty(_textValue)"
+                   OnClick="ApplyTextAsync">적용</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -303,6 +305,8 @@
     private bool _textOpen;
     private string _textValue = "";
     private int _textIndex = -1;
+    // 방금 그린 OCR 상자의 글자를 받는 중인가 — 그때 취소하면 글자 없는 상자가 남지 않게 지운다
+    private bool _textIsNew;
 
     private IJSObjectReference? _module;
     private DotNetObjectReference<Labeling>? _self;
@@ -467,6 +471,7 @@
     {
         _textIndex = index;
         _textValue = index >= 0 && index < _annotations.Count ? _annotations[index].Text ?? "" : "";
+        _textIsNew = true;
         _textOpen = true;
         StateHasChanged();
         return Task.CompletedTask;
@@ -595,15 +600,40 @@
     {
         _textIndex = index;
         _textValue = _annotations[index].Text ?? "";
+        _textIsNew = false;
         _textOpen = true;
         await Task.CompletedTask;
     }
 
     private async Task ApplyTextAsync()
     {
+        if (string.IsNullOrEmpty(_textValue)) return;
         if (_module is not null && _textIndex >= 0)
             await _module.InvokeVoidAsync("setText", CanvasId, _textIndex, _textValue);
         _textOpen = false;
+        _textIsNew = false;
+    }
+
+    /// <summary>
+    /// 글자 입력을 그만둔다. 방금 그린 상자라면 글자 없이 남기지 않고 지운다 —
+    /// 글자 없는 OCR 라벨은 서버가 거절하므로, 남겨 두면 저장과 ←/→ 이동이 막힌다 (ML-07).
+    /// 이미 글자가 있던 상자를 고치다 그만두면 그대로 둔다.
+    /// </summary>
+    private async Task CancelTextAsync()
+    {
+        _textOpen = false;
+        var index = _textIndex;
+        var wasNew = _textIsNew;
+        _textIsNew = false;
+        if (!wasNew || _module is null || index < 0 || index >= _annotations.Count) return;
+        if (_annotations[index] is { Shape: AnnotationShape.Text, Text: null or "" })
+            await DeleteAsync(index);
+    }
+
+    /// <summary>바깥을 누르거나 Esc 로 닫혀도 [취소] 와 같다.</summary>
+    private async Task OnTextDialogVisibleChanged(bool visible)
+    {
+        if (!visible && _textOpen) await CancelTextAsync();
     }
 
     private async Task ZoomAsync(double factor)
