@@ -29,7 +29,7 @@ else
         </MudItem>
         <MudItem xs="12" sm="6" md="3">
             <StatCard Title="진행 중인 학습" Value="@_active.Count.ToString()" Icon="@Icons.Material.Filled.ModelTraining"
-                      Sub="@($"대기 {_jobs.Count(j => j.State == TrainingJobState.Queued)}건")" Href="/training" />
+                      Sub="@($"대기 {_queuedCount}건")" Href="/training" />
         </MudItem>
         <MudItem xs="12" sm="6" md="3">
             <StatCard Title="데이터셋 버전" Value="@_datasets.Count.ToString()" Icon="@Icons.Material.Filled.FolderZip"
@@ -150,6 +150,7 @@ else
     private List<DatasetVersionDto> _datasets = [];
     private List<WorkerDto> _disabled = [];
     private List<TrainingJobDto> _active = [];
+    private int _queuedCount;
     private ModelMonitorReportDto? _monitor;
     private bool _loading = true;
     private string? _error;
@@ -167,8 +168,14 @@ else
             _monitor = await Api.MonitorModelsAsync();
 
             _disabled = _workers.Where(w => w.Status == WorkerStatus.Disabled).ToList();
-            _active = _jobs.Where(j => j.State is not (TrainingJobState.Queued or TrainingJobState.Succeeded
-                or TrainingJobState.Failed or TrainingJobState.Cancelled)).ToList();
+
+            // 진행 중·대기 건수는 최근 20건이 아니라 상태별로 따로 센다 — 대기열이 길면 20건 밖의 학습이 빠졌다 (ML-27).
+            // 목록 API 가 상태 하나씩만 거르므로 끝나지 않은 상태마다 묻는다(그 수는 많지 않다).
+            _active = [];
+            foreach (var state in Enum.GetValues<TrainingJobState>()
+                         .Where(s => s != TrainingJobState.Queued && !TrainingJobStateMachine.IsTerminal(s)))
+                _active.AddRange(await Safe(() => Api.JobsAsync(state: state, take: 1000), []));
+            _queuedCount = (await Safe(() => Api.JobsAsync(state: TrainingJobState.Queued, take: 1000), [])).Count;
         }
         catch (Exception ex)
         {
