@@ -306,6 +306,34 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
             .StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// 거의 같은 사진을 올리면 업로드 결과에 비슷한 사진의 이름이 실린다 — 화면이 그것으로 알린다 (ML-12).
+    /// 사진은 그대로 올라간다(자동 제외 없음).
+    /// </summary>
+    [Fact]
+    public async Task Near_duplicate_upload_is_reported_but_kept()
+    {
+        var eng = await _f.EngineerAsync();
+        static byte[] Pattern(bool nudge)
+        {
+            using var bitmap = new SKBitmap(160, 120);
+            for (int y = 0; y < 120; y++)
+                for (int x = 0; x < 160; x++)
+                    bitmap.SetPixel(x, y, new SKColor((byte)(x * 3 % 256), (byte)((y * 7 + x) % 256), (byte)((x * y) % 256)));
+            if (nudge) bitmap.SetPixel(3, 3, SKColors.White);   // 바이트는 다르고 눈으로는 같은 사진
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            return data.ToArray();
+        }
+
+        var first = (await UploadAsync(eng, ("near-a.png", Pattern(false)))).Results.Single();
+        var second = (await UploadAsync(eng, ("near-b.png", Pattern(true)))).Results.Single();
+
+        second.Created.Should().BeTrue("비슷해도 다른 파일이라 올라간다");
+        second.Image.Id.Should().NotBe(first.Image.Id);
+        second.NearDuplicateOf.Should().Be("near-a.png");
+    }
+
     [Fact]
     public async Task Review_marks_labels_and_editing_them_clears_it()
     {
