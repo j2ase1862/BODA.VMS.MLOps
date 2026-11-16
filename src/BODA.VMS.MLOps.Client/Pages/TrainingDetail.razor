@@ -69,7 +69,9 @@ else
         @* 검사에 GPU 를 내준 것은 실패가 아니다 — 빨간 경고로 보이면 사람이 "학습이 깨졌다" 로 읽는다 *@
         var yielded = _job.FailureKind == FailureKinds.YieldedToInspection;
         <MudAlert Severity="@(_job.State == TrainingJobState.Cancelled || yielded ? Severity.Info : Severity.Error)" Class="mb-4">
-            <MudText Typo="Typo.subtitle2">@(yielded ? "검사에 GPU 를 내줌" : _job.FailureKind ?? "오류")</MudText>
+            <MudText Typo="Typo.subtitle2">
+                @(_job.State == TrainingJobState.Cancelled && _job.FailureKind is null ? "취소됨" : Display.FailureKindText(_job.FailureKind))
+            </MudText>
             <MudText Typo="Typo.body2">@err</MudText>
             @if (_job.FailureKind == FailureKinds.WorkerLost)
             {

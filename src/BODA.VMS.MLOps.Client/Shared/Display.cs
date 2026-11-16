@@ -1,3 +1,4 @@
+using BODA.VMS.MLOps.Contracts.Training;
 using BODA.VMS.MLOps.Core.Domain;
 using MudBlazor;
 
@@ -118,6 +119,25 @@ public static class Display
     }
 
     public static string ScriptText(TrainingScript s) => s.FileName();
+
+    /// <summary>
+    /// 학습이 멈춘 까닭. 서버가 주는 값은 기록·필터용 코드라 그대로 보이면 사람이 읽을 수 없다 (ML-19).
+    /// 모르는 코드는 그대로 보여 준다 — 숨기면 새 실패 종류가 생겼을 때 아무 단서도 남지 않는다.
+    /// </summary>
+    public static string FailureKindText(string? kind) => kind switch
+    {
+        null or "" => "오류",
+        FailureKinds.WorkerLost => "워커 연결이 끊김",
+        FailureKinds.ScriptError => "학습 중 오류",
+        FailureKinds.Stalled => "진행이 멈춤",
+        FailureKinds.Timeout => "제한 시간 넘음",
+        FailureKinds.PrepareError => "학습 준비 실패",
+        FailureKinds.UploadError => "결과 올리기 실패",
+        FailureKinds.AckTimeout => "워커가 작업을 받지 않음",
+        FailureKinds.Oom => "GPU 메모리 부족",
+        FailureKinds.YieldedToInspection => "검사에 GPU 를 내줌",
+        _ => kind,
+    };
 
     // ───────────── 데이터 관리·라벨링 ─────────────
 
