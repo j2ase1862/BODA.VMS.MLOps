@@ -56,8 +56,9 @@
                     아직 자를 자리를 그리지 않았습니다. 사진 위에서 끌어 사각형을 그리세요.
                 </MudAlert>
             }
-            else if (_roi is { } small && PixelW(small) < 64 && PixelH(small) < 64)
+            else if (_roi is { } small && (PixelW(small) < 64 || PixelH(small) < 64))
             {
+                @* 한 변만 짧아도 학습 입력으로 늘리면 그 방향이 뭉개진다 — 30×500 도 경고한다 (ML-11) *@
                 <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
                     자른 크기가 너무 작습니다 (@(PixelW(small))×@(PixelH(small))). 학습 입력으로 쓰기 어렵습니다.
                 </MudAlert>
