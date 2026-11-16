@@ -68,6 +68,7 @@ builder.Services.AddSingleton<IArtifactStorage>(sp =>
 builder.Services.AddSingleton<ScriptManifestService>();
 builder.Services.AddSingleton<IMlopsNotifier, SignalRNotifier>();
 builder.Services.AddScoped<AuditService>();
+builder.Services.AddScoped<AuditQueryService>();
 builder.Services.AddScoped<ModelRegistryService>();
 builder.Services.AddScoped<BindingService>();
 builder.Services.AddScoped<WorkerRegistryService>();
@@ -291,6 +292,7 @@ api.MapLineEndpoints();
 api.MapMemberEndpoints();
 api.MapSamEndpoints();
 api.MapMonitoringEndpoints();
+api.MapAuditEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");
 app.MapHub<TrainingHub>("/hubs/training");

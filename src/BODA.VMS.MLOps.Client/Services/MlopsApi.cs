@@ -78,6 +78,19 @@ public sealed class MlopsApi(HttpClient http)
 
     public Task<List<ModelBindingDto>> BindingsAsync(string recipeId) => GetAsync<List<ModelBindingDto>>($"/api/recipes/{Uri.EscapeDataString(recipeId)}/model-bindings");
 
+    /// <summary>감사 로그 (Admin). 기간은 UTC — to 는 그 시각을 넣지 않는다.</summary>
+    public Task<BODA.VMS.MLOps.Contracts.Audit.AuditLogPageDto> AuditAsync(DateTime? fromUtc, DateTime? toUtc,
+        string? category, string? action, string? actor, int skip, int take)
+    {
+        var q = $"/api/audit?skip={skip}&take={take}";
+        if (fromUtc is { } f) q += $"&from={Uri.EscapeDataString(f.ToString("O"))}";
+        if (toUtc is { } t) q += $"&to={Uri.EscapeDataString(t.ToString("O"))}";
+        if (!string.IsNullOrWhiteSpace(category)) q += $"&category={Uri.EscapeDataString(category)}";
+        if (!string.IsNullOrWhiteSpace(action)) q += $"&action={Uri.EscapeDataString(action.Trim())}";
+        if (!string.IsNullOrWhiteSpace(actor)) q += $"&actor={Uri.EscapeDataString(actor.Trim())}";
+        return GetAsync<BODA.VMS.MLOps.Contracts.Audit.AuditLogPageDto>(q);
+    }
+
     /// <summary>운영 웹의 레시피 목록 (읽기 전용으로 당겨 옴). 못 받으면 Available=false 와 이유.</summary>
     public Task<WebRecipeListDto> WebRecipesAsync() => GetAsync<WebRecipeListDto>("/api/recipes");
     public Task<ModelBindingDto> SetBindingAsync(string recipeId, string toolId, SetBindingRequest req) =>
