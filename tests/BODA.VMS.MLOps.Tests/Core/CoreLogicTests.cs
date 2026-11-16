@@ -197,6 +197,38 @@ public class HyperparamWhitelistTests
         missing.Should().BeEmpty($"{script.FileName()} 의 argparse 에 없는 화이트리스트 키");
     }
 
+    /// <summary>
+    /// 학습 창의 흐린 기본값(placeholder)은 "비우면 이 값" 이라는 약속이다. 스크립트 argparse 기본값과 다르면
+    /// 사람이 본 값과 다른 설정으로 학습이 돈다 — YOLO 칸에 60 이 보이는데 100 에폭을 돌았다 (ML-21).
+    /// </summary>
+    [Theory]
+    [InlineData(TrainingScript.TrainDfine)]
+    [InlineData(TrainingScript.TrainYolo)]
+    [InlineData(TrainingScript.TrainClassifier)]
+    [InlineData(TrainingScript.TrainAnomaly)]
+    [InlineData(TrainingScript.TrainPpocr)]
+    [InlineData(TrainingScript.TrainRfdetrSeg)]
+    public void Default_hints_match_script_argparse_defaults(TrainingScript script)
+    {
+        var source = File.ReadAllText(Path.Combine(RepoScriptsDir(), script.FileName()));
+        var mismatched = new List<string>();
+        foreach (var spec in HyperparamWhitelist.For(script).Where(s => s.Default is not null))
+        {
+            // add_argument("--key", ... default=값 ...) — 한 호출이 여러 줄에 걸칠 수 있다
+            var m = System.Text.RegularExpressions.Regex.Match(source,
+                $@"add_argument\(\s*[""']--{System.Text.RegularExpressions.Regex.Escape(spec.Key)}[""'][^)]*?default\s*=\s*([^,\)\s]+)",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            if (!m.Success) { mismatched.Add($"{spec.Key}: 스크립트에 기본값 없음"); continue; }
+            var scriptValue = m.Groups[1].Value.Trim('"', '\'');
+            bool same = double.TryParse(scriptValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var a)
+                        && double.TryParse(spec.Default, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var b)
+                ? Math.Abs(a - b) <= 1e-12 * Math.Max(1, Math.Abs(a))
+                : scriptValue == spec.Default;
+            if (!same) mismatched.Add($"{spec.Key}: 화면 {spec.Default} · 스크립트 {scriptValue}");
+        }
+        mismatched.Should().BeEmpty($"{script.FileName()} 의 기본값과 화면 기본값이 같아야 한다");
+    }
+
     [Fact]
     public void Dfine_patience_is_accepted_and_bounded()
     {
