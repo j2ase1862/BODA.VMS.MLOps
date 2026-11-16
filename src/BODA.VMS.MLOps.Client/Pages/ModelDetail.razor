@@ -149,7 +149,12 @@ else
                     <tr><td>규약</td><td>@Display.FormatText(_detail.Format)</td></tr>
                     <tr><td>입력 크기</td><td>@(_detail.InputSize?.ToString() ?? "—")</td></tr>
                     <tr><td>클래스</td><td>@string.Join(", ", _detail.Classes)</td></tr>
-                    <tr><td>검증</td><td>@(_detail.ValidationStatus ?? "미실행")</td></tr>
+                    @* 검증 상태를 채우는 코드가 아직 없어 늘 "미실행" 이었다 (ML-23). 값이 있을 때만 보인다 —
+                       채우는 쪽이 생기면 그대로 나타난다. *@
+                    @if (!string.IsNullOrWhiteSpace(_detail.ValidationStatus))
+                    {
+                        <tr><td>검증</td><td>@_detail.ValidationStatus</td></tr>
+                    }
                 </tbody>
             </MudSimpleTable>
 
