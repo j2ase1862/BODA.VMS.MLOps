@@ -77,6 +77,9 @@ public sealed class MlopsApi(HttpClient http)
     // ───────────── 바인딩 ─────────────
 
     public Task<List<ModelBindingDto>> BindingsAsync(string recipeId) => GetAsync<List<ModelBindingDto>>($"/api/recipes/{Uri.EscapeDataString(recipeId)}/model-bindings");
+
+    /// <summary>운영 웹의 레시피 목록 (읽기 전용으로 당겨 옴). 못 받으면 Available=false 와 이유.</summary>
+    public Task<WebRecipeListDto> WebRecipesAsync() => GetAsync<WebRecipeListDto>("/api/recipes");
     public Task<ModelBindingDto> SetBindingAsync(string recipeId, string toolId, SetBindingRequest req) =>
         SendJsonAsync<SetBindingRequest, ModelBindingDto>(HttpMethod.Put, $"/api/recipes/{Uri.EscapeDataString(recipeId)}/tools/{Uri.EscapeDataString(toolId)}/model", req);
     public Task<ModelBindingDto> RollbackBindingAsync(Guid bindingId, RollbackRequest req) =>

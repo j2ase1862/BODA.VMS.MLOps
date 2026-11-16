@@ -12,6 +12,11 @@ public static class BindingEndpoints
     {
         var recipes = api.MapGroup("/recipes").WithTags("Bindings");
 
+        // 운영 웹의 레시피 목록 — 부른 사람의 토큰으로 그쪽 읽기 API 를 당겨 온다 (ML-02). 못 받으면 이유만 돌려준다.
+        recipes.MapGet("/", async (HttpRequest request, ClaimsPrincipal p, WebRecipeDirectoryClient web, CancellationToken ct) =>
+            Results.Ok(await web.ListAsync(p, request.Headers.Authorization.ToString() is { Length: > 0 } h ? h : null, ct)))
+            .RequireAuthorization(Policies.Viewer);
+
         recipes.MapPut("/{recipeId}/tools/{toolId}/model",
             async (string recipeId, string toolId, SetBindingRequest req, BindingService svc, ClaimsPrincipal p, CancellationToken ct) =>
                 Results.Ok(await svc.SetAsync(recipeId, toolId, req, CurrentUser.From(p), ct)))

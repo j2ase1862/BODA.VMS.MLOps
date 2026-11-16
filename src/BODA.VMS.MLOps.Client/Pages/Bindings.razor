@@ -21,7 +21,18 @@
 
 <MudPaper Class="pa-3 mb-4" Elevation="0" Outlined="true">
     <div class="d-flex flex-wrap gap-3 align-center">
-        <MudTextField @bind-Value="_recipeId" Label="레시피 ID" Immediate="true" Margin="Margin.Dense" Style="min-width:260px"
+        @if (_webRecipes is { Available: true, Recipes.Count: > 0 })
+        {
+            @* 운영 웹에서 당겨 온 레시피에서 고른다 (ML-02). 고르면 ID 칸이 채워지고 바로 조회한다. *@
+            <MudSelect T="string" Value="@_pickedRecipe" ValueChanged="PickRecipeAsync" Label="운영 웹 레시피에서 고르기"
+                       Margin="Margin.Dense" Clearable="true" Style="min-width:280px">
+                @foreach (var r in _webRecipes.Recipes)
+                {
+                    <MudSelectItem T="string" Value="@r.RecipeId">@r.ClientName · @r.Name (ID @r.RecipeId)</MudSelectItem>
+                }
+            </MudSelect>
+        }
+        <MudTextField @bind-Value="_recipeId" Label="레시피 ID" Immediate="true" Margin="Margin.Dense" Style="min-width:200px"
                       OnKeyUp="@(e => { if (e.Key == "Enter") _ = LoadAsync(); })" />
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
                    Disabled="@(string.IsNullOrWhiteSpace(_recipeId) || _loading)" OnClick="LoadAsync">조회</MudButton>
@@ -30,6 +41,10 @@
                        Disabled="@string.IsNullOrWhiteSpace(_recipeId)" OnClick="OpenBindAsync">도구에 모델 연결</MudButton>
         </AuthorizeView>
     </div>
+    @if (_webRecipes is { Available: false, Message: { } why })
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1">@why</MudText>
+    }
 </MudPaper>
 
 @if (_error is not null)
@@ -124,9 +139,11 @@ else if (_searched)
 <MudDialog @bind-Visible="_bindOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">도구에 모델 연결</MudText></TitleContent>
     <DialogContent>
-        <MudTextField Value="@_recipeId" Label="레시피 ID" ReadOnly="true" />
-        <MudTextField @bind-Value="_toolId" Label="도구 ID" Class="mt-3" Immediate="true"
-                      HelperText="레시피 안 도구의 GUID" />
+        <MudTextField Value="@(RecipeLabel(_recipeId.Trim()))" Label="레시피" ReadOnly="true" />
+        @* 도구 목록은 운영 웹에 없다(도구는 VisionServer 소유) — 이 레시피에 이미 연결해 둔 도구만 제안하고, 나머지는 직접 넣는다 *@
+        <MudAutocomplete T="string" @bind-Value="_toolId" Label="도구 ID" Class="mt-3" CoerceValue="true"
+                         SearchFunc="SearchToolsAsync" ResetValueOnEmptyText="false"
+                         HelperText="레시피 안 도구의 GUID — 이 레시피에 연결한 적 있는 도구는 목록에서 고를 수 있습니다" />
         <MudSelect T="Guid?" Value="_bindModelId" ValueChanged="OnModelChangedAsync" Label="모델" Class="mt-3">
             @foreach (var m in _models)
             {
@@ -172,6 +189,37 @@ else if (_searched)
     private Guid? _bindModelId, _bindVersionId;
     private BindingMode _mode = BindingMode.FollowProduction;
     private string? _bindError;
+
+    // 운영 웹 레시피 목록 (ML-02) — 못 받으면 이유만 보이고 ID 직접 입력으로 쓴다
+    private WebRecipeListDto? _webRecipes;
+    private string? _pickedRecipe;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _webRecipes = await Api.WebRecipesAsync(); }
+        catch (MlopsApiException) { _webRecipes = null; }
+    }
+
+    private async Task PickRecipeAsync(string? recipeId)
+    {
+        _pickedRecipe = recipeId;
+        if (string.IsNullOrWhiteSpace(recipeId)) return;
+        _recipeId = recipeId;
+        await LoadAsync();
+    }
+
+    private string RecipeLabel(string recipeId) =>
+        _webRecipes?.Recipes.FirstOrDefault(r => r.RecipeId == recipeId) is { } r
+            ? $"{r.ClientName} · {r.Name} (ID {r.RecipeId})"
+            : recipeId;
+
+    private Task<IEnumerable<string>> SearchToolsAsync(string? text, CancellationToken _)
+    {
+        var known = _bindings.Select(b => b.ToolId).Distinct(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(text))
+            known = known.Where(t => t.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(known);
+    }
 
     private async Task LoadAsync()
     {
