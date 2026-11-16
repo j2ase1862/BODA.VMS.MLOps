@@ -103,7 +103,8 @@ public sealed class DatasetSnapshotService(
         var version = new DatasetVersion
         {
             Id = Guid.NewGuid(),
-            Name = string.IsNullOrWhiteSpace(name) ? $"{dataset.Name} {Now:yyyy-MM-dd HH:mm}" : name.Trim(),
+            // 이름에 박히는 시각은 사람이 읽는 것이라 서버 PC 의 현지 시각으로 쓴다 — UTC 로 쓰면 한국에서 9시간 이르게 보인다 (ML-05).
+            Name = string.IsNullOrWhiteSpace(name) ? $"{dataset.Name} {clock.GetLocalNow():yyyy-MM-dd HH:mm}" : name.Trim(),
             TaskType = dataset.TaskType,
             ExportFormat = format,
             ManifestHash = manifestHash,

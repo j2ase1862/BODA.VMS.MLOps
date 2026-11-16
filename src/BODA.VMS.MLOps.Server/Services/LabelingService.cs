@@ -377,8 +377,15 @@ public sealed class LabelingService(
     {
         if (IsLockedByOther(state, user))
             throw ApiException.Conflict(ErrorCodes.Validation,
-                $"{state.LockedBy} 가 작업 중입니다 ({state.LockExpiresAt:HH:mm} 까지).");
+                $"{state.LockedBy} 가 작업 중입니다 ({LocalTimeText(state.LockExpiresAt!.Value)} 까지).");
     }
+
+    /// <summary>
+    /// 사람에게 보이는 시각. 저장은 UTC 지만 문구로 나갈 때는 서버 PC 의 현지 시각으로 바꾼다 —
+    /// 그대로 쓰면 한국에서 9시간 이르게 보인다 (ML-05).
+    /// </summary>
+    private string LocalTimeText(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), clock.LocalTimeZone).ToString("HH:mm");
 
     private ImageLabels ToLabels(Guid datasetId, Guid imageId, List<Annotation> annotations, ImageLabelState? state, CurrentUser user)
     {
