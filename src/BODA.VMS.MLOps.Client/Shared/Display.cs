@@ -88,6 +88,12 @@ public static class Display
         _ => $"{bytes} B",
     };
 
+    /// <summary>
+    /// 데이터셋 버전의 크기. 스냅샷은 zip 을 처음 받거나 학습에 쓸 때 만들므로 그 전에는 크기가 없다 —
+    /// "0 B" 로 보이면 빈 판처럼 읽힌다 (ML-30).
+    /// </summary>
+    public static string VersionSize(long bytes, bool exportReady) => exportReady ? Size(bytes) : "받을 때 만듦";
+
     /// <summary>UTC 로 저장된 시각을 로컬로 보여 준다</summary>
     public static string When(DateTime? utc) =>
         utc is null ? "—" : DateTime.SpecifyKind(utc.Value, DateTimeKind.Utc).ToLocalTime().ToString("yyyy-MM-dd HH:mm");

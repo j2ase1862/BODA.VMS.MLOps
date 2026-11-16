@@ -54,7 +54,7 @@
                             @foreach (var d in _datasets)
                             {
                                 <MudSelectItem T="Guid?" Value="@d.Id">
-                                    @d.Name — @Display.TaskTypeText(d.TaskType) / @d.ExportFormat (@Display.Size(d.SizeBytes))
+                                    @d.Name — @Display.TaskTypeText(d.TaskType) / @d.ExportFormat (@Display.VersionSize(d.SizeBytes, d.ExportReady))
                                 </MudSelectItem>
                             }
                         </MudSelect>
