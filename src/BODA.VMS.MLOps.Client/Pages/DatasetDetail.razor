@@ -597,8 +597,19 @@ else
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
     }
 
+    /// <summary>
+    /// 빼면 이 데이터셋에서 붙인 라벨과 상태도 함께 지워진다 — 되돌릴 수 없으므로 먼저 묻는다 (ML-10).
+    /// </summary>
     private async Task RemoveSelectedAsync()
     {
+        if (_selection.Count == 0) return;
+        var labeled = _images.Count(i => _selection.Contains(i.Id) && (i.AnnotationCount ?? 0) > 0);
+        var message = $"고른 {_selection.Count}장을 이 데이터셋에서 뺍니다. 사진은 수집 사진에 남지만, "
+                      + "이 데이터셋에서 붙인 라벨·검토 상태·분할은 함께 지워지고 되돌릴 수 없습니다."
+                      + (labeled > 0 ? $" 그중 {labeled}장에 라벨이 있습니다." : "");
+        var ok = await Dialogs.ShowMessageBox("데이터셋에서 빼기", message, yesText: "빼기", cancelText: "취소");
+        if (ok != true) return;
+
         try
         {
             await Api.RemoveImagesAsync(Id, _selection.ToArray());
@@ -609,8 +620,19 @@ else
         catch (MlopsApiException ex) { Snackbar.Add(ex.Describe(), Severity.Error); }
     }
 
+    /// <summary>
+    /// 데이터셋의 모든 사진을 다시 나눈다 — 직접 정한 분할(시험 포함)도 덮어쓰므로 먼저 묻는다 (ML-10).
+    /// </summary>
     private async Task AutoSplitAsync()
     {
+        var count = _dataset?.Stats?.ImageCount ?? _total;
+        var ok = await Dialogs.ShowMessageBox("자동 분할 8:2",
+            $"이 데이터셋의 사진 {count}장 모두를 학습 8 : 검증 2 로 다시 나눕니다. "
+            + "[분할 지정] 으로 직접 정해 둔 분할(시험 포함)도 모두 덮어쓰고 되돌릴 수 없습니다. "
+            + "이미 만든 데이터셋 버전은 바뀌지 않습니다.",
+            yesText: "다시 나누기", cancelText: "취소");
+        if (ok != true) return;
+
         try
         {
             var counts = await Api.AutoSplitAsync(Id, 0.8, 0.2);
