@@ -556,6 +556,11 @@ def main():
 
     pretrained = args.pretrained.strip() or DEFAULT_PRETRAINED
     id2label = {i: n for i, n in enumerate(names)}
+    # 사전학습 가중치는 다른 클래스 수(예: COCO 80)로 학습된 것이라, 클래스를 고르는 머리는 이 데이터셋의 클래스 수에
+    # 맞게 새로 만든다(ignore_mismatched_sizes). transformers 가 그 자리를 LOAD REPORT 표에 MISMATCH 로 찍는데,
+    # 정상인데도 경고처럼 읽힌다 (ML-31). 표가 나오기 전에 무엇인지 한 줄로 알린다.
+    emit("INFO", f"클래스 머리는 이 데이터셋의 {nc}개 클래스에 맞게 새로 만듭니다 — "
+                 "아래 LOAD REPORT 의 MISMATCH(Reinit due to size mismatch) 줄은 정상입니다")
     try:
         model = DFineForObjectDetection.from_pretrained(
             pretrained, num_labels=nc, id2label=id2label, label2id={n: i for i, n in id2label.items()},
