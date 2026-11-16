@@ -6,8 +6,13 @@
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 @inject LabelingScopeStore ScopeStore
+@inject IDialogService Dialogs
 
 <PageTitle>라벨링 · MLOps</PageTitle>
+
+@* 저장 안 한 라벨을 들고 화면을 떠나는 모든 길(왼쪽 메뉴·뒤로 화살표·브라우저 이동·탭 닫기)을 붙잡는다 (ML-34).
+   사진 사이를 옮기는 길(←/→·[이전]·[다음]·[저장하고 다음])은 먼저 저장하므로 여기서 걸리지 않는다. *@
+<NavigationLock ConfirmExternalNavigation="@(_dirty && !ReadOnly)" OnBeforeInternalNavigation="OnBeforeLeaveAsync" />
 
 @if (_error is not null)
 {
@@ -739,6 +744,27 @@
 
         // 남은 것이 없다 — 막힌 것이 아니라 끝난 것이므로 화면이 그렇게 말해야 한다.
         _allLabeled = true;
+    }
+
+    /// <summary>
+    /// 저장하지 않은 라벨이 있으면 떠나기 전에 묻는다. 예전에는 왼쪽 메뉴나 뒤로 화살표로 나가면
+    /// '저장 안 됨' 칩이 뜬 라벨이 경고 없이 버려졌다 (ML-34).
+    /// [저장하고 나가기] 는 ←/→ 와 같이 완료 표시 없이 저장한다.
+    /// </summary>
+    private async Task OnBeforeLeaveAsync(LocationChangingContext context)
+    {
+        if (!_dirty || ReadOnly) return;
+
+        var choice = await Dialogs.ShowMessageBox("저장 안 한 라벨",
+            "이 사진에 저장하지 않은 라벨이 있습니다. 저장하고 나갈까요?",
+            yesText: "저장하고 나가기", noText: "버리고 나가기", cancelText: "머무르기");
+        if (choice is null) { context.PreventNavigation(); return; }
+        if (choice == true)
+        {
+            if (!await SaveAsync(markLabeled: false)) context.PreventNavigation();
+            return;
+        }
+        _dirty = false;   // 버리기로 했다 — 다음 이동에서 다시 묻지 않는다
     }
 
     private async Task GoToAsync(Guid? imageId)
