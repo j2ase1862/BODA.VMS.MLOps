@@ -14,11 +14,11 @@ docx 두 개를 만드는 곳입니다. **독자가 다릅니다.**
 ## 다시 만들기
 
 ```bash
-# 1. 서버를 띄운다 (그림은 살아 있는 화면에서 찍습니다)
-dotnet run --project src/BODA.VMS.MLOps.Server --urls http://localhost:5310
+# 1. 데모 서버를 띄운다 (그림은 살아 있는 화면에서 찍습니다 — 아래 "데모 서버")
 
-# 2. 화면 캡처
-node docs/manual/capture.js
+# 2. 화면 캡처 — 17(MSI 마법사)을 뺀 모든 그림
+MLOPS_URL=http://localhost:5611 MLOPS_DOC_USER=admin MLOPS_DOC_PW=<데모 관리자 비밀번호> \
+  node docs/manual/capture_v2.mjs [그림 이름 앞부분 …]
 
 # 3. docx 생성
 node docs/manual/gen_manual.js                # 사용자 매뉴얼
@@ -31,8 +31,8 @@ node docs/manual/gen_manual.js install.json   # 설치 가이드
 |---|---|
 | 사용자 매뉴얼 본문 | `manual.json` |
 | 설치 가이드 본문 | `install.json` |
-| 그림 | `screenshots/` (`capture.js` 가 만듭니다) |
-| 화면 캡처 | `capture.js` — Chrome CDP, npm 의존 없음 |
+| 그림 | `screenshots/` (`capture_v2.mjs` 가 만듭니다 · 저장소에는 넣지 않음) |
+| 화면 캡처 | `capture_v2.mjs` — Playwright, 운영 웹 계정으로 로그인. `capture.js` 는 예전 개발 토큰 방식(Chrome CDP) |
 | docx 생성 | `gen_manual.js` — 전역 `docx` 패키지를 씁니다 |
 
 **docx 를 직접 편집하지 마세요.** 다시 만들면 사라집니다. 본문은 json 을 고칩니다.
@@ -48,8 +48,9 @@ node docs/manual/gen_manual.js install.json   # 설치 가이드
 - **새 블록:** `ul`(점 목록), `terms`(용어집 — 용어마다 `id` · `term` · `en` · `desc` · `where` · `links`).
 - **html 도 만듭니다.** `node docs/manual/gen_manual_html.js` → 그림을 품은 한 파일. 화면에서 링크를 따라가며 읽거나 영상 원고를 쓸 때 씁니다. docx 가 정본입니다.
 - **PDF 는 Word 로.** docx 를 Word 로 열어 목차를 갱신하고 PDF 로 저장합니다(`Ctrl+A` → `F9`, 다른 이름으로 저장 → PDF).
-- **새 그림 20~32 는 `capture_v2.mjs`(Playwright)** 로 데모 서버에서 찍습니다. 사용법은 파일 맨 위에 있습니다.
-  이 스크립트는 데모 데이터를 바꾸므로(OCR 데이터셋 · 라인 PC 를 만듦) 찍은 뒤 데모 DB 를 되돌리세요. 라인 토큰 원문은 찍기 전에 가립니다.
+- **그림은 `capture_v2.mjs`(Playwright)** 로 데모 서버에서 찍습니다(01~16 · 18~33, 2026-11-18 부터 01~19 도 여기서). 사용법은 파일 맨 위에 있습니다.
+  Admin 으로 로그인하므로 왼쪽 메뉴에 [감사 로그] 까지 보입니다. 이 스크립트는 데모 데이터를 바꾸므로(라벨 저장 · OCR 데이터셋 · 라인 PC 를 만듦)
+  찍은 뒤 데모 DB 를 되돌리세요. 라인 토큰 원문은 찍기 전에 가립니다.
 - 원고를 쓰다 찾은 제품 동작은 `REVIEW_NOTES_v2.0.md` 에 모았습니다.
 
 ## 블록 종류
@@ -67,21 +68,23 @@ node docs/manual/gen_manual.js install.json   # 설치 가이드
 (`C:\Users\<이름>\AppData\...`). 고객에게 나가는 문서라 그 부분만 덮어 두었습니다 —
 원본 PNG 를 다시 만들면 가림도 사라지므로 다시 칠하세요.
 
-`06_workers.png` 는 **위쪽 줄(GPU-01 · GPU-02)만 남기고 잘라 두었습니다.** 개발 DB 에 남은 시험 워커
-(`dev-rtx4060` 두 대 · `msi-test`)가 아래 줄에 찍히는데, 그 카드에는 개발 PC 이름이 나옵니다.
-다시 찍으면 다시 자르세요.
+`06_workers.png` 는 데모 DB 의 워커(`TRAIN-PC-01`) 한 대만 찍힙니다. 개발 DB 로 찍으면 시험 워커 카드에
+개발 PC 이름이 나오므로, 그때는 그 카드를 잘라 내세요.
+
+`26_training_detail.png` 의 로그 보관 폴더는 데모 서버 경로 대신 `<데이터 폴더>\job-logs` 로 바꿔 찍습니다(스크립트가 합니다).
+`07_pretrained.png` 는 자산을 펼치지 않고 찍습니다 — 펼치면 자산의 출처 주소(바깥 사이트)가 그림에 남습니다.
 
 **docx 에서 가리지 마세요.** Word 에서 이미지 위에 도형을 얹으면 그 문서에서는 지워지지만,
 `gen_manual.js` 를 다시 돌리는 순간 없어집니다. 가림은 `screenshots/` 의 PNG 에 넣습니다.
 
 **판을 올릴 때는 json 의 `version` 과 맨 끝 "개정 이력" 부록을 함께 고칩니다.** 파일 이름이 `version` 에서 나오므로 옛 판 docx·pdf 는 그대로 남습니다.
 
-**그림을 찍는 대상을 고정해 둡니다.** 데이터셋 상세(`03`)는 `MLOPS_DOC_DETAIL`(기본 `라인A 스크래치 검출`), 모델 돌려 보기(`18`)는
-`MLOPS_DOC_TRY_MODEL`(기본 `라인C 각인 검출(실모델)`)·`MLOPS_DOC_TRY_CONF`(기본 0.15) 로 고릅니다. 이름이 없으면 예전처럼 첫 것을 고르는데,
-DB 상태에 따라 그림이 바뀝니다. 새 사진 훑기(`19`)는 `MLOPS_DOC_AL_DATASET`(기본 `라인C 명판 사진`)·`MLOPS_DOC_AL_TAG`(기본 `명판-신규`) 로 고르고,
-시험용 가짜 모델 계열(`e2e-live-…`)은 사본에서 보관해 두어야 기본 후보 모델로 잡히지 않습니다. 2026-10-21 판은 명판 사진을
-밝기·확대·기울임·흐림으로 바꾼 여섯 장에 그 태그를 달아 라인 NG 로 올려 찍었습니다. 돌려 보기 그림은 **실제로 무언가를 찾는 검출 모델**이어야 상자가 보입니다 — 2026-10-21 판은
-실모델(object·logo)에 명판 사진과 T자 피팅 사진을 섞어 "찾음" · "후보 없음 (최고 0.12)" · "0.05 미만" 이 한 장에 보이게 했습니다.
+**그림을 찍는 대상을 고정해 둡니다** (`capture_v2.mjs` 의 환경 변수). 데이터셋 상세 · 검출 라벨링 · 새 사진 훑기(`03` · `11` · `19`)는
+`MLOPS_DOC_DETAIL`(기본 `검출 테스트`), 분류 라벨링(`12`)은 `MLOPS_DOC_CLS_DATASET`(기본 `피팅 외관 분류`), OCR 라벨링(`23`)은
+`MLOPS_DOC_OCR_DATASET`(기본 `각인 OCR`) · `MLOPS_DOC_OCR_TEXT`, 돌려 보기(`18`)는 `MLOPS_DOC_TRY_MODEL`(기본 `GS-A 검출` 의 운영 버전),
+레시피 바인딩(`09`)은 `MLOPS_DOC_RECIPE`(기본 `A동 1호 조립검사 표준` — 운영 웹 레시피 이름)로 고릅니다.
+돌려 보기 · 새 사진 훑기 그림은 **실제로 무언가를 찾는 검출 모델**이어야 상자가 보입니다. 새 사진 훑기는 [수집 경로] 를 `라인 NG` 로 좁혀
+라인이 보낸 피팅 사진만 훑습니다. OCR 라벨링(`23`)은 데모 사진(`OCR10.png`)의 글자 줄 자리에 사각형을 그리므로 사진이 바뀌면 좌표를 다시 맞춥니다.
 
 MSI 마법사 화면(`17_msi_wizard`)은 워커가 **설치되지 않은** PC 에서만 찍힙니다.
 설치된 상태에서는 `WelcomeDlg` 의 [다음] 이 `NOT Installed` 조건이라 유지 관리 모드로 빠집니다.
@@ -100,32 +103,25 @@ MSI 마법사 화면(`17_msi_wizard`)은 워커가 **설치되지 않은** PC �
 
 ## 알아 둘 것
 
-**그림은 개발 서버에서 찍습니다.** `capture.js` 는 개발 토큰(`Auth:EnableDevTokens`)으로 로그인합니다.
-운영 서버에서는 그 길이 막혀 있어 돌지 않습니다.
+**데모 서버.** 그림은 운영 서버가 아니라 **데모 데이터 사본**으로 다른 포트(5611)에 띄운 서버에서 찍습니다 — 5310 은 그 PC 의
+MLOps 서비스가 쓰고 있을 수 있고, 그림을 맞추느라 바꾼 것이 원본에 남지 않게 하려는 것입니다. 띄우는 법은 이렇습니다.
 
-**시드 데이터가 있어야 그림이 의미가 있습니다.** 데이터셋·모델·워커가 비어 있으면 빈 화면만 찍힙니다.
+1. 이 저장소를 `dotnet publish src/BODA.VMS.MLOps.Server -c Release -o <임시 폴더>\app` 하고, SAM 모델을 `app\models\sam` 에 넣습니다.
+   publish 결과에 `appsettings.Production.json` 이 있으면 운영 값일 수 있으니 지웁니다.
+2. 데모 DB 와 storage 를 임시 폴더에 복사합니다. 2026-11-18 판은 사용 영상 녹화용 데모 DB(데이터셋 `검출 테스트` · `각인 OCR` ·
+   이상탐지 몇 개, 모델 `GS-A 검출`(v3 운영) · `피팅 검출` 등, 학습 워커 `TRAIN-PC-01`, 라인 NG 사진)를 썼습니다.
+3. 로그인은 운영 웹 계정으로 하므로 **임시 운영 웹**(그 DB 사본)을 함께 띄웁니다. 두 서버에 같은 `Jwt:Key` 를 환경 변수로 주고
+   (파일에 남기지 않음), 임시 웹의 `Cors:AllowedOrigins` 에 `http://localhost:5611` 을 넣습니다. MLOps 쪽은
+   `Auth:Mode=Web` · `Auth:WebBaseUrl=<임시 웹 주소>` — [레시피 바인딩] 의 운영 웹 레시피 목록도 이 웹에서 옵니다.
+4. 그림에 필요한 상태를 API 로 넣습니다: 운영 웹 레시피 하나에 바인딩 셋(운영 추종 1 · 버전 고정 2, 도구 ID 는 GUID),
+   미라벨이 남은 분류 데이터셋(`피팅 외관 분류`), zip 을 아직 만들지 않은 판 하나("받을 때 만듦"), 워커가 없어 대기로 남는 학습 작업 하나.
+5. 학습 워커는 띄우지 않습니다. 그 PC 의 워커 서비스가 이 서버를 보지 않는지(`worker.json` 의 서버 주소) 확인합니다.
+
 라벨링 화면은 **미라벨 이미지가 남아 있는 데이터셋**을 골라야 "라벨 없음" 상태의 캔버스가 찍힙니다
-(다 라벨링된 데이터셋도 열리기는 합니다 — 첫 장이 열립니다). 사진이 아예 없는 데이터셋만
-빈 화면입니다. `capture.js` 가 검출·분류에서 각각 미라벨이 남은 데이터셋을 골라 씁니다.
+(다 라벨링된 데이터셋도 열리기는 합니다 — 첫 장이 열립니다). 사진이 아예 없는 데이터셋만 빈 화면입니다.
 
-**예제 데이터는 개발 DB 의 복사본으로 씁니다.** `src/BODA.VMS.MLOps.Server/mlops-dev.db` 와 `.dev-storage` 를
-임시 폴더에 복사하고, 그 복사본을 가리켜 다른 포트로 띄웁니다 — 5310 은 그 PC 의 MLOps 서비스가 쓰고 있을 수 있고,
-그림을 맞추느라 보관·삭제한 것이 원본 개발 DB 에 남지 않게 하려는 것입니다.
-
-```bash
-ASPNETCORE_ENVIRONMENT=Development \
-ConnectionStrings__DefaultConnection="Data Source=<복사본>\mlops-dev.db" \
-Mlops__StorageRoot="<복사본>\storage" \
-Monitoring__ProductionWebUrl="http://127.0.0.1:5399" \
-dotnet run --project src/BODA.VMS.MLOps.Server --urls http://localhost:5311
-
-MLOPS_URL=http://localhost:5311 node docs/manual/capture.js 01_dashboard 02_datasets …
-```
-
-개발 DB 에는 통합 시험이 남긴 것(`it-…`·`e2e-live-…`·`재현 A …` 데이터셋·모델·판)이 섞여 있습니다.
-찍기 전에 API 로 데이터셋·모델은 보관(`PATCH … {"isArchived":true}`)하고, 판은 지웁니다.
-수집 사진(`15_image_pool`)에는 라인 사진이 있어야 하므로 `POST /api/images/line-ng` 로 `lineId`·`verdict:` 태그를
-붙여 몇 장 올립니다. 2026-10-20 판은 GS 시험 자료의 이상 탐지 사진(T자 피팅)을 썼습니다.
+예전 방식(`capture.js`, 개발 DB 사본 + 개발 토큰 `Auth:EnableDevTokens`)도 남아 있지만, 개발 DB 에는 통합 시험이 남긴 것
+(`it-…`·`e2e-live-…`·`재현 A …`)이 섞여 있어 찍기 전에 보관 · 삭제로 치워야 합니다.
 
 **모니터링 그림(13 · 14)은 운영 웹이 있어야 찍힙니다.** 운영 웹 대신 `/api/history/model-outcomes` 하나만
 답하는 작은 가짜 서버를 띄워 `Monitoring:ProductionWebUrl` 로 가리킵니다. `modelVersion` 은 `mv:<버전 id 32자리>`,
