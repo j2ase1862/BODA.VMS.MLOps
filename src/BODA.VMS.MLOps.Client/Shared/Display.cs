@@ -167,6 +167,27 @@ public static class Display
         _ => shape.ToString(),
     };
 
+    /// <summary>
+    /// 라벨링 캔버스 아래 안내 한 줄. 지금 고른 도구(<paramref name="mode"/>)와 데이터셋 작업 유형이 허용하는 도형으로 고른다.
+    /// 폴리곤 고치는 법은 폴리곤을 쓰는 데이터셋(검출·세그멘테이션)에서만 붙인다 — 분류 화면에 그 문구가 떠 있으면
+    /// 할 수 없는 일을 안내하게 된다.
+    /// </summary>
+    public static string LabelingHint(TaskType? taskType, string mode)
+    {
+        var parts = new List<string>
+        {
+            mode == "classification"
+                ? "←/→ 이전·다음 이미지(저장하고 넘어감) · 숫자키나 클래스 버튼으로 이 사진의 클래스 붙이기 · 휠 확대 · Alt+끌기 이동"
+                : "←/→ 이전·다음 이미지(저장하고 넘어감) · 끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음에 그릴 클래스 · Delete 삭제 · Esc 선택 해제",
+        };
+        if (mode == "polygon") parts.Add("클릭으로 점 추가, 오른쪽 클릭이나 Enter 로 닫기");
+        if (mode == "sam")
+            parts.Add("객체를 클릭하면 경계를 만들어 줍니다. Shift+클릭(또는 오른쪽 클릭)은 빼고 싶은 곳, Tab 으로 더 크게·작게, Backspace 는 마지막 점 취소");
+        if (taskType is { } t && t.AllowedFor().Contains(AnnotationShape.Polygon))
+            parts.Add("폴리곤은 꼭짓점을 끌어 고치고, 선을 누르면 꼭짓점이 생기며, Ctrl+클릭으로 뺍니다");
+        return string.Join(" · ", parts);
+    }
+
     public static string SplitText(DatasetSplit split) => split switch
     {
         DatasetSplit.Train => "학습",
