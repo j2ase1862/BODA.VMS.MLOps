@@ -68,6 +68,7 @@ builder.Services.AddSingleton<IArtifactStorage>(sp =>
 builder.Services.AddSingleton<ScriptManifestService>();
 builder.Services.AddSingleton<IMlopsNotifier, SignalRNotifier>();
 builder.Services.AddScoped<AuditService>();
+builder.Services.AddScoped<AuditQueryService>();
 builder.Services.AddScoped<ModelRegistryService>();
 builder.Services.AddScoped<BindingService>();
 builder.Services.AddScoped<WorkerRegistryService>();
@@ -96,6 +97,7 @@ builder.Services.AddHttpClient<ProductionOutcomeClient>(http => http.Timeout = T
 // 운영 웹에서 끊긴 토큰을 걸러낸다 (Auth:RevocationCheckSeconds).
 builder.Services.AddHttpClient<WebTokenRevocationClient>(http => http.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient<WebAccountDirectoryClient>(http => http.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHttpClient<WebRecipeDirectoryClient>(http => http.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddScoped<ModelMonitorService>();
 
 // SAM 보조 (§5.4). 모델을 안 두면 스스로 꺼진 상태로 남는다 — 세션과 임베딩 캐시를 들고 있어 싱글턴이다.
@@ -290,6 +292,7 @@ api.MapLineEndpoints();
 api.MapMemberEndpoints();
 api.MapSamEndpoints();
 api.MapMonitoringEndpoints();
+api.MapAuditEndpoints();
 
 app.MapHub<ModelsHub>("/hubs/models");
 app.MapHub<TrainingHub>("/hubs/training");

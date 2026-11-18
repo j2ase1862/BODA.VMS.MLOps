@@ -35,22 +35,35 @@ public static class HyperparamWhitelist
         new("hsv_v", HyperparamType.Float, 0, 1, Default: "0.4"),
     ];
 
+    /// <summary>
+    /// 공용 칸의 기본값을 그 스크립트의 argparse 기본값으로 바꾼다. 화면은 이 값을 흐린 글씨로 보여 주며
+    /// "비우면 이 값" 이라 말하므로 스크립트와 다르면 거짓말이다 — YOLO 칸에 60 이 보이는데 실제로는 100 에폭을 돌았다 (ML-21).
+    /// <c>Default_hints_match_script_argparse_defaults</c> 시험이 스크립트와 대조한다.
+    /// </summary>
+    private static HyperparamSpec[] WithDefaults(HyperparamSpec[] specs, params (string Key, string Value)[] defaults) =>
+        specs.Select(s => defaults.Any(d => d.Key == s.Key) ? s with { Default = defaults.First(d => d.Key == s.Key).Value } : s)
+            .ToArray();
+
     private static readonly Dictionary<TrainingScript, HyperparamSpec[]> PerScript = new()
     {
         [TrainingScript.TrainDfine] =
         [
-            .. Common, .. Aug,
+            .. WithDefaults(Common, ("lr", "0.00025")), .. Aug,
             new("flip", HyperparamType.Float, 0, 1, Default: "0.5"),
             new("weight_decay", HyperparamType.Float, 0, 1, Default: "0.000125"),
             new("warmup_epochs", HyperparamType.Float, 0, 100, Default: "1.0"),
             new("workers", HyperparamType.Int, 0, 32, Default: "2"),
             new("patience", HyperparamType.Int, 0, 10000, Default: "0"),
         ],
-        [TrainingScript.TrainYolo] = [.. Common, .. Aug],
-        [TrainingScript.TrainClassifier] = Common,
+        [TrainingScript.TrainYolo] =
+        [
+            .. WithDefaults(Common, ("epochs", "100"), ("lr", "0.01"), ("batch_size", "16")),
+            .. WithDefaults(Aug, ("mosaic", "1.0")),
+        ],
+        [TrainingScript.TrainClassifier] = WithDefaults(Common, ("epochs", "50"), ("batch_size", "32"), ("imgsz", "224")),
         [TrainingScript.TrainAnomaly] =
         [
-            .. Common,
+            .. WithDefaults(Common, ("epochs", "1"), ("batch_size", "32"), ("imgsz", "224")),
             new("method", HyperparamType.Choice, Choices: ["patchcore", "fastflow", "efficient_ad"], Default: "patchcore"),
             new("backbone", HyperparamType.Choice, Choices: ["resnet18", "resnet50", "wide_resnet50_2"], Default: "resnet18"),
             new("coreset_ratio", HyperparamType.Float, 0.01, 1, Default: "0.1"),
@@ -64,7 +77,11 @@ public static class HyperparamWhitelist
             // 검출 학습이 돌지 않고, 우리 내보내기도 det 라벨을 내지 않는다. 스크립트가 det 라벨을 읽게 되면 함께 연다.
             new("target", HyperparamType.Choice, Choices: ["recognition"], Default: "recognition"),
         ],
-        [TrainingScript.TrainRfdetrSeg] = [.. Common, .. Aug],
+        [TrainingScript.TrainRfdetrSeg] =
+        [
+            .. WithDefaults(Common, ("epochs", "40"), ("lr", "0.0001"), ("batch_size", "4"), ("imgsz", "560")),
+            .. Aug,
+        ],
     };
 
     public static IReadOnlyList<HyperparamSpec> For(TrainingScript script) => PerScript[script];

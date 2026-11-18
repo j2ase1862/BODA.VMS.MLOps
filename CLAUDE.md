@@ -66,6 +66,8 @@ YOLO 계열(AGPL)은 라이선스 필드 없이는 등록도 Production 승격�
 그 부트스트랩이 없으면 표가 빈 새 서버에서 아무도 첫 역할을 줄 수 없습니다. 표에 줄이 있으면 그쪽이 이깁니다.
 우리가 발급한 토큰은 `ServiceTokenIssuer.SelfIssuedClaim` 이 붙어 변환을 건너뜁니다 — 개발 토큰의 역할이 곧 의도입니다.
 역할을 바꾸면 캐시를 즉시 버립니다(`MemberRoleClaimsTransformation.Invalidate`). 권한 회수가 늦으면 안 됩니다.
+화면(WASM)도 역할을 토큰에서 읽지 않고 `/api/auth/me` 가 돌려준 것을 씁니다(`JwtAuthenticationStateProvider`) —
+토큰의 역할은 운영 웹 것(Admin·User)이라, 그대로 쓰던 동안 위쪽 막대에 'User' 가 보이고 버튼이 서버 권한과 어긋났습니다.
 
 **사람이 들어오는 문은 `Auth:Mode` 하나가 정하고 둘은 배타적입니다.** `Web`(기본)은 운영 웹이 인증하고,
 `Local` 은 이 서버가 계정을 들고 `Auth:Local:Key` 로 발급합니다. 함께 열지 마세요 — `Members` 는 계정 이름이 키라
@@ -187,6 +189,7 @@ Blazor 화면은 모두 `Shared/ClassPalette.cs` 를 쓰고, 캔버스(`label-ca
 
 **클래스 선택(숫자키·클래스 버튼)은 다음에 그릴 것만 정합니다.** 선택된 라벨을 함께 바꾸면
 방금 그린 박스가 조용히 다른 클래스가 됩니다. 이미 붙은 라벨은 `setAnnotationClass` 로만 바꿉니다.
+분류·이상탐지만 예외입니다 — 그릴 것이 없으므로 버튼과 숫자키 모두 곧 그 사진의 라벨(`setClassification`)입니다.
 
 **품질 지표로 사진을 자동으로 버리지 않습니다.** 업로드할 때 흐림(라플라시안 분산)과
 노출(평균 밝기·날아간 화소 비율)을 재어 `Image` 에 남기고, 목록에서 `maxSharpness`·

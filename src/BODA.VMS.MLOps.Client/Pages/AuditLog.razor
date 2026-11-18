@@ -1,0 +1,136 @@
+@page "/audit"
+@attribute [Authorize(Roles = "Admin")]
+@using BODA.VMS.MLOps.Contracts.Audit
+@inject MlopsApi Api
+
+<PageTitle>감사 로그 · MLOps</PageTitle>
+
+@* 감사 로그를 볼 화면이 없었다 (ML-25). 읽기만 한다 — 고치거나 지우는 길은 서버에도 없다. *@
+<PageHeader Eyebrow="ADMIN" Title="감사 로그">
+    <Lead>
+        누가 언제 무엇을 했는지 남은 기록입니다. 승격·롤백·삭제·역할 변경·라벨 검토 같은 일을 되짚을 때 봅니다.
+        기록은 고치거나 지울 수 없습니다.
+    </Lead>
+</PageHeader>
+
+<MudPaper Class="pa-3 mb-3" Outlined="true">
+    <div class="d-flex flex-wrap gap-3 align-center">
+        <MudDatePicker @bind-Date="_from" Label="시작일" Clearable="true" Margin="Margin.Dense" DateFormat="yyyy-MM-dd" Style="max-width:160px" />
+        <MudDatePicker @bind-Date="_to" Label="끝일(그날 포함)" Clearable="true" Margin="Margin.Dense" DateFormat="yyyy-MM-dd" Style="max-width:160px" />
+        <MudSelect T="string" @bind-Value="_category" Label="종류" Clearable="true" Margin="Margin.Dense" Style="min-width:160px">
+            @foreach (var c in _categories)
+            {
+                <MudSelectItem T="string" Value="@c">@CategoryText(c)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_action" Label="동작 (일부)" Margin="Margin.Dense" Immediate="true"
+                      Placeholder="Promoted, LabelRejected …" Style="min-width:180px"
+                      OnKeyUp="@(e => { if (e.Key == "Enter") _ = SearchAsync(); })" />
+        <MudTextField @bind-Value="_actor" Label="사람 (일부)" Margin="Margin.Dense" Immediate="true" Style="min-width:140px"
+                      OnKeyUp="@(e => { if (e.Key == "Enter") _ = SearchAsync(); })" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
+                   Disabled="@_loading" OnClick="SearchAsync">조회</MudButton>
+    </div>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_error</MudAlert>
+}
+
+<MudPaper Elevation="1">
+    <MudTable Items="@_items" Dense="true" Hover="true" Loading="@_loading" Breakpoint="Breakpoint.Sm">
+        <ToolBarContent>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">@(_total)건 중 @(_items.Count)건 · 최근 것부터</MudText>
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>시각</MudTh>
+            <MudTh>종류</MudTh>
+            <MudTh>동작</MudTh>
+            <MudTh>사람</MudTh>
+            <MudTh>대상</MudTh>
+            <MudTh>내용</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="시각" Style="white-space:nowrap">@LocalText(context.At)</MudTd>
+            <MudTd DataLabel="종류">@CategoryText(context.Category)</MudTd>
+            <MudTd DataLabel="동작"><span class="mono">@context.Action</span></MudTd>
+            <MudTd DataLabel="사람">@context.Actor</MudTd>
+            <MudTd DataLabel="대상"><span class="mono">@Short(context.EntityId)</span></MudTd>
+            <MudTd DataLabel="내용">
+                @if (!string.IsNullOrWhiteSpace(context.Details))
+                {
+                    <MudTooltip Text="@context.Details">
+                        <span class="mono" style="font-size:.75rem">@Short(context.Details, 80)</span>
+                    </MudTooltip>
+                }
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="pa-4">조건에 맞는 기록이 없습니다.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+@if (_total > _items.Count)
+{
+    <div class="d-flex justify-center mt-4">
+        <MudButton Variant="Variant.Outlined" Disabled="@_loading" OnClick="@(() => LoadAsync(append: true))">
+            더 보기 (@_items.Count / @_total)
+        </MudButton>
+    </div>
+}
+
+@code {
+    private const int PageSize = 100;
+
+    private List<AuditLogDto> _items = [];
+    private IReadOnlyList<string> _categories = [];
+    private int _total;
+    private bool _loading;
+    private string? _error;
+
+    private DateTime? _from, _to;
+    private string? _category;
+    private string _action = "", _actor = "";
+
+    protected override Task OnInitializedAsync() => LoadAsync(append: false);
+
+    private Task SearchAsync() => LoadAsync(append: false);
+
+    private async Task LoadAsync(bool append)
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            // 날짜는 이 브라우저의 현지 날짜로 고른다 — 그날 0시부터 끝일 다음 날 0시 전까지를 UTC 로 바꿔 묻는다
+            DateTime? fromUtc = _from is { } f ? DateTime.SpecifyKind(f.Date, DateTimeKind.Local).ToUniversalTime() : null;
+            DateTime? toUtc = _to is { } t ? DateTime.SpecifyKind(t.Date.AddDays(1), DateTimeKind.Local).ToUniversalTime() : null;
+            var page = await Api.AuditAsync(fromUtc, toUtc, _category, _action, _actor, append ? _items.Count : 0, PageSize);
+            _items = append ? [.. _items, .. page.Items] : page.Items.ToList();
+            _total = page.Total;
+            _categories = page.Categories;
+        }
+        catch (MlopsApiException ex) { _error = ex.Describe(); }
+        finally { _loading = false; }
+    }
+
+    private static string LocalText(DateTime utc) =>
+        DateTime.SpecifyKind(utc, DateTimeKind.Utc).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string Short(string? text, int max = 12) =>
+        string.IsNullOrEmpty(text) ? "—" : text.Length <= max ? text : text[..max] + "…";
+
+    /// <summary>감사 종류의 화면 이름. 모르는 종류는 그대로 보여 준다.</summary>
+    private static string CategoryText(string category) => category switch
+    {
+        "Model" => "모델",
+        "Dataset" => "데이터",
+        "Training" => "학습",
+        "Worker" => "워커",
+        "Delivery" => "라인 배포",
+        "Account" => "계정",
+        _ => category,
+    };
+}

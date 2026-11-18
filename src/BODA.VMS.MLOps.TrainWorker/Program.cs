@@ -12,17 +12,26 @@ using Microsoft.Extensions.Options;
 //   diag      : BODA.VMS.MLOps.TrainWorker diag
 //               → 설정된 파이썬(없으면 venv 부트스트랩)으로 자기진단을 돌려 결과를 찍는다. 설치 뒤 GPU·패키지를 눈으로 확인하는 용도.
 //   (없음)    : 서비스/콘솔 실행
-if (args.Length > 0 && args[0].Equals("configure", StringComparison.OrdinalIgnoreCase))
-    return Configure(args.Skip(1).ToArray());
-if (args.Length > 0 && args[0].Equals("diag", StringComparison.OrdinalIgnoreCase))
-    return await DiagAsync();
+//
+//   세 갈래 모두 --config <경로> 로 설정 파일을 고른다(없으면 BODA_WORKER_CONFIG, 그것도 없으면 기본 worker.json).
+//   설정 우선순위는 명령줄 > 환경변수 > 설정 파일 > appsettings (WorkerConfiguration, ML-32).
+//   한 PC 에 두 번째 워커: configure --config D:\w2\worker.json --name GPU-02 --cache D:\w2 --gpu 1 …
+//                          서비스 binPath 에 "… BODA.VMS.MLOps.TrainWorker.exe --config D:\w2\worker.json"
+string configPath;
+try { configPath = WorkerConfiguration.ResolveConfigPath(args); }
+catch (ArgumentException ex) { Console.Error.WriteLine(ex.Message); return 2; }
+var rest = WorkerConfiguration.WithoutConfigArg(args);
 
-var builder = Host.CreateApplicationBuilder(args);
+if (rest.Length > 0 && rest[0].Equals("configure", StringComparison.OrdinalIgnoreCase))
+    return Configure(rest.Skip(1).ToArray(), configPath);
+if (rest.Length > 0 && rest[0].Equals("diag", StringComparison.OrdinalIgnoreCase))
+    return await DiagAsync(configPath, rest.Skip(1).ToArray());
+
+var builder = Host.CreateApplicationBuilder(rest);
 builder.Services.AddWindowsService(o => o.ServiceName = "BodaVmsTrainWorker");
 
-// 설치 시 생성된 worker.json 을 appsettings 위에 덮는다
-if (File.Exists(WorkerOptions.ConfigFilePath))
-    builder.Configuration.AddJsonFile(WorkerOptions.ConfigFilePath, optional: true, reloadOnChange: false);
+// 설치 시 생성된 설정 파일 위에 환경변수·명령줄을 다시 얹는다 — 예전에는 파일이 마지막이라 가장 셌다
+WorkerConfiguration.Layer(builder.Configuration, configPath, rest);
 
 builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection(WorkerOptions.Section));
 
@@ -48,7 +57,7 @@ var host = builder.Build();
 host.Run();
 return 0;
 
-static int Configure(string[] a)
+static int Configure(string[] a, string configPath)
 {
     string? server = null, token = null, name = null, python = null, wheels = null, cache = null;
     int? gpu = null;
@@ -77,7 +86,7 @@ static int Configure(string[] a)
 
     if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(token))
     {
-        Console.Error.WriteLine("사용법: configure --server <url> --token <wk_…> [--name <이름>] [--python <python.exe>] [--wheels <폴더>] [--cache <폴더>] [--gpu <n>] [--cpu]");
+        Console.Error.WriteLine("사용법: configure --server <url> --token <wk_…> [--name <이름>] [--python <python.exe>] [--wheels <폴더>] [--cache <폴더>] [--gpu <n>] [--cpu] [--config <설정 파일>]");
         return 2;
     }
     if (!Uri.TryCreate(server.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
@@ -88,7 +97,7 @@ static int Configure(string[] a)
     if (!string.IsNullOrWhiteSpace(wheels) && !Directory.Exists(wheels))
         Console.Error.WriteLine($"경고: --wheels 폴더가 없습니다 (첫 시작 때 pip 가 실패합니다): {wheels}");
 
-    Directory.CreateDirectory(WorkerOptions.DefaultRoot);
+    Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
     var worker = new Dictionary<string, object?>
     {
         ["ServerUrl"] = uri.GetLeftPart(UriPartial.Authority) + uri.AbsolutePath.TrimEnd('/'),
@@ -102,8 +111,8 @@ static int Configure(string[] a)
     if (gpu is not null) worker["GpuIndex"] = gpu.Value;
 
     var json = JsonSerializer.Serialize(new { Worker = worker }, new JsonSerializerOptions { WriteIndented = true });
-    File.WriteAllText(WorkerOptions.ConfigFilePath, json);
-    Console.WriteLine($"설정 저장: {WorkerOptions.ConfigFilePath}");
+    File.WriteAllText(configPath, json);
+    Console.WriteLine($"설정 저장: {configPath}");
     return 0;
 
     static string Next(string[] a, ref int i)
@@ -113,14 +122,12 @@ static int Configure(string[] a)
     }
 }
 
-static async Task<int> DiagAsync()
+static async Task<int> DiagAsync(string configPath, string[] args)
 {
-    // 서비스 호스트와 같은 순서: appsettings → worker.json → 환경변수(Worker__*). 시험할 때 환경변수로 덮어쓸 수 있게 한다.
-    var cfg = new ConfigurationBuilder()
-        .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true)
-        .AddJsonFile(WorkerOptions.ConfigFilePath, optional: true)
-        .AddEnvironmentVariables()
-        .Build();
+    // 서비스 호스트와 같은 순서: appsettings → 설정 파일 → 환경변수(Worker__*) → 명령줄 (WorkerConfiguration).
+    var cfgBuilder = new ConfigurationBuilder()
+        .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true);
+    var cfg = WorkerConfiguration.Layer(cfgBuilder, configPath, args).Build();
     var o = new WorkerOptions();
     cfg.GetSection(WorkerOptions.Section).Bind(o);
     o.EnsureDirectories();

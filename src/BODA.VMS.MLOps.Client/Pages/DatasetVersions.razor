@@ -43,7 +43,18 @@
             <MudTd DataLabel="형식"><span class="mono">@context.ExportFormat</span></MudTd>
             <MudTd DataLabel="이미지">@(context.ImageCount > 0 ? context.ImageCount.ToString() : "—")</MudTd>
             <MudTd DataLabel="클래스">@(context.Classes.Length == 0 ? "—" : string.Join(", ", context.Classes))</MudTd>
-            <MudTd DataLabel="크기">@Display.Size(context.SizeBytes)</MudTd>
+            <MudTd DataLabel="크기">
+                @if (context.ExportReady)
+                {
+                    @Display.Size(context.SizeBytes)
+                }
+                else
+                {
+                    <MudTooltip Text="zip 파일은 처음 다운로드하거나 학습에 쓸 때 만들어지고, 그때 크기가 정해집니다">
+                        <span class="mud-text-secondary">@Display.VersionSize(context.SizeBytes, false)</span>
+                    </MudTooltip>
+                }
+            </MudTd>
             <MudTd DataLabel="매니페스트 해시"><span class="mono">@Display.Sha(context.ManifestHash)</span></MudTd>
             <MudTd DataLabel="등록">@Display.When(context.CreatedAt)<br /><span class="mud-text-secondary">@context.CreatedBy</span></MudTd>
             <MudTd>

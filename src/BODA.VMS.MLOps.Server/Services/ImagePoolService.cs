@@ -291,8 +291,14 @@ public sealed class ImagePoolService(
         if (q.Source is not null) query = query.Where(i => i.Source == q.Source);
         if (!string.IsNullOrWhiteSpace(q.LineId)) query = query.Where(i => i.LineId == q.LineId);
         if (!string.IsNullOrWhiteSpace(q.Search)) query = query.Where(i => i.FileName.Contains(q.Search));
-        // 태그는 JSON 문자열이라 정확 일치가 어려워 부분 일치로 좁히고 뒤에서 걸러낸다
-        if (!string.IsNullOrWhiteSpace(q.Tag)) query = query.Where(i => i.TagsJson.Contains(q.Tag));
+        // 태그는 JSON 배열 문자열이라, 원소 하나를 따옴표째(JSON 그대로) 찾아 정확 일치로 거른다.
+        // 예전에는 여기서 부분 일치로 세고 쪽을 자른 뒤에 정확 일치로 걸러, "N 장" 과 보이는 장수가 달랐고
+        // [더 보기] 의 건너뛰기도 어긋났다 (ML-17). 대소문자는 LIKE 가 ASCII 만 가리지 않는 것과 같다.
+        if (!string.IsNullOrWhiteSpace(q.Tag))
+        {
+            var pattern = "%" + EscapeLike(Mapping.ToJson(q.Tag.Trim())) + "%";
+            query = query.Where(i => EF.Functions.Like(i.TagsJson, pattern, "\\"));
+        }
 
         if (q.DatasetId is { } datasetId)
         {
@@ -332,12 +338,12 @@ public sealed class ImagePoolService(
         var items = await ordered
             .Skip(Math.Max(0, q.Skip)).Take(Math.Clamp(q.Take, 1, 500)).ToListAsync(ct);
 
-        if (!string.IsNullOrWhiteSpace(q.Tag))
-            items = items.Where(i => Mapping.Json(i.TagsJson, Array.Empty<string>())
-                .Contains(q.Tag, StringComparer.OrdinalIgnoreCase)).ToList();
-
         return (items, total);
     }
+
+    /// <summary>LIKE 의 와일드카드(% _)와 이스케이프 문자(\)를 글자 그대로 찾게 바꾼다.</summary>
+    private static string EscapeLike(string value) =>
+        value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 
     public async Task<Image> GetAsync(Guid id, CancellationToken ct) =>
         await db.Images.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id, ct) ?? throw ApiException.NotFound("이미지");

@@ -53,10 +53,24 @@ public sealed class TokenStore(ILocalStorageService storage)
     }
 }
 
-/// <summary>JWT 를 그대로 읽어 인증 상태를 만든다. 만료된 토큰은 익명으로 취급하고 지운다.</summary>
-public sealed class JwtAuthenticationStateProvider(TokenStore tokens, WebLogin webLogin) : AuthenticationStateProvider
+/// <summary>
+/// JWT 를 읽어 인증 상태를 만든다. 만료된 토큰은 익명으로 취급하고 지운다.
+///
+/// <para><b>역할은 토큰이 아니라 서버(<c>/api/auth/me</c>)에서 받는다.</b> 운영 웹 토큰의 역할은 그쪽 것(Admin·User)이고,
+/// 우리 역할은 서버의 <c>MemberRoleClaimsTransformation</c> 이 사람마다 바꿔 정한다. 토큰 역할을 그대로 쓰던 동안
+/// 위쪽 막대에 'User' 가 보였고(ML-33 · WB-27), 버튼도 서버 권한과 어긋나게 보이거나 숨었다.
+/// 서버에 묻지 못하면(연결 실패 등) 토큰 역할로 그린다 — 실제 권한은 어차피 서버가 판단한다.</para>
+/// </summary>
+public sealed class JwtAuthenticationStateProvider(TokenStore tokens, WebLogin webLogin, IServiceProvider services)
+    : AuthenticationStateProvider
 {
     private static readonly AuthenticationState Anonymous = new(new ClaimsPrincipal(new ClaimsIdentity()));
+
+    /// <summary>서버가 정한 역할을 토큰마다 잠시 들고 있는다 — 화면을 그릴 때마다 묻지 않게.</summary>
+    private string? _rolesToken;
+    private string[]? _serverRoles;
+    private DateTimeOffset _rolesAt;
+    private static readonly TimeSpan RolesTtl = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// 갱신은 한 번만 시도한다. 실패한 refresh 토큰으로 화면을 그릴 때마다 운영 웹을 두드리면
@@ -68,6 +82,7 @@ public sealed class JwtAuthenticationStateProvider(TokenStore tokens, WebLogin w
     {
         var token = await tokens.GetAsync();
         var principal = token is null ? null : Parse(token);
+        if (principal is not null) principal = await WithServerRolesAsync(token!, principal);
 
         // 토큰이 없거나 만료됐고 "로그인 유지" 를 켜 뒀다면, 로그인 화면을 보여 주기 전에 한 번 갱신해 본다.
         if (principal is null && !_refreshTried)
@@ -84,6 +99,7 @@ public sealed class JwtAuthenticationStateProvider(TokenStore tokens, WebLogin w
                     if (!string.IsNullOrWhiteSpace(renewed.RefreshToken))
                         await tokens.SetRefreshAsync(renewed.RefreshToken);
                     principal = Parse(renewed.Token);
+                    if (principal is not null) principal = await WithServerRolesAsync(renewed.Token, principal);
                 }
             }
         }
@@ -99,14 +115,48 @@ public sealed class JwtAuthenticationStateProvider(TokenStore tokens, WebLogin w
     public async Task SignInAsync(string token)
     {
         _refreshTried = false;
+        _rolesToken = null;
         await tokens.SetAsync(token);
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
     }
 
     public async Task SignOutAsync()
     {
+        _rolesToken = null;
+        _serverRoles = null;
         await tokens.ClearAsync();
         NotifyAuthenticationStateChanged(Task.FromResult(Anonymous));
+    }
+
+    /// <summary>
+    /// 토큰의 역할을 서버가 정한 역할로 갈아 끼운다. 이름은 토큰 것을 그대로 둔다.
+    /// 서버가 역할을 주지 않으면(표에서 비활성 등) 역할 없이 둔다 — 서버도 그 사람을 막는다.
+    /// </summary>
+    private async Task<ClaimsPrincipal> WithServerRolesAsync(string token, ClaimsPrincipal principal)
+    {
+        if (_rolesToken != token || _serverRoles is null || DateTimeOffset.UtcNow - _rolesAt > RolesTtl)
+        {
+            try
+            {
+                var me = await services.GetRequiredService<MlopsApi>().MeAsync();
+                _serverRoles = me.Roles;
+            }
+            catch (MlopsApiException ex) when (ex.Status == System.Net.HttpStatusCode.Forbidden)
+            {
+                _serverRoles = [];
+            }
+            catch (Exception)
+            {
+                return principal;   // 묻지 못했다 — 토큰 역할로 그린다. 다음에 다시 묻는다.
+            }
+            _rolesToken = token;
+            _rolesAt = DateTimeOffset.UtcNow;
+        }
+
+        var identity = new ClaimsIdentity("jwt", ClaimTypes.Name, ClaimTypes.Role);
+        identity.AddClaim(new Claim(ClaimTypes.Name, principal.Identity?.Name ?? "user"));
+        foreach (var role in _serverRoles) identity.AddClaim(new Claim(ClaimTypes.Role, role));
+        return new ClaimsPrincipal(identity);
     }
 
     /// <summary>

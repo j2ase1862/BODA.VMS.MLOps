@@ -6,8 +6,13 @@
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
 @inject LabelingScopeStore ScopeStore
+@inject IDialogService Dialogs
 
 <PageTitle>라벨링 · MLOps</PageTitle>
+
+@* 저장 안 한 라벨을 들고 화면을 떠나는 모든 길(왼쪽 메뉴·뒤로 화살표·브라우저 이동·탭 닫기)을 붙잡는다 (ML-34).
+   사진 사이를 옮기는 길(←/→·[이전]·[다음]·[저장하고 다음])은 먼저 저장하므로 여기서 걸리지 않는다. *@
+<NavigationLock ConfirmExternalNavigation="@(_dirty && !ReadOnly)" OnBeforeInternalNavigation="OnBeforeLeaveAsync" />
 
 @if (_error is not null)
 {
@@ -64,10 +69,11 @@
             <MudChip T="string" Color="Color.Warning" Icon="@Icons.Material.Filled.Lock">@_labels.LockedBy 작업 중</MudChip>
         }
         <MudChip T="string" Size="Size.Small" Color="@StatusColor">@Display.LabelStatusText(_labels?.Status ?? LabelStatus.Unlabeled)</MudChip>
+        @* ←/→ 와 같은 길 — 고치던 라벨을 저장하고 넘어간다 (ML-03) *@
         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.NavigateBefore"
-                   Disabled="@(_queue?.Previous is null)" OnClick="@(() => GoToAsync(_queue?.Previous))">이전</MudButton>
+                   Disabled="@(_queue?.Previous is null || _saving)" OnClick="@(() => OnNavigateRequested(-1))">이전</MudButton>
         <MudButton Variant="Variant.Outlined" EndIcon="@Icons.Material.Filled.NavigateNext"
-                   Disabled="@(_queue?.Next is null)" OnClick="@(() => GoToAsync(_queue?.Next))">다음</MudButton>
+                   Disabled="@(_queue?.Next is null || _saving)" OnClick="@(() => OnNavigateRequested(1))">다음</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Check"
                    Disabled="@(_saving || ReadOnly)" OnClick="SaveAndNextAsync">
             @(_saving ? "저장 중…" : "저장하고 다음")
@@ -128,7 +134,14 @@
             <canvas id="@CanvasId" style="width:100%; height:calc(100vh - 300px); min-height:420px; border:1px solid var(--line); touch-action:none;"></canvas>
 
             <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1 d-block">
-                ←/→ 이전·다음 이미지 · 끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음 클래스 · Delete 삭제 · Esc 선택 해제
+                @if (_mode == "classification")
+                {
+                    <span>←/→ 이전·다음 이미지(저장하고 넘어감) · 숫자키나 클래스 버튼으로 이 사진의 클래스 붙이기 · 휠 확대 · Alt+끌기 이동</span>
+                }
+                else
+                {
+                    <span>←/→ 이전·다음 이미지(저장하고 넘어감) · 끌어서 그리기 · 휠 확대 · Alt+끌기 이동 · 숫자키로 다음에 그릴 클래스 · Delete 삭제 · Esc 선택 해제</span>
+                }
                 @if (_mode == "polygon")
                 {
                     <span> · 클릭으로 점 추가, 오른쪽 클릭이나 Enter 로 닫기</span>
@@ -235,23 +248,29 @@
                 <div class="d-flex gap-2 mt-3">
                     <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
                                Disabled="@(!CanApprove)" OnClick="@(() => ReviewAsync(true))">검토 승인</MudButton>
-                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
-                               Disabled="@(_labels?.Status != LabelStatus.Reviewed)" OnClick="@(() => ReviewAsync(false))">반려</MudButton>
+                    @* 라벨 완료도 돌려보낼 수 있다 — 검토 전에 틀린 것을 봤을 때 '작업 중' 으로 되돌린다 (ML-08) *@
+                    <MudTooltip Text="'작업 중' 으로 되돌려 다시 라벨링하게 합니다. 누가 언제 반려했는지 감사 로그에 남습니다">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                   Disabled="@(_labels?.Status is not (LabelStatus.Labeled or LabelStatus.Reviewed))"
+                                   OnClick="@(() => ReviewAsync(false))">반려</MudButton>
+                    </MudTooltip>
                 </div>
             </AuthorizeView>
         </MudPaper>
     </MudItem>
 </MudGrid>
 
-<MudDialog @bind-Visible="_textOpen" Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
+<MudDialog Visible="_textOpen" VisibleChanged="OnTextDialogVisibleChanged"
+           Options="new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true }">
     <TitleContent><MudText Typo="Typo.h6">텍스트 입력</MudText></TitleContent>
     <DialogContent>
         <MudTextField @bind-Value="_textValue" Label="인식 문자열" Immediate="true" AutoFocus="true"
-                      HelperText="이 영역이 담고 있는 글자를 그대로 적습니다" />
+                      HelperText="@(_textIsNew ? "이 영역이 담고 있는 글자를 그대로 적습니다. 취소하면 방금 그린 상자를 지웁니다" : "이 영역이 담고 있는 글자를 그대로 적습니다")" />
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="@(() => _textOpen = false)">취소</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="ApplyTextAsync">적용</MudButton>
+        <MudButton OnClick="CancelTextAsync">취소</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@string.IsNullOrEmpty(_textValue)"
+                   OnClick="ApplyTextAsync">적용</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -295,6 +314,8 @@
     private bool _textOpen;
     private string _textValue = "";
     private int _textIndex = -1;
+    // 방금 그린 OCR 상자의 글자를 받는 중인가 — 그때 취소하면 글자 없는 상자가 남지 않게 지운다
+    private bool _textIsNew;
 
     private IJSObjectReference? _module;
     private DotNetObjectReference<Labeling>? _self;
@@ -303,8 +324,48 @@
     private bool ReadOnly => _labels is { LockedByMe: false, LockedBy: not null };
     private Color StatusColor => Display.LabelStatusColor(_labels?.Status ?? LabelStatus.Unlabeled);
 
+    // ───────────── 잠금 연장 (ML-06) ─────────────
+    // 잠금은 10분(Mlops:LabelLockMinutes)이고 저장할 때만 늘었다. 오래 들여다보고만 있으면 잠금이 풀려
+    // 남이 가져가고, 그 뒤 내 저장은 거절됐다. 화면이 열려 있는 동안 몇 분마다 같은 잠금 요청으로 늘린다.
+    // 서버는 그대로다 — 잠금 요청이 곧 연장이다.
+    private static readonly TimeSpan LockRenewEvery = TimeSpan.FromMinutes(4);
+    private readonly CancellationTokenSource _lifetime = new();
+
+    private async Task RenewLockLoopAsync()
+    {
+        using var timer = new PeriodicTimer(LockRenewEvery);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_lifetime.Token))
+            {
+                if (ImageId is not { } id || _labels is not { LockedByMe: true } || _saving) continue;
+                try
+                {
+                    var renewed = await Api.LockImageAsync(DatasetId, id);
+                    // 잠금 칸만 새로 받는다. 라벨은 화면에 고치던 것이 있으므로 덮어쓰지 않는다.
+                    if (ImageId == id) _labels = renewed;
+                }
+                catch (MlopsApiException ex) when (ex.Status == System.Net.HttpStatusCode.Conflict)
+                {
+                    // 그사이 남이 가져갔다 — 읽기 전용으로 바꾸고 알린다 (저장해도 거절된다)
+                    if (ImageId == id)
+                    {
+                        _labels = await Api.LabelsAsync(DatasetId, id);
+                        if (_module is not null) await _module.InvokeVoidAsync("setReadOnly", CanvasId, ReadOnly);
+                        Snackbar.Add(ex.Message, Severity.Warning);
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch (MlopsApiException) { /* 다음 차례에 다시 해 본다 */ }
+                catch (HttpRequestException) { }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        _ = RenewLockLoopAsync();
         _self = DotNetObjectReference.Create(this);
         _samStatus = await Api.SamStatusAsync();
         try
@@ -459,6 +520,7 @@
     {
         _textIndex = index;
         _textValue = index >= 0 && index < _annotations.Count ? _annotations[index].Text ?? "" : "";
+        _textIsNew = true;
         _textOpen = true;
         StateHasChanged();
         return Task.CompletedTask;
@@ -587,15 +649,40 @@
     {
         _textIndex = index;
         _textValue = _annotations[index].Text ?? "";
+        _textIsNew = false;
         _textOpen = true;
         await Task.CompletedTask;
     }
 
     private async Task ApplyTextAsync()
     {
+        if (string.IsNullOrEmpty(_textValue)) return;
         if (_module is not null && _textIndex >= 0)
             await _module.InvokeVoidAsync("setText", CanvasId, _textIndex, _textValue);
         _textOpen = false;
+        _textIsNew = false;
+    }
+
+    /// <summary>
+    /// 글자 입력을 그만둔다. 방금 그린 상자라면 글자 없이 남기지 않고 지운다 —
+    /// 글자 없는 OCR 라벨은 서버가 거절하므로, 남겨 두면 저장과 ←/→ 이동이 막힌다 (ML-07).
+    /// 이미 글자가 있던 상자를 고치다 그만두면 그대로 둔다.
+    /// </summary>
+    private async Task CancelTextAsync()
+    {
+        _textOpen = false;
+        var index = _textIndex;
+        var wasNew = _textIsNew;
+        _textIsNew = false;
+        if (!wasNew || _module is null || index < 0 || index >= _annotations.Count) return;
+        if (_annotations[index] is { Shape: AnnotationShape.Text, Text: null or "" })
+            await DeleteAsync(index);
+    }
+
+    /// <summary>바깥을 누르거나 Esc 로 닫혀도 [취소] 와 같다.</summary>
+    private async Task OnTextDialogVisibleChanged(bool visible)
+    {
+        if (!visible && _textOpen) await CancelTextAsync();
     }
 
     private async Task ZoomAsync(double factor)
@@ -703,6 +790,27 @@
         _allLabeled = true;
     }
 
+    /// <summary>
+    /// 저장하지 않은 라벨이 있으면 떠나기 전에 묻는다. 예전에는 왼쪽 메뉴나 뒤로 화살표로 나가면
+    /// '저장 안 됨' 칩이 뜬 라벨이 경고 없이 버려졌다 (ML-34).
+    /// [저장하고 나가기] 는 ←/→ 와 같이 완료 표시 없이 저장한다.
+    /// </summary>
+    private async Task OnBeforeLeaveAsync(LocationChangingContext context)
+    {
+        if (!_dirty || ReadOnly) return;
+
+        var choice = await Dialogs.ShowMessageBox("저장 안 한 라벨",
+            "이 사진에 저장하지 않은 라벨이 있습니다. 저장하고 나갈까요?",
+            yesText: "저장하고 나가기", noText: "버리고 나가기", cancelText: "머무르기");
+        if (choice is null) { context.PreventNavigation(); return; }
+        if (choice == true)
+        {
+            if (!await SaveAsync(markLabeled: false)) context.PreventNavigation();
+            return;
+        }
+        _dirty = false;   // 버리기로 했다 — 다음 이동에서 다시 묻지 않는다
+    }
+
     private async Task GoToAsync(Guid? imageId)
     {
         if (imageId is null) return;
@@ -763,6 +871,8 @@
 
     public async ValueTask DisposeAsync()
     {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         try
         {
             if (ImageId is { } id && _labels?.LockedByMe == true) await Api.UnlockImageAsync(DatasetId, id);

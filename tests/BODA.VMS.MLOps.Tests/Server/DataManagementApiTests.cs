@@ -306,6 +306,34 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
             .StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// 거의 같은 사진을 올리면 업로드 결과에 비슷한 사진의 이름이 실린다 — 화면이 그것으로 알린다 (ML-12).
+    /// 사진은 그대로 올라간다(자동 제외 없음).
+    /// </summary>
+    [Fact]
+    public async Task Near_duplicate_upload_is_reported_but_kept()
+    {
+        var eng = await _f.EngineerAsync();
+        static byte[] Pattern(bool nudge)
+        {
+            using var bitmap = new SKBitmap(160, 120);
+            for (int y = 0; y < 120; y++)
+                for (int x = 0; x < 160; x++)
+                    bitmap.SetPixel(x, y, new SKColor((byte)(x * 3 % 256), (byte)((y * 7 + x) % 256), (byte)((x * y) % 256)));
+            if (nudge) bitmap.SetPixel(3, 3, SKColors.White);   // 바이트는 다르고 눈으로는 같은 사진
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            return data.ToArray();
+        }
+
+        var first = (await UploadAsync(eng, ("near-a.png", Pattern(false)))).Results.Single();
+        var second = (await UploadAsync(eng, ("near-b.png", Pattern(true)))).Results.Single();
+
+        second.Created.Should().BeTrue("비슷해도 다른 파일이라 올라간다");
+        second.Image.Id.Should().NotBe(first.Image.Id);
+        second.NearDuplicateOf.Should().Be("near-a.png");
+    }
+
     [Fact]
     public async Task Review_marks_labels_and_editing_them_clears_it()
     {
@@ -333,6 +361,11 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
             .Content.ReadFromJsonAsync<ImageLabelsDto>(Json))!;
         edited.Status.Should().Be(LabelStatus.Labeled);
         edited.ReviewedBy.Should().BeNull();
+
+        // 검토 전(라벨 완료)이라도 반려하면 '작업 중' 으로 돌아간다 (ML-08)
+        var rejected = (await (await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images/{imageId}/review",
+            new ReviewRequest(false), Json)).Content.ReadFromJsonAsync<ImageLabelsDto>(Json))!;
+        rejected.Status.Should().Be(LabelStatus.InProgress);
 
         // 라벨러는 검토할 수 없다
         var labeler = await _f.ClientAsAsync("labeler-4", "Labeler");
@@ -653,6 +686,38 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         tagged!.Items.Select(i => i.Id).Should().Contain(ids[1]).And.NotContain(ids[0]);
     }
 
+    /// <summary>
+    /// 태그 거르기는 세는 것과 보이는 것이 같은 규칙(정확 일치)이어야 한다 (ML-17).
+    /// 부분 일치로 세고 정확 일치로 보여 주던 동안 "N 장" 과 보이는 장수가 달랐다.
+    /// </summary>
+    [Fact]
+    public async Task Tag_filter_counts_exactly_what_it_shows()
+    {
+        var eng = await _f.EngineerAsync();
+        var ids = (await UploadAsync(eng,
+            ("t1.png", MakePng(64, 64, SKColors.Aqua, 211)),
+            ("t2.png", MakePng(64, 64, SKColors.Coral, 212)),
+            ("t3.png", MakePng(64, 64, SKColors.Khaki, 213)))).Results.Select(r => r.Image.Id).ToArray();
+
+        // 고유한 태그 — 다른 시험의 사진이 섞이지 않게
+        var tag = $"lot:{Guid.NewGuid():N}"[..20];
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest([ids[0]], [tag]), Json);
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest([ids[1]], [tag + "-b"]), Json);   // 부분 일치만
+        await eng.PostAsJsonAsync("/api/images/tags", new TagImagesRequest([ids[2]], ["x" + tag]), Json);    // 부분 일치만
+
+        var page = await eng.GetFromJsonAsync<ImagePageDto>($"/api/images?tag={Uri.EscapeDataString(tag)}", Json);
+        page!.Items.Select(i => i.Id).Should().Equal([ids[0]]);
+        page.Total.Should().Be(1, "세는 것도 보이는 것과 같은 정확 일치");
+
+        // 대소문자는 가리지 않는다 (예전 거르기와 같다)
+        var upper = await eng.GetFromJsonAsync<ImagePageDto>($"/api/images?tag={Uri.EscapeDataString(tag.ToUpperInvariant())}", Json);
+        upper!.Total.Should().Be(1);
+
+        // LIKE 의 와일드카드는 글자 그대로
+        var wild = await eng.GetFromJsonAsync<ImagePageDto>($"/api/images?tag={Uri.EscapeDataString(tag[..8] + "%")}", Json);
+        wild!.Total.Should().Be(0);
+    }
+
     [Fact]
     public async Task Next_to_label_skips_finished_and_locked_images()
     {
@@ -812,6 +877,54 @@ public class DataManagementApiTests : IClassFixture<MlopsApiFactory>
         var done = await Queue(order[2]);
         done.NextToLabel.Should().BeNull();
         done.Labeled.Should().Be(3);
+    }
+
+    /// <summary>
+    /// 고른 범위 없이 [저장하고 다음] 을 써도 격자 순서로 간다 (ML-09). 불확실도가 매겨지지 않은 동안
+    /// id 문자열 순서로 고르던 때는 격자에서 여기저기 뛰었다.
+    /// </summary>
+    [Fact]
+    public async Task Next_to_label_without_scope_follows_the_grid_order()
+    {
+        var eng = await _f.EngineerAsync();
+        var dataset = (await (await eng.PostAsJsonAsync("/api/datasets",
+            new CreateDatasetRequest("격자 순서", TaskType.Detection, ["good"]), Json))
+            .Content.ReadFromJsonAsync<DatasetDto>(Json))!;
+        var ids = (await UploadAsync(eng,
+            ("g1.png", MakePng(64, 64, SKColors.Silver, 421)),
+            ("g2.png", MakePng(64, 64, SKColors.Sienna, 422)),
+            ("g3.png", MakePng(64, 64, SKColors.Teal, 423)),
+            ("g4.png", MakePng(64, 64, SKColors.Olive, 424)),
+            ("g5.png", MakePng(64, 64, SKColors.Navy, 425)))).Results.Select(r => r.Image.Id).ToArray();
+        await eng.PostAsJsonAsync($"/api/datasets/{dataset.Id}/images", new AddImagesRequest(ids), Json);
+
+        var order = new List<Guid>();
+        for (Guid? at = null; ;)
+        {
+            var q = await eng.GetFromJsonAsync<LabelQueueDto>(
+                $"/api/datasets/{dataset.Id}/label-queue{(at is null ? "" : $"?current={at}")}", Json);
+            if (q!.Next is not { } n) break;
+            order.Add(n);
+            at = n;
+        }
+        order.Should().HaveCount(5);
+
+        Task<LabelQueueDto?> Queue(Guid? current) => eng.GetFromJsonAsync<LabelQueueDto>(
+            $"/api/datasets/{dataset.Id}/label-queue{(current is null ? "" : $"?current={current}")}", Json);
+
+        (await Queue(null))!.NextToLabel.Should().Be(order[0], "막 들어오면 격자 첫 장부터");
+        for (int i = 0; i < order.Count - 1; i++)
+            (await Queue(order[i]))!.NextToLabel.Should().Be(order[i + 1], "격자에서 바로 다음 장");
+
+        // 끝낸 사진은 건너뛰고, 끝에 닿으면 앞의 남은 것으로 돌아간다
+        await eng.PutAsJsonAsync($"/api/datasets/{dataset.Id}/images/{order[3]}/labels",
+            new SaveLabelsRequest([new AnnotationDto(AnnotationShape.Box, "good", 0.1, 0.1, 0.2, 0.2)], true), Json);
+        (await Queue(order[2]))!.NextToLabel.Should().Be(order[4]);
+        (await Queue(order[4]))!.NextToLabel.Should().Be(order[0]);
+
+        // 예전 단독 엔드포인트도 같은 순서를 따른다
+        (await eng.GetFromJsonAsync<NextImageDto>($"/api/datasets/{dataset.Id}/next-to-label?after={order[1]}", Json))!
+            .ImageId.Should().Be(order[2]);
     }
 
     /// <summary>사진이 하나도 없는 데이터셋은 갈 곳이 없다 — 그때만 화면이 오류를 낸다.</summary>

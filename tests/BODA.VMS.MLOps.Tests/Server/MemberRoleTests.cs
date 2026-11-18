@@ -83,6 +83,27 @@ public class MemberRoleTests
         create.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
+    /// <summary>
+    /// 화면은 역할을 토큰에서 읽지 않고 <c>/api/auth/me</c> 에서 받는다 (ML-33 · WB-27).
+    /// 그 응답이 운영 웹 역할('User')이 아니라 표가 정한 우리 역할이어야 위쪽 막대와 버튼이 서버 권한과 맞는다.
+    /// </summary>
+    [Fact]
+    public async Task 내_정보는_운영_웹_역할이_아니라_표의_역할을_돌려준다()
+    {
+        using var f = new MlopsApiFactory();
+        var admin = await f.AdminAsync();
+        (await admin.PutAsJsonAsync("/api/members", new GrantMemberRequest("hong", Roles.Labeler), MlopsApiFactory.Json))
+            .EnsureSuccessStatusCode();
+
+        var me = await WithToken(f, WebToken("hong", "User")).GetFromJsonAsync<System.Text.Json.JsonElement>("/api/auth/me");
+        var roles = me.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).ToArray();
+        roles.Should().Equal([Roles.Labeler]);
+
+        // 표에 없는 사람은 기본 역할(Viewer)
+        var other = await WithToken(f, WebToken("kim", "User")).GetFromJsonAsync<System.Text.Json.JsonElement>("/api/auth/me");
+        other.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).Should().Equal([Roles.Viewer]);
+    }
+
     [Fact]
     public async Task 역할을_거두면_다음_요청부터_바로_듣는다()
     {
