@@ -45,7 +45,8 @@
         </ToolBarContent>
         <HeaderContent>
             <MudTh>시각</MudTh>
-            <MudTh>종류</MudTh>
+            @* 내용 열이 길면 좁은 열이 짜부라져 한글이 한 글자씩 세로로 꺾였다 — 시각처럼 줄바꿈을 막는다 *@
+            <MudTh Style="white-space:nowrap">종류</MudTh>
             <MudTh>동작</MudTh>
             <MudTh>사람</MudTh>
             <MudTh>대상</MudTh>
@@ -53,7 +54,7 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="시각" Style="white-space:nowrap">@LocalText(context.At)</MudTd>
-            <MudTd DataLabel="종류">@CategoryText(context.Category)</MudTd>
+            <MudTd DataLabel="종류" Style="white-space:nowrap">@CategoryText(context.Category)</MudTd>
             <MudTd DataLabel="동작"><span class="mono">@context.Action</span></MudTd>
             <MudTd DataLabel="사람">@context.Actor</MudTd>
             <MudTd DataLabel="대상"><span class="mono">@Short(context.EntityId)</span></MudTd>
