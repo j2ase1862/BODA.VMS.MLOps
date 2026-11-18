@@ -16,12 +16,16 @@ const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   AlignmentType, HeadingLevel, BorderStyle, WidthType, ShadingType,
   VerticalAlign, PageNumber, Header, Footer, ImageRun, TableOfContents,
+  ExternalHyperlink, InternalHyperlink, Bookmark,
 } = require(path.join(GLOBAL, "docx"));
+const model = require("./lib/model");
 
 const DIR = __dirname;
 const SHOT = path.join(DIR, "screenshots");
 const SRC = process.argv[2] || "manual.json";
-const manual = JSON.parse(fs.readFileSync(path.resolve(DIR, SRC), "utf-8"));
+// 번호 · 책갈피 · 인라인 링크는 lib/model.js 가 풉니다 (html 생성기와 같은 규칙)
+const { manual, anchors, videos } = model.load(path.resolve(DIR, SRC));
+const linkStats = model.check({ manual, anchors });
 const OUT = path.join(DIR, `BODA_VMS_MLOps_${manual.docName || "사용자매뉴얼"}_${manual.version}.docx`);
 
 // A4 세로, 1인치 여백
@@ -36,6 +40,10 @@ const MONO = "Consolas";
 const INK = "101010";
 const MUTED = "5F5F5F";
 const ACCENT = "FF4052";
+const LINK = "1F6FEB";
+
+// Word 책갈피 이름은 글자 · 숫자 · 밑줄만, 40자까지입니다 — 문서 id 의 하이픈을 밑줄로 바꿉니다
+const bm = (id) => id.replace(/-/g, "_").slice(0, 40);
 
 const thin = { style: BorderStyle.SINGLE, size: 1, color: "D0D0D0" };
 const borders = { top: thin, bottom: thin, left: thin, right: thin };
@@ -44,16 +52,31 @@ const cellMargins = { top: 60, bottom: 60, left: 120, right: 120 };
 function text(value, opts = {}) {
   // 줄바꿈을 TextRun 의 break 로 옮기고, `…` 로 감싼 토막은 고정폭으로 바꾼다.
   // 설치 문서는 문장 안에 경로·옵션·서비스 이름이 섞이는데, 본문 글꼴로 쓰면 어디까지가 값인지 안 보인다.
+  // [글](#id) · [글](https://…) · [[id]] 는 링크가 된다 (lib/model.js).
   const runs = [];
   String(value).split("\n").forEach((line, i) => {
-    line.split("`").forEach((seg, j) => {
-      runs.push(new TextRun({
-        text: seg, font: j % 2 ? MONO : FONT, size: 20, color: INK,
-        break: i && j === 0 ? 1 : 0, ...opts,
-      }));
+    model.inline(line, anchors).forEach((tok, j) => {
+      const run = (extra = {}) => new TextRun({
+        text: tok.text, font: tok.mono ? MONO : FONT, size: 20, color: INK,
+        break: i && j === 0 ? 1 : 0, ...opts, ...extra,
+      });
+      if (!tok.href) runs.push(run());
+      else if (tok.href.startsWith("#")) runs.push(new InternalHyperlink({ anchor: bm(tok.href.slice(1)), children: [run({ color: LINK, underline: {} })] }));
+      else runs.push(new ExternalHyperlink({ link: tok.href, children: [run({ color: LINK, underline: {} })] }));
     });
   });
   return runs;
+}
+
+/** 제목 글자 — id 가 있으면 책갈피로 감싸 다른 곳에서 링크로 올 수 있게 한다 */
+function titleRuns(id, value, opts) {
+  const runs = [new TextRun({ text: value, font: FONT, color: INK, ...opts })];
+  return id ? [new Bookmark({ id: bm(id), children: runs })] : runs;
+}
+
+/** 영상 배지 — 이 절을 따라 하는 영상 번호. 영상 주소는 영상을 올린 뒤 따로 알립니다 */
+function videoBadge(id) {
+  return new TextRun({ text: `   ▶ 영상 ${id}`, font: FONT, size: 17, bold: true, color: ACCENT });
 }
 
 function para(value, opts = {}) {
@@ -184,6 +207,31 @@ function code(block) {
   return out;
 }
 
+/** 용어집 — 용어마다 책갈피를 달아 본문에서 링크로 온다. 쉬운 뜻 · 화면 어디 · 더 읽기 순서 */
+function terms(block) {
+  const out = [];
+  for (const t of block.items) {
+    out.push(new Paragraph({
+      children: [
+        ...titleRuns(t.id, t.term, { bold: true, size: 21 }),
+        ...(t.en ? [new TextRun({ text: `  ${t.en}`, font: FONT, size: 18, color: MUTED })] : []),
+      ],
+      keepNext: true,
+      spacing: { before: 160, after: 40 },
+    }));
+    out.push(new Paragraph({ children: text(t.desc, { size: 20 }), indent: { left: 240 }, spacing: { after: 40, line: 290 } }));
+    const tail = [];
+    if (t.where) tail.push(...text("화면: " + t.where, { size: 18, color: MUTED }));
+    (t.links || []).forEach((l, i) => {
+      const sep = i ? " · " : (tail.length ? "   더 읽기: " : "더 읽기: ");
+      tail.push(new TextRun({ text: sep, font: FONT, size: 18, color: MUTED }));
+      tail.push(new ExternalHyperlink({ link: l.url, children: [new TextRun({ text: l.text, font: FONT, size: 18, color: LINK, underline: {} })] }));
+    });
+    if (tail.length) out.push(new Paragraph({ children: tail, indent: { left: 240 }, spacing: { after: 60 } }));
+  }
+  return out;
+}
+
 function steps(items) {
   return items.map((item, i) => new Paragraph({
     children: [
@@ -198,12 +246,21 @@ function steps(items) {
 function render(block) {
   switch (block.type) {
     case "p": return [para(block.text)];
-    // 서식 수준을 줘야 목차에 소제목까지 올라온다
+    // 서식 수준을 줘야 목차에 소제목까지 올라온다. x.y.z(level 3)는 목차에 넣지 않는다
     case "h2": return [new Paragraph({
-      children: text(block.text, { bold: true, size: 24 }),
-      heading: HeadingLevel.HEADING_2,
+      children: [
+        ...titleRuns(block.id, block.title, { bold: true, size: block.level === 3 ? 22 : 24 }),
+        ...(block.video ? [videoBadge(block.video)] : []),
+      ],
+      heading: block.level === 3 ? HeadingLevel.HEADING_3 : HeadingLevel.HEADING_2,
       spacing: { before: 280, after: 140 },
     })];
+    case "ul": return block.items.map((item) => new Paragraph({
+      children: [new TextRun({ text: "•  ", font: FONT, size: 20, color: MUTED }), ...text(item, { size: 20 })],
+      indent: { left: 360, hanging: 220 },
+      spacing: { after: 60, line: 300 },
+    }));
+    case "terms": return terms(block);
     case "note": return [callout("알림", block.text, "1F6FEB"), new Paragraph({ text: "", spacing: { after: 160 } })];
     case "warn": return [callout("주의", block.text, ACCENT), new Paragraph({ text: "", spacing: { after: 160 } })];
     case "steps": return steps(block.items);
@@ -251,8 +308,20 @@ const toc = [
 // ── 본문 ──
 const body = [];
 for (const section of manual.sections) {
+  // 부 표지 — 큰 제목과 안내 한두 문단만 둔 쪽. 목차에는 넣지 않는다
+  if (section.part) {
+    body.push(new Paragraph({ text: "", pageBreakBefore: true, spacing: { before: 2400 } }));
+    body.push(new Paragraph({
+      children: [new TextRun({ text: section.part.title, font: FONT, size: 44, bold: true, color: ACCENT })],
+      spacing: { after: 300 },
+    }));
+    for (const t of [].concat(section.part.intro || [])) body.push(para(t, { size: 22, color: MUTED }));
+  }
   body.push(new Paragraph({
-    children: text(section.heading, { bold: true, size: 32 }),
+    children: [
+      ...titleRuns(section.id, section.title, { bold: true, size: 32 }),
+      ...(section.video ? [videoBadge(section.video)] : []),
+    ],
     heading: HeadingLevel.HEADING_1,
     pageBreakBefore: true,
     spacing: { after: 200 },
@@ -271,6 +340,8 @@ const doc = new Document({
         run: { font: FONT, size: 32, bold: true, color: INK } },
       { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
         run: { font: FONT, size: 24, bold: true, color: INK } },
+      { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { font: FONT, size: 22, bold: true, color: INK } },
     ],
   },
   sections: [{
@@ -299,5 +370,5 @@ Packer.toBuffer(doc).then((buf) => {
   fs.writeFileSync(OUT, buf);
   console.log(`${path.basename(OUT)}  (${(buf.length / 1024).toFixed(0)} KB)`);
   const figures = manual.sections.reduce((n, s) => n + s.blocks.filter(b => b.type === "figure").length, 0);
-  console.log(`${SRC} · 장 ${manual.sections.length}개 · 그림 ${figures}장`);
+  console.log(`${SRC} · 장 ${manual.sections.length}개 · 그림 ${figures}장 · 영상 배지 ${videos.length}개 · 링크 ${linkStats.links}개(바깥 ${linkStats.ext})`);
 });
