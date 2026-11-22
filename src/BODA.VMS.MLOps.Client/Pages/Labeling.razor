@@ -126,6 +126,17 @@
                         </MudToggleGroup>
                     }
                 }
+                @* SAM 을 쓸 수 있는 데이터셋인데 서버에서 꺼져 있으면 [SAM 클릭] 이 말없이 사라진다.
+                   이유(모델 파일 없음 등)는 관리하는 사람만 알면 되므로 Engineer 이상에게만 보인다. *@
+                @if (SamNotice.UnavailableReason(_samStatus, _shapes) is { } samReason)
+                {
+                    <AuthorizeView Roles="Engineer,Admin" Context="samWhy">
+                        <MudTooltip Text="@samReason">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                     Icon="@Icons.Material.Outlined.Info">SAM 클릭 꺼짐</MudChip>
+                        </MudTooltip>
+                    </AuthorizeView>
+                }
                 <MudSpacer />
                 <MudSwitch T="bool" Value="_useOriginal" ValueChanged="ToggleOriginalAsync" Color="Color.Primary"
                            Label="원본 해상도" />
