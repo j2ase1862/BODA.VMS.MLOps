@@ -93,8 +93,27 @@ public sealed class PythonEnvironment(IOptions<WorkerOptions> options, ILogger<P
         if (!string.IsNullOrWhiteSpace(_o.WheelBundleDir))
             pip.AddRange(["--no-index", "--find-links", _o.WheelBundleDir]);
         pip.AddRange(["-r", RequirementsFile]);
-        await RunAsync(PythonExe, pip, null, ct, throwOnError: true);
+        try
+        {
+            await RunAsync(PythonExe, pip, null, ct, throwOnError: true);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // pip 의 끝줄만으로는 "왜" 가 안 보인다 — 폐쇄망 PC 에 온라인용 MSI 만 깐 경우가 대표적이다.
+            throw new InvalidOperationException(ex.Message + " — " + PipFailureHint(_o.WheelBundleDir), ex);
+        }
     }
+
+    /// <summary>
+    /// 패키지 설치(pip)가 실패했을 때 로그에 덧붙이는 다음 할 일.
+    /// wheel 폴더가 없으면 pip 는 인터넷으로 나가므로, 폐쇄망 PC 에서 MSI 만 실행한 설치는 여기서 60초마다 되풀이해 실패한다.
+    /// </summary>
+    public static string PipFailureHint(string? wheelBundleDir) => string.IsNullOrWhiteSpace(wheelBundleDir)
+        ? "오프라인 wheel 폴더가 지정되지 않아 인터넷(pip)에서 패키지를 받으려 했습니다. 인터넷이 없는 PC 라면 " +
+          "오프라인 배포 폴더의 install-offline.cmd 로 다시 설치하거나, wheels 폴더를 이 PC 로 옮긴 뒤 " +
+          "configure --server <서버 주소> --token <워커 토큰> --wheels <wheels 폴더> 로 다시 설정하고 서비스를 다시 시작하세요."
+        : $"오프라인 wheel 폴더만으로 설치했습니다: {wheelBundleDir} — 폴더가 그대로 있는지, " +
+          "이 워커 버전과 함께 만든 번들인지 확인하세요.";
 
     private const string ReqHashPrefix = "requirements-sha256=";
 
