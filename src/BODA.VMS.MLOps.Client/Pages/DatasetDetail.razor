@@ -221,10 +221,13 @@ else
                             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                                 @image.Width×@image.Height · 라벨 @(image.AnnotationCount ?? 0)
                             </MudText>
-                            <MudTooltip Text="크게 보고 라벨 고치기">
-                                <MudIconButton Icon="@Icons.Material.Filled.OpenInFull" Size="Size.Small" Color="Color.Primary"
-                                               Href="@($"/datasets/{Id}/label/{image.Id}")" aria-label="라벨 보기" />
-                            </MudTooltip>
+                            @* 라벨링 화면은 Labeler 이상만 연다 — Viewer 에게는 눌러도 권한 안내만 나오는 버튼을 두지 않는다 *@
+                            <AuthorizeView Roles="Labeler,Engineer,Admin" Context="open">
+                                <MudTooltip Text="크게 보고 라벨 고치기">
+                                    <MudIconButton Icon="@Icons.Material.Filled.OpenInFull" Size="Size.Small" Color="Color.Primary"
+                                                   Href="@($"/datasets/{Id}/label/{image.Id}")" aria-label="라벨 보기" />
+                                </MudTooltip>
+                            </AuthorizeView>
                         </div>
                     </div>
                 </MudPaper>

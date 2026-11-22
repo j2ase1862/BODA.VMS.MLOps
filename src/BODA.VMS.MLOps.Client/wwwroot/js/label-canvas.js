@@ -235,8 +235,10 @@ class LabelCanvas {
             const grabbed = this.beginVertexEdit(pos, image, e);
             if (grabbed) return;
 
-            // 오른쪽 버튼과 Shift 는 '여기는 빼라'는 뜻이다 (배경 점)
-            this.addSamPoint(image, !(e.button === 2 || e.shiftKey));
+            // 오른쪽 버튼과 Shift 는 '여기는 빼라'는 뜻이다 (배경 점).
+            // Ctrl(⌘)+클릭도 같은 뜻으로 받는다 — 예전 매뉴얼이 그렇게 적었고, 그대로 하면 빼려던 곳이
+            // 물체 점으로 찍혀 오히려 더 들어갔다. 꼭짓점 위의 Ctrl+클릭(꼭짓점 빼기)은 위에서 이미 걸러졌다.
+            this.addSamPoint(image, !isSamBackgroundClick(e));
             return;
         }
 
@@ -905,6 +907,14 @@ class LabelCanvas {
 }
 
 // ───────────── 도우미 ─────────────
+
+/**
+ * SAM 모드의 클릭이 '빼는 점'(배경 점)인가.
+ * 오른쪽 클릭 · Shift+클릭 · Ctrl(⌘)+클릭이 모두 같은 뜻이다. 아무 키도 없는 왼쪽 클릭만 물체 점이다.
+ */
+export function isSamBackgroundClick(e) {
+    return e.button === 2 || !!e.shiftKey || !!e.ctrlKey || !!e.metaKey;
+}
 
 function clamp01(v, max = 1) {
     return Math.min(Math.max(v, 0), max);
